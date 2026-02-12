@@ -1,4 +1,3 @@
-
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
@@ -22,6 +21,7 @@ let duelState = {
 };
 
 let chatHistory = [];
+
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+2', 'X', 'R'];
 
@@ -35,7 +35,13 @@ function resetGame() {
     activeColor = '';
     pendingPenalty = 0;
     if (countdownInterval) clearInterval(countdownInterval);
-    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = true; });
+    players.forEach(p => {
+        p.hand = [];
+        p.hasDrawn = false;
+        p.isDead = false;
+        p.isSpectator = true; 
+    });
+    duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
 }
 
 function createDeck() {
@@ -52,7 +58,9 @@ function createDeck() {
         deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     }
-    for(let i=0; i<2; i++) { deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) }); }
+    for(let i=0; i<2; i++) {
+        deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
+    }
     shuffle();
 }
 
@@ -69,87 +77,126 @@ function recycleDeck() {
     deck = [...discardPile];
     discardPile = [topCard];
     shuffle();
-    io.emit('notification', '♻️ Barajando mazo...');
+    io.emit('notification', '♻️ Barajando descartes...');
+}
+
+function calculateHandPoints(hand) {
+    let points = 0;
+    hand.forEach(card => {
+        if (card.value === 'RIP') points += 100; 
+        else if (card.value === 'GRACIA') points += 150;
+        else if (card.value === '+12') points += 200;
+        else if (card.type === 'wild') points += 50;
+        else if (['+2', 'X', 'R'].includes(card.value)) points += 20;
+        else points += parseInt(card.value) || 0;
+    });
+    return points;
 }
 
 // --- SOCKET LOGIC ---
 io.on('connection', (socket) => {
+    socket.emit('chatHistory', chatHistory);
+
     socket.on('join', (name) => {
-        const player = { id: socket.id, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: gameState !== 'waiting', isDead: false };
-        players.push(player);
-        updateAll();
+        const existing = players.find(p => p.id === socket.id);
+        if(!existing) {
+            const isLate = gameState !== 'waiting' && gameState !== 'counting';
+            const player = { id: socket.id, name: name.substring(0, 15), hand: [], hasDrawn: false, isSpectator: isLate, isDead: false };
+            players.push(player);
+            io.emit('notification', `👋 ${player.name} entró.`);
+            updateAll();
+        }
     });
 
-    socket.on('requestStart', () => { if(gameState === 'waiting' && players.length >= 1) startCountdown(); });
+    socket.on('sendChat', (text) => {
+        const p = players.find(p => p.id === socket.id);
+        if(p && text.trim().length > 0) {
+            const msg = { name: p.name, text: text.substring(0, 100), time: new Date().toLocaleTimeString() };
+            chatHistory.push(msg);
+            if(chatHistory.length > 50) chatHistory.shift();
+            io.emit('chatMessage', msg);
+        }
+    });
+
+    socket.on('requestStart', () => {
+        if(gameState === 'waiting' && players.length >= 1) startCountdown();
+    });
 
     socket.on('playCard', (cardId, chosenColor) => {
         if(gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
+        if (pIndex === -1) return;
         const player = players[pIndex];
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
         if(cardIndex === -1) return;
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
-        if (pIndex === currentTurn) {
-            let valid = (card.value === 'GRACIA' || card.color === 'negro' || card.color === activeColor || card.value === top.value);
-            if (!valid) return;
-        } else {
-            if (card.value === top.value && card.color === top.color && card.color !== 'negro') {
-                currentTurn = pIndex;
-                io.emit('notification', `⚡ ¡SAFF de ${player.name}!`);
-            } else return;
-        }
-
+        // Reglas de juego básicas...
         player.hand.splice(cardIndex, 1);
         discardPile.push(card);
         if (card.color === 'negro' && chosenColor) activeColor = chosenColor;
         else if (card.color !== 'negro') activeColor = card.color;
 
-        if (card.value === '+2') pendingPenalty += 2;
-        if (card.value === '+4') pendingPenalty += 4;
-        if (card.value === '+12') pendingPenalty += 12;
-        if (card.value === 'GRACIA') pendingPenalty = 0;
-
-        if (player.hand.length === 0) { gameState = 'waiting'; io.emit('notification', `🎉 ¡${player.name} GANÓ!`); resetGame(); }
-        else { advanceTurn(); }
-        updateAll();
+        if (player.hand.length === 0) finishRound(player); 
+        else { advanceTurn(); updateAll(); }
     });
 
     socket.on('draw', () => {
+        if(gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex !== currentTurn) return;
-        if (deck.length === 0) recycleDeck();
-        players[pIndex].hand.push(deck.pop());
-        players[pIndex].hasDrawn = true;
+        if(pIndex === currentTurn) {
+            if(deck.length === 0) recycleDeck();
+            players[pIndex].hand.push(deck.pop());
+            updateAll();
+        }
+    });
+
+    socket.on('passTurn', () => {
+        advanceTurn();
         updateAll();
     });
 
-    socket.on('passTurn', () => { advanceTurn(); updateAll(); });
-    socket.on('disconnect', () => { players = players.filter(p => p.id !== socket.id); updateAll(); });
+    socket.on('disconnect', () => {
+        players = players.filter(pl => pl.id !== socket.id);
+        updateAll();
+    });
 });
 
-function advanceTurn() { currentTurn = (currentTurn + 1) % players.length; }
+function advanceTurn() {
+    currentTurn = (currentTurn + 1) % players.length;
+}
 
 function startCountdown() {
     createDeck();
     discardPile = [deck.pop()];
     activeColor = discardPile[0].color === 'negro' ? 'rojo' : discardPile[0].color;
-    players.forEach(p => { for(let i=0; i<7; i++) p.hand.push(deck.pop()); });
+    players.forEach(p => {
+        p.hand = [];
+        for(let i=0; i<7; i++) p.hand.push(deck.pop());
+    });
     gameState = 'playing';
+    updateAll();
+}
+
+function finishRound(w) {
+    gameState = 'waiting';
+    io.emit('notification', `🏆 ¡${w.name} ganó la ronda!`);
+    resetGame();
+    updateAll();
 }
 
 function updateAll() {
     players.forEach((p, i) => {
         const state = {
             state: gameState,
-            myHand: p.hand,
+            players: players.map((pl, idx) => ({ name: pl.name, cardCount: pl.hand.length, isTurn: idx === currentTurn })),
             topCard: discardPile[discardPile.length - 1],
             activeColor,
-            isMyTurn: i === currentTurn,
-            players: players.map(pl => ({ name: pl.name, count: pl.hand.length }))
+            pendingPenalty
         };
         io.to(p.id).emit('updateState', state);
+        io.to(p.id).emit('handUpdate', p.hand);
     });
 }
 
@@ -159,69 +206,32 @@ app.get('/', (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { margin: 0; background: #1e272e; color: white; font-family: sans-serif; overflow: hidden; }
-        .game-container { display: flex; flex-direction: column; height: 100vh; }
-        
-        /* MESA CENTRAL */
-        .table { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 20px; }
-        .card { width: 80px; height: 120px; border-radius: 10px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; text-shadow: 2px 2px black; }
-        
-        /* MANO DEL JUGADOR (SCROLL HORIZONTAL) */
-        .hand-container { background: rgba(0,0,0,0.3); padding: 10px 0; height: 160px; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
-        .hand-container .card { display: inline-flex; margin: 0 5px; vertical-align: top; }
-        
-        /* COLORES */
-        .rojo { background: #ff5e57; } .azul { background: #1e90ff; } .verde { background: #2ecc71; } .amarillo { background: #f1c40f; } .negro { background: #2f3542; border-color: gold; }
-        
-        /* UI */
-        .ui-top { position: absolute; top: 10px; left: 10px; font-size: 14px; }
-        #btn-rules { position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.2); border: 1px solid white; color: white; border-radius: 5px; padding: 5px 10px; }
-        .controls { padding: 10px; display: flex; justify-content: center; gap: 10px; }
-        button { padding: 10px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; }
-        
-        #modal-rules { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100; padding: 20px; overflow-y: auto; }
+        body { font-family: sans-serif; background: #1e272e; color: white; text-align: center; margin: 0; }
+        .card { display: inline-flex; width: 70px; height: 100px; border: 2px solid white; border-radius: 8px; justify-content: center; align-items: center; font-weight: bold; margin: 5px; cursor: pointer; }
+        .rojo { background: #ff4757; } .azul { background: #1e90ff; } .verde { background: #2ed573; } .amarillo { background: #eccc68; color: black; } .negro { background: #2f3542; border-color: gold; }
+        #game-area { display: none; padding: 20px; }
+        #my-hand { margin-top: 50px; border-top: 1px solid #555; padding-top: 20px; }
     </style>
 </head>
 <body>
-    <div id="game" class="game-container">
-        <div id="login" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
-            <h1>UNO y 1/2</h1>
-            <input id="nick" type="text" placeholder="Tu nombre" style="padding: 10px; border-radius: 10px; border: none;">
-            <br>
-            <button onclick="join()" style="background: #2ecc71; color: white;">ENTRAR</button>
-        </div>
-
-        <div id="board" style="display: none; height: 100%;">
-            <div class="ui-top" id="player-info"></div>
-            <button id="btn-rules" onclick="document.getElementById('modal-rules').style.display='block'">📜 Reglas</button>
-            
-            <div class="table">
-                <div id="turn-indicator" style="font-weight: bold; color: gold;"></div>
-                <div id="top-card" class="card"></div>
-                <div id="color-msg"></div>
-            </div>
-
-            <div class="controls">
-                <button onclick="socket.emit('draw')" style="background: #e74c3c; color: white;">ROBAR</button>
-                <button onclick="socket.emit('passTurn')" style="background: #f39c12; color: white;">PASAR</button>
-                <button onclick="socket.emit('requestStart')" id="start-btn" style="background: #2ecc71; color: white;">EMPEZAR</button>
-            </div>
-
-            <div class="hand-container" id="my-hand"></div>
-        </div>
+    <div id="login">
+        <h1>🃏 UNO y 1/2</h1>
+        <input id="nick" type="text" placeholder="Tu Nombre">
+        <button onclick="join()">Entrar</button>
     </div>
-
-    <div id="modal-rules" onclick="this.style.display='none'">
-        <h2>Reglas Cortas</h2>
-        <p><b>SAFF:</b> Tirar carta igual (color y número) fuera de turno.</p>
-        <p><b>RIP:</b> Duelo a muerte. Perdedor es Zombie.</p>
-        <p><b>Gracia:</b> Te salva de todo y revive zombies.</p>
-        <p><b>Jerarquía:</b> +12 > +4 > +2.</p>
-        <p style="color: gold;">Toca para cerrar.</p>
+    <div id="game-area">
+        <div id="status"></div>
+        <div id="table">
+            <p>Mesa:</p>
+            <div id="top-card" class="card"></div>
+        </div>
+        <button onclick="socket.emit('draw')">Robar</button>
+        <button onclick="socket.emit('passTurn')">Pasar</button>
+        <button onclick="socket.emit('requestStart')">Empezar Juego</button>
+        <div id="my-hand"></div>
     </div>
-
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
@@ -230,37 +240,36 @@ app.get('/', (req, res) => {
             if(n) {
                 socket.emit('join', n);
                 document.getElementById('login').style.display = 'none';
-                document.getElementById('board').style.display = 'flex';
+                document.getElementById('game-area').style.display = 'block';
             }
         }
-
         socket.on('updateState', (s) => {
-            document.getElementById('top-card').className = 'card ' + s.topCard.color;
-            document.getElementById('top-card').innerText = s.topCard.value;
-            document.getElementById('turn-indicator').innerText = s.isMyTurn ? "¡TU TURNO!" : "Esperando...";
-            document.body.style.boxShadow = "inset 0 0 100px " + (s.activeColor === 'rojo' ? '#ff5e57' : s.activeColor === 'azul' ? '#1e90ff' : s.activeColor === 'verde' ? '#2ecc71' : '#f1c40f');
-            
-            const hand = document.getElementById('my-hand');
-            hand.innerHTML = '';
-            s.myHand.forEach(c => {
-                const div = document.createElement('div');
-                div.className = 'card ' + c.color;
-                div.innerText = c.value;
-                div.onclick = () => {
+            const top = document.getElementById('top-card');
+            top.className = 'card ' + s.topCard.color;
+            top.innerText = s.topCard.value;
+            document.getElementById('status').innerText = s.state === 'playing' ? "En juego" : "Esperando...";
+        });
+        socket.on('handUpdate', (hand) => {
+            const div = document.getElementById('my-hand');
+            div.innerHTML = '';
+            hand.forEach(c => {
+                const el = document.createElement('div');
+                el.className = 'card ' + c.color;
+                el.innerText = c.value;
+                el.onclick = () => {
                     if(c.color === 'negro') {
-                        const col = prompt("Elige color: rojo, azul, verde, amarillo");
+                        const col = prompt("Color? rojo, azul, verde, amarillo");
                         socket.emit('playCard', c.id, col);
                     } else socket.emit('playCard', c.id);
                 };
-                hand.appendChild(div);
+                div.appendChild(el);
             });
         });
-        
         socket.on('notification', (m) => alert(m));
     </script>
 </body>
 </html>
-`);
+    `);
 });
 
-http.listen(process.env.PORT || 3000, () => { console.log('UNO 15.3 READY'); });
+http.listen(process.env.PORT || 3000, () => { console.log('V15.2 READY'); });

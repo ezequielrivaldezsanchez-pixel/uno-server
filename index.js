@@ -3,7 +3,7 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- VARIABLES DE JUEGO (BASE ESTABLE) ---
+// --- VARIABLES DE JUEGO ---
 let gameState = 'waiting';
 let players = [];
 let deck = [];
@@ -21,7 +21,7 @@ let duelState = {
     attackerChoice: null, defenderChoice: null, history: []
 };
 
-// CHAT (CORRECCIÓN: Historial persistente)
+// CHAT
 let chatHistory = [];
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
@@ -38,12 +38,16 @@ function resetGame() {
     activeColor = '';
     pendingPenalty = 0;
     if (countdownInterval) clearInterval(countdownInterval);
-    players.forEach(p => { 
+    
+    // Mantener jugadores pero resetear estados
+    players.forEach((p, index) => { 
         p.hand = []; 
         p.hasDrawn = false; 
         p.isDead = false; 
-        p.isSpectator = true; 
+        p.isSpectator = false; // Todos vuelven a jugar
+        p.isAdmin = (index === 0); // El primero de la lista es Admin
     });
+
     duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
 }
 
@@ -55,7 +59,7 @@ function createDeck() {
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // Especiales Negras
+    // Especiales
     for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
@@ -67,7 +71,6 @@ function createDeck() {
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
-
     shuffle();
 }
 
@@ -104,49 +107,56 @@ function calculateHandPoints(hand) {
     return points;
 }
 
-// --- LÓGICA DE SOCKETS ---
+// --- SOCKETS ---
 
 io.on('connection', (socket) => {
-    // CORRECCIÓN CHAT: Enviar historial al conectar
     socket.emit('chatHistory', chatHistory);
 
     socket.on('join', (name) => {
         const existing = players.find(p => p.id === socket.id);
         if (!existing) {
-            const isLate = gameState !== 'waiting' && gameState !== 'counting';
+            // LÓGICA DE SALA CERRADA
+            const isGameRunning = gameState !== 'waiting' && gameState !== 'counting';
+            
             const player = { 
                 id: socket.id, 
                 name: name.substring(0, 15), 
                 hand: [], 
                 hasDrawn: false, 
-                isSpectator: isLate, 
-                isDead: false 
+                isSpectator: isGameRunning, // Si el juego corre, es espectador
+                isDead: false,
+                isAdmin: (players.length === 0) // Si es el primero, es Admin
             };
+            
             players.push(player);
             io.emit('notification', `👋 ${player.name} entró.`);
+            
+            if (isGameRunning) {
+                socket.emit('notification', 'Partida en curso. Modo Espectador.');
+            }
+            
             updateAll();
         }
     });
 
     socket.on('requestStart', () => {
-        if (gameState === 'waiting' && players.length >= 1) {
+        const p = players.find(p => p.id === socket.id);
+        // SOLO EL ADMIN PUEDE INICIAR
+        if (p && p.isAdmin && gameState === 'waiting' && players.length >= 1) {
             startCountdown();
         }
     });
 
-    // --- JUGAR CARTA ---
+    // --- PLAY CARD ---
     socket.on('playCard', (cardId, chosenColor) => {
         if (gameState !== 'playing') return;
-        
         const pIndex = players.findIndex(p => p.id === socket.id);
         if (pIndex === -1) return;
         const player = players[pIndex];
-        
         if (player.isDead || player.isSpectator) return;
 
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
         if (cardIndex === -1) return; 
-        
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
@@ -156,168 +166,92 @@ io.on('connection', (socket) => {
         let isSaff = false;
         if (pIndex !== currentTurn) {
             if (card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                isSaff = true; 
-                currentTurn = pIndex;
-                pendingPenalty = 0;
+                isSaff = true; currentTurn = pIndex; pendingPenalty = 0;
                 io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`); 
                 io.emit('playSound', 'saff');
-            } else { 
-                socket.emit('notification', '⏳ No es tu turno.'); 
-                return; 
-            }
+            } else { return; }
         }
 
-        // VALIDACIÓN DE TURNO
         if (pIndex === currentTurn && !isSaff) {
-            
-            // --- MODO CASTIGO (Corrección de Acumulación) ---
             if (pendingPenalty > 0) {
                 let allowed = false;
-                
-                // CORRECCIÓN STACKING: +4 y +12 entran sobre cualquier cosa
-                if (card.value === '+12') allowed = true;
-                else if (card.value === '+4') allowed = true;
-                else if (card.value === 'GRACIA') allowed = true;
-                // +2 solo entra sobre +2
+                if (card.value === '+12' || card.value === '+4' || card.value === 'GRACIA') allowed = true;
                 else if (top.value === '+2' && card.value === '+2') allowed = true;
-
-                if (!allowed) { 
-                    socket.emit('notification', `🚫 Tienes castigo (+${pendingPenalty}).`); 
-                    return; 
-                }
-            }
-            // --- MODO NORMAL ---
-            else {
+                if (!allowed) { socket.emit('notification', `🚫 Tienes castigo (+${pendingPenalty}).`); return; }
+            } else {
                 let valid = false;
-                if (card.color === 'negro') valid = true; // Comodines
-                else if (card.value === 'GRACIA') valid = true;
-                else if (card.color === activeColor) valid = true;
-                else if (card.value === top.value) valid = true;
-                
-                if (!valid) { 
-                    socket.emit('notification', `❌ Carta inválida.`); 
-                    return; 
-                }
+                if (card.color === 'negro' || card.value === 'GRACIA') valid = true;
+                else if (card.color === activeColor || card.value === top.value) valid = true;
+                if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
             }
         }
 
-        // --- EJECUCIÓN ---
-
-        // GRACIA
+        // EJECUCIÓN
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
-            player.hand.splice(cardIndex, 1); 
-            discardPile.push(card); 
-            io.emit('playSound', 'divine'); 
-
+            player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine'); 
             if (pendingPenalty > 0) {
-                io.emit('showDivine', `${player.name} anuló el castigo`); 
-                pendingPenalty = 0; 
-                
-                // CORRECCIÓN CONGELAMIENTO: Asegurar color activo tras Gracia
+                io.emit('showDivine', `${player.name} anuló el castigo`); pendingPenalty = 0; 
                 if (!activeColor) activeColor = 'rojo'; 
-
-                advanceTurn(); 
-                updateAll(); 
-                return;
+                advanceTurn(); updateAll(); return;
             }
             if (deadPlayer) {
                 deadPlayer.isDead = false; deadPlayer.isSpectator = false; 
                 io.emit('showDivine', `¡MILAGRO! ${deadPlayer.name} revivió`);
-            } else { 
-                io.emit('notification', `❤️ ${player.name} usó Gracia.`); 
-            }
-            advanceTurn(); 
-            updateAll(); 
-            return;
+            } else { io.emit('notification', `❤️ ${player.name} usó Gracia.`); }
+            advanceTurn(); updateAll(); return;
         }
 
-        // RIP
         if (card.value === 'RIP') {
             if (getAlivePlayersCount() < 2) {
                 player.hand.splice(cardIndex, 1); discardPile.push(card); 
-                io.emit('notification', '💀 RIP fallido.'); 
-                advanceTurn(); updateAll(); return;
+                io.emit('notification', '💀 RIP fallido.'); advanceTurn(); updateAll(); return;
             }
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip'); 
             gameState = 'rip_decision';
-            const attacker = player; 
-            const defender = players[getNextPlayerIndex()];
+            const attacker = player; const defender = players[getNextPlayerIndex()];
             duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
             io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`);
             updateAll(); return;
         }
 
-        // NORMAL / ESPECIAL
-        player.hand.splice(cardIndex, 1); 
-        discardPile.push(card); 
+        player.hand.splice(cardIndex, 1); discardPile.push(card); 
         io.emit('cardPlayedEffect', { color: card.color });
-
         if (card.color === 'negro' && chosenColor) activeColor = chosenColor; 
         else if (card.color !== 'negro') activeColor = card.color;
 
-        // CORRECCIÓN REVERSA EN 1vs1
         if (card.value === 'R') { 
-            if (getAlivePlayersCount() === 2) {
-                // En 2 jugadores, Reversa funciona como SALTO (vuelve a mí)
-                advanceTurn(); 
-            } else {
-                direction *= -1; 
-            }
+            if (getAlivePlayersCount() === 2) advanceTurn(); 
+            else direction *= -1; 
         }
+        if (card.value === 'X') advanceTurn();
         
-        if (card.value === 'X') {
-            advanceTurn(); 
-        }
-        
-        // ATAQUES
         if (['+2', '+4', '+12'].includes(card.value)) { 
             const val = parseInt(card.value.replace('+',''));
             pendingPenalty += val; 
             io.emit('notification', `💥 ¡+${val}! Total: ${pendingPenalty}`); 
-            io.emit('playSound', 'attack'); 
-            io.emit('shakeScreen'); 
+            io.emit('playSound', 'attack'); io.emit('shakeScreen'); 
             advanceTurn(); updateAll(); return; 
         }
 
         if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft');
-
-        if (player.hand.length === 0) finishRound(player); 
-        else { advanceTurn(); updateAll(); }
+        if (player.hand.length === 0) finishRound(player); else { advanceTurn(); updateAll(); }
     });
 
-    // --- ROBAR ---
     socket.on('draw', () => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
         if (pIndex === -1 || players[pIndex].isDead) return;
 
         if (pIndex === currentTurn) {
-            // CASTIGO
             if (pendingPenalty > 0) {
-                drawCards(pIndex, 1);
-                pendingPenalty--; // Descuenta 1
-                io.emit('playSound', 'soft');
-                
-                if (pendingPenalty > 0) {
-                    io.emit('notification', `😰 Faltan: ${pendingPenalty}`);
-                    updateAll();
-                } else {
-                    io.emit('notification', `😓 Terminó castigo. Pasa turno.`);
-                    advanceTurn(); 
-                    updateAll();
-                }
-            } 
-            // NORMAL
-            else {
+                drawCards(pIndex, 1); pendingPenalty--; io.emit('playSound', 'soft');
+                if (pendingPenalty > 0) { io.emit('notification', `😰 Faltan: ${pendingPenalty}`); updateAll(); } 
+                else { io.emit('notification', `😓 Terminó castigo.`); advanceTurn(); updateAll(); }
+            } else {
                 if (!players[pIndex].hasDrawn) { 
-                    drawCards(pIndex, 1); 
-                    players[pIndex].hasDrawn = true; 
-                    io.emit('playSound', 'soft');
-                    updateAll(); 
-                } else { 
-                    socket.emit('notification', 'Ya robaste.'); 
-                }
+                    drawCards(pIndex, 1); players[pIndex].hasDrawn = true; io.emit('playSound', 'soft'); updateAll(); 
+                } else { socket.emit('notification', 'Ya robaste.'); }
             }
         }
     });
@@ -325,10 +259,7 @@ io.on('connection', (socket) => {
     socket.on('passTurn', () => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === currentTurn && players[pIndex].hasDrawn && pendingPenalty === 0) { 
-            advanceTurn(); 
-            updateAll(); 
-        }
+        if (pIndex === currentTurn && players[pIndex].hasDrawn && pendingPenalty === 0) { advanceTurn(); updateAll(); }
     });
 
     socket.on('playGraceDefense', (chosenColor) => {
@@ -336,27 +267,19 @@ io.on('connection', (socket) => {
         const defender = players.find(p => p.id === socket.id);
         const cardIndex = defender.hand.findIndex(c => c.value === 'GRACIA');
         if (cardIndex !== -1) {
-            defender.hand.splice(cardIndex, 1); 
-            discardPile.push(defender.hand[cardIndex]); 
+            defender.hand.splice(cardIndex, 1); discardPile.push(defender.hand[cardIndex]); 
             activeColor = chosenColor || 'rojo';
-            io.emit('showDivine', `${defender.name} salvado por Gracia`); 
-            io.emit('playSound', 'divine');
-            const attIndex = players.findIndex(p => p.id === duelState.attackerId); 
-            drawCards(attIndex, 4); 
-            gameState = 'playing'; 
-            advanceTurn(); 
-            updateAll();
+            io.emit('showDivine', `${defender.name} salvado por Gracia`); io.emit('playSound', 'divine');
+            const attIndex = players.findIndex(p => p.id === duelState.attackerId); drawCards(attIndex, 4); 
+            gameState = 'playing'; advanceTurn(); updateAll();
         }
     });
 
     socket.on('ripDecision', (d) => {
         if (gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
         const def = players.find(p => p.id === duelState.defenderId);
-        if (d === 'surrender') { 
-            eliminatePlayer(def.id); checkWinCondition(); 
-        } else { 
-            io.emit('playSound', 'bell'); gameState = 'dueling'; updateAll(); 
-        }
+        if (d === 'surrender') { eliminatePlayer(def.id); checkWinCondition(); } 
+        else { io.emit('playSound', 'bell'); gameState = 'dueling'; updateAll(); }
     });
 
     socket.on('duelPick', (c) => {
@@ -374,7 +297,6 @@ io.on('connection', (socket) => {
 
     socket.on('restartGame', () => { resetGame(); updateAll(); });
     
-    // CORRECCIÓN CHAT: Guardar mensajes
     socket.on('sendChat', (text) => { 
         const p = players.find(x => x.id === socket.id); 
         if (p) {
@@ -386,7 +308,18 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
+        const p = players.find(p => p.id === socket.id);
+        if (!p) return;
+        
+        // Si el Host se va, heredar al siguiente
+        const wasAdmin = p.isAdmin;
         players = players.filter(pl => pl.id !== socket.id);
+        
+        if (wasAdmin && players.length > 0) {
+            players[0].isAdmin = true;
+            io.emit('notification', `👑 ${players[0].name} es el nuevo anfitrión.`);
+        }
+
         if (gameState === 'playing' || gameState === 'counting') {
             if (players.length < 1) resetGame();
             else {
@@ -487,11 +420,24 @@ function updateAll() {
         attackerName: duelState.attackerName, defenderName: duelState.defenderName, round: duelState.round, scoreAttacker: duelState.scoreAttacker, scoreDefender: duelState.scoreDefender, history: duelState.history, attackerId: duelState.attackerId, defenderId: duelState.defenderId, myChoice: null
     } : null;
     const pack = {
-        state: gameState, players: players.map((p, i) => ({ name: p.name, cardCount: p.hand.length, id: p.id, isTurn: (gameState === 'playing' && i === currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator })),
+        state: gameState, 
+        // MODIFICACIÓN: Pasamos flag isAdmin al cliente
+        players: players.map((p, i) => ({ 
+            name: p.name + (p.isAdmin ? " 👑" : ""), // Visual simple en el nombre
+            cardCount: p.hand.length, 
+            id: p.id, 
+            isTurn: (gameState === 'playing' && i === currentTurn), 
+            hasDrawn: p.hasDrawn, 
+            isDead: p.isDead, 
+            isSpectator: p.isSpectator,
+            isAdmin: p.isAdmin 
+        })),
         topCard: discardPile.length > 0 ? discardPile[discardPile.length - 1] : null, activeColor, currentTurn, duelInfo, pendingPenalty
     };
     players.forEach(p => {
         const mp = JSON.parse(JSON.stringify(pack));
+        // Flag especial para el cliente: ¿Soy Admin?
+        mp.iamAdmin = p.isAdmin;
         if (mp.duelInfo) {
             if (p.id === duelState.attackerId) mp.duelInfo.myChoice = duelState.attackerChoice;
             if (p.id === duelState.defenderId) mp.duelInfo.myChoice = duelState.defenderChoice;
@@ -500,7 +446,7 @@ function updateAll() {
     });
 }
 
-// --- CLIENTE (ESTÉTICA NUCLEAR INTACTA) ---
+// --- CLIENTE VISUAL NUCLEAR (VERSIÓN ORIGINAL RESTAURADA + GESTIÓN SALA) ---
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -510,74 +456,22 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>UNO y 1/2</title>
     <style>
-        /* CSS BLINDADO (NO TOCAR) */
         * { box-sizing: border-box; }
-        :root { 
-            --app-height: 100dvh; 
-            --safe-bottom: env(safe-area-inset-bottom, 20px);
-        }
-        body { 
-            margin: 0; padding: 0; 
-            font-family: 'Segoe UI', sans-serif; 
-            background: #1e272e; color: white; 
-            overflow: hidden; 
-            height: var(--app-height); 
-            display: flex; flex-direction: column; 
-            user-select: none; 
-            transition: background 0.5s; 
-        }
-        
+        :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        /* LAYOUT */
-        #game-area { 
-            display: none; 
-            flex-direction: column; 
-            height: 100%; 
-            width: 100%; 
-            position: relative; 
-            z-index: 5;
-            padding-bottom: calc(200px + var(--safe-bottom)); 
-        }
-
-        #players-zone { 
-            flex: 0 0 auto; 
-            padding: 10px; 
-            background: rgba(0,0,0,0.5); 
-            display: flex; 
-            flex-wrap: wrap; 
-            justify-content: center; 
-            gap: 5px; 
-            z-index: 20; 
-        }
+        #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(200px + var(--safe-bottom)); }
+        #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
         .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
 
-        #alert-zone { 
-            flex: 0 1 auto; 
-            display: flex; 
-            flex-direction: column; 
-            justify-content: center; 
-            align-items: center; 
-            min-height: 50px;
-            pointer-events: none; 
-            margin-top: 10px;
-        }
+        #alert-zone { flex: 0 1 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 50px; pointer-events: none; margin-top: 10px; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
 
-        #table-zone { 
-            flex: 1; 
-            display: flex; 
-            flex-direction: column; 
-            justify-content: center; 
-            align-items: center; 
-            gap: 15px; 
-            z-index: 15; 
-            position: relative;
-        }
-        
+        #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
@@ -588,32 +482,15 @@ app.get('/', (req, res) => {
         .btn-uno:active { transform: translateY(4px); box-shadow: none; }
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        #hand-zone { 
-            position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; 
-            background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; 
-            display: flex; align-items: center; padding: 10px 20px; 
-            padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; 
-            overflow-x: auto; overflow-y: hidden; white-space: nowrap; 
-            scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; 
-            z-index: 99999 !important; 
-        }
-        
-        .hand-card { 
-            flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; 
-            background: #444; display: flex; justify-content: center; align-items: center; 
-            font-size: 32px; font-weight: 900; color: white; text-shadow: 2px 2px 0 #000; 
-            scroll-snap-align: center; position: relative; cursor: pointer; 
-            box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1;
-        }
+        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 99999 !important; }
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; text-shadow: 2px 2px 0 #000; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
         .hand-card:active { transform: scale(0.95); }
 
-        /* ESTILOS FORZADOS (Backgrounds) */
         body.bg-rojo { background-color: #4a1c1c !important; } 
         body.bg-azul { background-color: #1c2a4a !important; } 
         body.bg-verde { background-color: #1c4a2a !important; } 
         body.bg-amarillo { background-color: #4a451c !important; }
 
-        /* MODALES */
         #login, #lobby { background: #2c3e50; z-index: 2000; }
         #rip-screen { background: rgba(50,0,0,0.98); z-index: 3000; }
         #duel-screen { background: rgba(0,0,0,0.98); z-index: 3000; }
@@ -627,18 +504,19 @@ app.get('/', (req, res) => {
     </style>
 </head>
 <body>
-
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Stable Edition</p>
+        <p>Host Edition</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
 
     <div id="lobby" class="screen">
         <h1>Sala de Espera</h1>
+        <p id="host-msg" style="color:gold; display:none;">¡Eres el Anfitrión! Inicia cuando estén todos.</p>
         <div id="lobby-users" style="font-size:20px; margin-bottom:20px;"></div>
         <button id="start-btn" onclick="start()" style="display:none; padding:15px 40px; background:#e67e22; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">EMPEZAR</button>
+        <p id="wait-msg" style="display:none;">Esperando al Anfitrión...</p>
     </div>
 
     <div id="game-area">
@@ -704,17 +582,7 @@ app.get('/', (req, res) => {
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false;
         
-        const colorMap = {
-            'rojo': '#ff5252',
-            'azul': '#448aff',
-            'verde': '#69f0ae',
-            'amarillo': '#ffd740',
-            'negro': '#212121',
-            'death-card': '#000000',
-            'divine-card': '#ffffff',
-            'mega-wild': '#4a148c'
-        };
-
+        const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
         const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
         function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
@@ -740,7 +608,6 @@ app.get('/', (req, res) => {
 
         socket.on('connect', () => myId = socket.id);
         socket.on('playSound', k => play(k));
-        
         socket.on('notification', m => {
             const el = document.getElementById('main-alert');
             el.innerText = m; el.style.display = 'block';
@@ -757,6 +624,14 @@ app.get('/', (req, res) => {
             const b = document.getElementById('chat-msgs');
             b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`;
             b.scrollTop = b.scrollHeight;
+        });
+        
+        // RECUPERAR HISTORIAL
+        socket.on('chatHistory', h => {
+             const b = document.getElementById('chat-msgs');
+             b.innerHTML = '';
+             h.forEach(m => b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`);
+             b.scrollTop = b.scrollHeight;
         });
 
         socket.on('countdownTick', n => {
@@ -776,7 +651,16 @@ app.get('/', (req, res) => {
             
             if(s.state === 'waiting') {
                 document.getElementById('lobby-users').innerHTML = s.players.map(p=>\`<div>\${p.name}</div>\`).join('');
-                document.getElementById('start-btn').style.display = s.players.length>=1 ? 'block':'none';
+                // GESTIÓN SALA: Botón solo para ADMIN
+                if (s.iamAdmin) {
+                     document.getElementById('start-btn').style.display = 'block';
+                     document.getElementById('host-msg').style.display = 'block';
+                     document.getElementById('wait-msg').style.display = 'none';
+                } else {
+                     document.getElementById('start-btn').style.display = 'none';
+                     document.getElementById('host-msg').style.display = 'none';
+                     document.getElementById('wait-msg').style.display = 'block';
+                }
                 document.getElementById('hand-zone').style.display='none';
                 return;
             }
@@ -785,29 +669,23 @@ app.get('/', (req, res) => {
             document.getElementById('hand-zone').style.display='flex';
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
-            // --- RENDERIZADO CARTA SUPERIOR ---
             const top = s.topCard;
             const tEl = document.getElementById('top-card');
             if(top) {
                 tEl.className = 'card-pile';
-                
                 let bg = colorMap[top.color] || '#444';
                 let txt = 'white';
                 let border = '3px solid white';
                 
-                // Color override si es activa
                 if(s.activeColor && top.color !== 'negro') bg = colorMap[top.color];
                 else if(s.activeColor && top.color === 'negro') bg = colorMap[s.activeColor];
 
-                // Especiales
                 if(top.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
                 else if(top.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
                 else if(top.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
                 else if(top.color === 'amarillo' || top.color === 'verde') txt = 'black';
 
-                tEl.style.backgroundColor = bg;
-                tEl.style.color = txt;
-                tEl.style.border = border;
+                tEl.style.backgroundColor = bg; tEl.style.color = txt; tEl.style.border = border;
                 tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
             }
 
@@ -824,12 +702,8 @@ app.get('/', (req, res) => {
             } else penEl.style.display='none';
 
             if(s.state === 'rip_decision') {
-                if(s.duelInfo.defenderId === myId) {
-                    document.getElementById('rip-screen').style.display='flex';
-                } else {
-                    const al = document.getElementById('main-alert');
-                    al.innerText = "⏳ Esperando Duelo..."; al.style.display = 'block';
-                }
+                if(s.duelInfo.defenderId === myId) document.getElementById('rip-screen').style.display='flex';
+                else { const al = document.getElementById('main-alert'); al.innerText = "⏳ Esperando Duelo..."; al.style.display = 'block'; }
             }
 
             if(s.state === 'dueling') {
@@ -850,21 +724,14 @@ app.get('/', (req, res) => {
             h.forEach(c => {
                 const d = document.createElement('div');
                 d.className = 'hand-card';
-                
-                // RENDERIZADO MANO
-                let bg = colorMap[c.color] || '#444';
-                let txt = 'white';
-                let border = '2px solid white';
+                let bg = colorMap[c.color] || '#444'; let txt = 'white'; let border = '2px solid white';
 
                 if(c.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
                 else if(c.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
                 else if(c.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
                 else if(c.color === 'amarillo' || c.color === 'verde') { txt = 'black'; }
 
-                d.style.backgroundColor = bg;
-                d.style.color = txt;
-                d.style.border = border;
-                
+                d.style.backgroundColor = bg; d.style.color = txt; d.style.border = border;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 d.onclick = () => {
                      if(c.color==='negro' && c.value!=='GRACIA') {

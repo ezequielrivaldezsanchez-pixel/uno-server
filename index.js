@@ -14,14 +14,14 @@ let activeColor = '';
 let pendingPenalty = 0;
 let countdownInterval = null;
 
-// DUELO (RIP)
+// DUELO
 let duelState = {
     attackerId: null, defenderId: null, attackerName: '', defenderName: '',
     round: 1, scoreAttacker: 0, scoreDefender: 0,
     attackerChoice: null, defenderChoice: null, history: []
 };
 
-// CHAT (Persistente)
+// CHAT
 let chatHistory = [];
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
@@ -39,13 +39,12 @@ function resetGame() {
     pendingPenalty = 0;
     if (countdownInterval) clearInterval(countdownInterval);
     
-    // Reseteo profundo de jugadores
     players.forEach((p, index) => { 
         p.hand = []; 
         p.hasDrawn = false; 
         p.isDead = false; 
         p.isSpectator = false;
-        p.isAdmin = (index === 0); // El primero es Admin
+        p.isAdmin = (index === 0);
     });
     
     duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
@@ -140,7 +139,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- PLAY CARD (CORAZÓN LÓGICO) ---
+    // --- PLAY CARD ---
     socket.on('playCard', (cardId, chosenColor) => {
         if (gameState !== 'playing') return;
         
@@ -156,7 +155,21 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
-        // Sincronizar activeColor (Seguridad)
+        // --- REGLA 3: CONDICIÓN DE VICTORIA (ÚLTIMA CARTA) ---
+        if (player.hand.length === 1) {
+            // Es la última carta. Solo permitimos Números o Gracia.
+            const isNumber = card.type === 'normal'; // 0-9
+            const isGracia = card.value === 'GRACIA';
+            
+            if (!isNumber && !isGracia) {
+                // Si es especial (+2, +4, Color, X, R, RIP, +12), bloqueamos.
+                socket.emit('notification', '🚫 No puedes ganar con Especial (Solo Números o Gracia).');
+                return; // INTERRUPCIÓN INMEDIATA
+            }
+        }
+        // -----------------------------------------------------
+
+        // Sincronizar activeColor
         if (top.color !== 'negro') activeColor = top.color;
 
         // SAFF
@@ -169,7 +182,7 @@ io.on('connection', (socket) => {
                 io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`);
                 io.emit('playSound', 'saff');
             } else {
-                return; // Ignorar clicks fuera de turno
+                return;
             }
         }
 
@@ -213,7 +226,7 @@ io.on('connection', (socket) => {
             if (pendingPenalty > 0) {
                 io.emit('showDivine', `${player.name} anuló el castigo`);
                 pendingPenalty = 0;
-                if (!activeColor) activeColor = 'rojo'; // Fallback
+                if (!activeColor) activeColor = 'rojo'; 
                 advanceTurn(1); updateAll(); return;
             }
             if (deadPlayer) {
@@ -222,6 +235,8 @@ io.on('connection', (socket) => {
             } else {
                 io.emit('notification', `❤️ ${player.name} usó Gracia.`);
             }
+            // Si era la última carta (Gracia está permitida), gana
+            if (player.hand.length === 0) { finishRound(player); return; }
             advanceTurn(1); updateAll(); return;
         }
 
@@ -233,12 +248,10 @@ io.on('connection', (socket) => {
                 advanceTurn(1); updateAll(); return;
             }
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip');
-            
             gameState = 'rip_decision';
             const attacker = player;
-            const victimIdx = getNextPlayerIndex(1); // Víctima es el siguiente
+            const victimIdx = getNextPlayerIndex(1);
             const defender = players[victimIdx];
-            
             duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
             io.emit('notification', `💀 ¡${attacker.name} RIP a ${defender.name}!`);
             updateAll(); return;
@@ -253,14 +266,11 @@ io.on('connection', (socket) => {
         else if (card.color !== 'negro') activeColor = card.color;
 
         let steps = 1;
-
         if (card.value === 'R') {
-            if (getAlivePlayersCount() === 2) steps = 2; // En 1vs1 es Salto
+            if (getAlivePlayersCount() === 2) steps = 2; 
             else direction *= -1;
         }
-        if (card.value === 'X') {
-            steps = 2;
-        }
+        if (card.value === 'X') steps = 2;
 
         if (['+2', '+4', '+12'].includes(card.value)) {
             const val = parseInt(card.value.replace('+',''));
@@ -268,7 +278,7 @@ io.on('connection', (socket) => {
             io.emit('notification', `💥 ¡+${val}! Total: ${pendingPenalty}`);
             io.emit('playSound', 'attack');
             if (val > 4) io.emit('shakeScreen');
-            advanceTurn(1); updateAll(); return; // Pasa turno al que debe recibir
+            advanceTurn(1); updateAll(); return; 
         }
 
         if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft');
@@ -296,7 +306,6 @@ io.on('connection', (socket) => {
                     advanceTurn(1); updateAll();
                 }
             } else {
-                // Validación relajada para evitar bloqueos
                 if (!players[pIndex].hasDrawn) {
                     drawCards(pIndex, 1);
                     players[pIndex].hasDrawn = true;
@@ -375,7 +384,6 @@ io.on('connection', (socket) => {
         const wasAdmin = p.isAdmin;
         players = players.filter(pl => pl.id !== socket.id);
         
-        // Heredar Admin
         if (wasAdmin && players.length > 0) {
             players[0].isAdmin = true;
             io.emit('notification', `👑 ${players[0].name} es el nuevo anfitrión.`);
@@ -385,7 +393,7 @@ io.on('connection', (socket) => {
             if (players.length < 1) resetGame();
             else {
                 if (currentTurn >= players.length) currentTurn = 0; 
-                if (players[currentTurn]) players[currentTurn].hasDrawn = false; // Seguridad
+                if (players[currentTurn]) players[currentTurn].hasDrawn = false;
                 updateAll();
             }
         } else {
@@ -394,7 +402,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- FUNCIONES AUXILIARES (LOGICA MATEMATICA ROBUSTA) ---
+// --- FUNCIONES AUXILIARES ---
 
 function startCountdown() {
     if (players.length < 1) return;
@@ -425,22 +433,16 @@ function drawCards(pid, n) {
     } 
 }
 
-// AVANCE MATEMÁTICO (FIX DEFINITIVO)
 function advanceTurn(steps) {
     if (players.length === 0) return;
-    
-    // LIMPIEZA TOTAL: Evita que el juego se trabe
-    players.forEach(p => p.hasDrawn = false);
+    players.forEach(p => p.hasDrawn = false); // Limpieza nuclear
 
     let attempts = 0;
     while (steps > 0 && attempts < players.length * 2) {
         currentTurn = (currentTurn + direction + players.length) % players.length;
-        if (!players[currentTurn].isDead) {
-            steps--; 
-        }
+        if (!players[currentTurn].isDead) { steps--; }
         attempts++;
     }
-    // Asegurar limpieza del nuevo turno
     if (players[currentTurn]) players[currentTurn].hasDrawn = false;
 }
 
@@ -456,10 +458,10 @@ function getNextPlayerIndex(steps) {
 }
 
 function finishRound(w) {
+    // REGLA 2: GAME OVER SCREEN
     gameState = 'waiting';
-    const res = players.map(p => ({ name: p.name + (p.isDead ? "(💀)" : ""), points: p.isDead ? 0 : calculateHandPoints(p.hand), winner: p.id === w.id }));
-    if (res.find(r => r.winner)) { res.find(r => r.winner).points = res.reduce((a, b) => a + b.points, 0); }
-    io.emit('gameOver', { winner: w.name, results: res }); io.emit('playSound', 'win');
+    io.emit('gameOver', { winner: w.name }); 
+    io.emit('playSound', 'win');
 }
 
 function checkWinCondition() {
@@ -512,7 +514,7 @@ function updateAll() {
     };
     players.forEach(p => {
         const mp = JSON.parse(JSON.stringify(pack));
-        mp.iamAdmin = p.isAdmin; // Flag para el cliente
+        mp.iamAdmin = p.isAdmin;
         if (mp.duelInfo) {
             if (p.id === duelState.attackerId) mp.duelInfo.myChoice = duelState.attackerChoice;
             if (p.id === duelState.defenderId) mp.duelInfo.myChoice = duelState.defenderChoice;
@@ -521,7 +523,7 @@ function updateAll() {
     });
 }
 
-// --- CLIENTE (VISUAL NUCLEAR + HOST) ---
+// --- CLIENTE ---
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -569,19 +571,26 @@ app.get('/', (req, res) => {
         #login, #lobby { background: #2c3e50; z-index: 2000; }
         #rip-screen { background: rgba(50,0,0,0.98); z-index: 3000; }
         #duel-screen { background: rgba(0,0,0,0.98); z-index: 3000; }
+        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 4000; display: none; text-align: center; border: 5px solid gold; box-sizing: border-box; }
         
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
         #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        
+        /* ESTILOS DE DUELO SELECCIONADO */
+        .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
+        .duel-btn:hover { opacity: 0.8; }
+        .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
+
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Host + Nuclear Stability</p>
+        <p>Definitive Master</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -620,6 +629,14 @@ app.get('/', (req, res) => {
         <input id="chat-in" style="width:100%; padding:10px; border:none; background:#333; color:white;" placeholder="Mensaje..." onkeypress="if(event.key==='Enter') sendChat()">
     </div>
 
+    <div id="game-over-screen" class="screen">
+        <h1 style="color:gold; font-size:60px; margin-bottom:10px;">🏆 ¡VICTORIA! 🏆</h1>
+        <h2 id="winner-name" style="color:white; font-size:40px;"></h2>
+        <div style="font-size:50px; margin:20px;">🎉🎊🥂</div>
+        <button id="restart-btn" onclick="socket.emit('restartGame')" style="display:none; padding:20px 40px; background:#e67e22; color:white; border:none; border-radius:30px; font-size:24px; cursor:pointer; border:3px solid white;">NUEVA PARTIDA</button>
+        <p id="restart-wait" style="display:none; color:#aaa;">Esperando al anfitrión para reiniciar...</p>
+    </div>
+
     <div id="rip-screen" class="screen">
         <h1 style="color:red; font-size:50px;">💀 RIP 💀</h1>
         <p>Defiéndete o muere</p>
@@ -635,9 +652,9 @@ app.get('/', (req, res) => {
         <h2 id="duel-names">... vs ...</h2>
         <h3 id="duel-sc">0 - 0</h3>
         <div id="duel-opts" style="margin-top:20px;">
-            <button onclick="pick('fuego')" style="font-size:40px; background:none; border:none; cursor:pointer;">🔥</button>
-            <button onclick="pick('hielo')" style="font-size:40px; background:none; border:none; cursor:pointer;">❄️</button>
-            <button onclick="pick('agua')" style="font-size:40px; background:none; border:none; cursor:pointer;">💧</button>
+            <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
+            <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
+            <button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button>
         </div>
         <div id="duel-info" style="margin-top:20px; color:#aaa;"></div>
     </div>
@@ -655,7 +672,7 @@ app.get('/', (req, res) => {
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myId = ''; let pendingCard = null; let pendingGrace = false;
+        let myId = ''; let pendingCard = null; let pendingGrace = false; let amAdmin = false;
         
         const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
@@ -708,8 +725,21 @@ app.get('/', (req, res) => {
              b.scrollTop = b.scrollHeight;
         });
 
+        socket.on('gameOver', data => {
+             document.getElementById('game-over-screen').style.display = 'flex';
+             document.getElementById('winner-name').innerText = data.winner;
+             if(amAdmin) {
+                 document.getElementById('restart-btn').style.display = 'inline-block';
+                 document.getElementById('restart-wait').style.display = 'none';
+             } else {
+                 document.getElementById('restart-btn').style.display = 'none';
+                 document.getElementById('restart-wait').style.display = 'block';
+             }
+        });
+
         socket.on('countdownTick', n => {
             document.getElementById('lobby').style.display='none';
+            document.getElementById('game-over-screen').style.display='none';
             document.getElementById('game-area').style.display='flex';
             document.getElementById('hand-zone').style.display='flex';
             const c = document.getElementById('countdown');
@@ -718,6 +748,7 @@ app.get('/', (req, res) => {
         });
 
         socket.on('updateState', s => {
+            amAdmin = s.iamAdmin;
             document.getElementById('login').style.display='none';
             document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
             document.getElementById('rip-screen').style.display = 'none';
@@ -725,7 +756,6 @@ app.get('/', (req, res) => {
             
             if(s.state === 'waiting') {
                 document.getElementById('lobby-users').innerHTML = s.players.map(p=>\`<div>\${p.name}</div>\`).join('');
-                // LÓGICA DE HOST VISUAL
                 if (s.iamAdmin) {
                      document.getElementById('start-btn').style.display = 'block';
                      document.getElementById('host-msg').style.display = 'block';
@@ -748,7 +778,6 @@ app.get('/', (req, res) => {
             if(top) {
                 tEl.className = 'card-pile';
                 let bg = colorMap[top.color] || '#444'; let txt = 'white'; let border = '3px solid white';
-                
                 if(s.activeColor && top.color !== 'negro') bg = colorMap[top.color];
                 else if(s.activeColor && top.color === 'negro') bg = colorMap[s.activeColor];
 
@@ -782,8 +811,18 @@ app.get('/', (req, res) => {
                 document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
                 document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
                 document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>\`<div>Gana: \${h.winnerName}</div>\`).join('');
+                
+                // REGLA 1: MARCAR SELECCIÓN VISUALMENTE
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+                
+                // Limpiar selecciones previas
+                ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
+                
+                // Marcar si ya elegí
+                if(s.duelInfo.myChoice) {
+                    document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected';
+                }
             }
         });
 

@@ -21,13 +21,13 @@ let duelState = {
     attackerChoice: null, defenderChoice: null, history: []
 };
 
-// CHAT
+// CHAT (Ahora persistente)
 let chatHistory = [];
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+2', 'X', 'R'];
 
-// --- FUNCIONES DEL SERVIDOR ---
+// --- FUNCIONES CORE ---
 
 function resetGame() {
     gameState = 'waiting';
@@ -49,26 +49,24 @@ function resetGame() {
 
 function createDeck() {
     deck = [];
-    // 1. Normales
     colors.forEach(color => {
         values.forEach(val => {
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // 2. Especiales Negras
+    // Especiales
     for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // 3. Únicas
+    // Únicas
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
-
     shuffle();
 }
 
@@ -80,11 +78,7 @@ function shuffle() {
 }
 
 function recycleDeck() {
-    if (discardPile.length <= 1) { 
-        createDeck(); 
-        io.emit('notification', '⚠️ Mazo regenerado.');
-        return; 
-    }
+    if (discardPile.length <= 1) { createDeck(); return; }
     const topCard = discardPile.pop();
     deck = [...discardPile];
     discardPile = [topCard];
@@ -108,20 +102,14 @@ function calculateHandPoints(hand) {
 // --- SOCKETS ---
 
 io.on('connection', (socket) => {
+    // Enviar historial al conectar
     socket.emit('chatHistory', chatHistory);
 
     socket.on('join', (name) => {
         const existing = players.find(p => p.id === socket.id);
         if (!existing) {
             const isLate = gameState !== 'waiting' && gameState !== 'counting';
-            const player = { 
-                id: socket.id, 
-                name: name.substring(0, 15), 
-                hand: [], 
-                hasDrawn: false, 
-                isSpectator: isLate, 
-                isDead: false 
-            };
+            const player = { id: socket.id, name: name.substring(0, 15), hand: [], hasDrawn: false, isSpectator: isLate, isDead: false };
             players.push(player);
             io.emit('notification', `👋 ${player.name} entró.`);
             updateAll();
@@ -130,198 +118,165 @@ io.on('connection', (socket) => {
 
     socket.on('requestStart', () => {
         if (gameState === 'waiting' && players.length >= 1) startCountdown();
-        else if (players.length < 1) io.emit('notification', '🚫 Esperando jugadores...');
     });
 
-    // --- PLAY CARD (CORAZÓN DEL JUEGO) ---
+    // --- JUGAR CARTA ---
     socket.on('playCard', (cardId, chosenColor) => {
         if (gameState !== 'playing') return;
-        
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1) return;
+        if (pIndex === -1 || players[pIndex].isDead) return;
         const player = players[pIndex];
-        
-        if (player.isDead || player.isSpectator) return;
-
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
         if (cardIndex === -1) return;
         
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
+        if (top.color !== 'negro') activeColor = top.color;
 
-        // Sincronización de seguridad de activeColor
-        if (top.color !== 'negro' && top.color) activeColor = top.color;
-
-        // 1. INTERCEPCIÓN (SAFF)
+        // SAFF (Intercepción)
         let isSaff = false;
         if (pIndex !== currentTurn) {
             if (card.color !== 'negro' && card.value === top.value && card.color === top.color) {
                 isSaff = true;
                 currentTurn = pIndex;
-                pendingPenalty = 0; // Limpieza total de penalización
+                pendingPenalty = 0;
                 io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`);
                 io.emit('playSound', 'saff');
             } else {
-                socket.emit('notification', '⏳ No es tu turno.');
-                return;
+                return; // Silencioso para no spamear
             }
         }
 
-        // 2. VALIDACIÓN DE TURNO
+        // VALIDACIÓN
         if (pIndex === currentTurn && !isSaff) {
-            
-            // --- MODO COMBATE (Hay Penalización) ---
+            // MODO COMBATE (HAY CASTIGO)
             if (pendingPenalty > 0) {
                 let allowed = false;
-
-                // Niveles de Poder: +2(1), +4(2), +12(3)
-                let topPower = 0;
-                if (top.value === '+2') topPower = 1;
-                if (top.value === '+4') topPower = 2;
-                if (top.value === '+12') topPower = 3;
-
-                let cardPower = 0;
-                if (card.value === '+2') cardPower = 1;
-                if (card.value === '+4') cardPower = 2;
-                if (card.value === '+12') cardPower = 3;
-
-                // Regla de Escalera: Igual o Mayor poder
+                let topPower = top.value === '+2' ? 1 : (top.value === '+4' ? 2 : (top.value === '+12' ? 3 : 0));
+                let cardPower = card.value === '+2' ? 1 : (card.value === '+4' ? 2 : (card.value === '+12' ? 3 : 0));
+                
                 if (cardPower > 0 && cardPower >= topPower) allowed = true;
-
-                // Defensa Absoluta
                 if (card.value === 'GRACIA') allowed = true;
 
                 if (!allowed) {
-                    socket.emit('notification', `🚫 Tienes un +${pendingPenalty}. Responde o roba.`);
+                    socket.emit('notification', `🚫 Debes tirar igual/mayor poder o robar.`);
                     return;
                 }
             } 
-            
-            // --- MODO NORMAL ---
+            // MODO NORMAL
             else {
                 let valid = false;
-                // Comodines siempre entran
-                if (card.color === 'negro') valid = true;
-                else if (card.value === 'GRACIA') valid = true;
-                // Coincidencia
+                if (card.color === 'negro' || card.value === 'GRACIA') valid = true;
                 else if (card.color === activeColor) valid = true;
                 else if (card.value === top.value) valid = true;
-
                 if (!valid) {
-                    socket.emit('notification', `❌ Carta inválida. Color: ${activeColor}`);
+                    socket.emit('notification', `❌ Carta inválida.`);
                     return;
                 }
             }
         }
 
-        // --- EJECUCIÓN DE CARTA ---
+        // --- EJECUCIÓN ---
 
-        // GRACIA (DEFENSA/USO)
+        // 1. GRACIA
         if (card.value === 'GRACIA') {
-            const deadPlayer = players.find(p => p.isDead);
             player.hand.splice(cardIndex, 1);
             discardPile.push(card);
             io.emit('playSound', 'divine');
             
-            // Si se usa para evitar castigo
             if (pendingPenalty > 0) {
-                io.emit('showDivine', `${player.name} anuló el castigo`);
+                io.emit('showDivine', `${player.name} anuló el castigo.`);
                 pendingPenalty = 0;
-                // MANTENEMOS EL COLOR ACTIVO ANTERIOR PARA EVITAR BLOQUEOS
-                // Si no hay color activo, por defecto rojo
-                if (!activeColor) activeColor = 'rojo'; 
-                
-                advanceTurn();
+                if (!activeColor) activeColor = 'rojo'; // Fallback de seguridad
+                advanceTurn(1); // Pasa 1 turno normal
                 updateAll();
                 return;
             }
-
-            // Si se usa para revivir
+            const deadPlayer = players.find(p => p.isDead);
             if (deadPlayer) {
                 deadPlayer.isDead = false; deadPlayer.isSpectator = false;
                 io.emit('showDivine', `¡MILAGRO! ${deadPlayer.name} revivió`);
             } else {
                 io.emit('notification', `❤️ ${player.name} usó Gracia.`);
             }
-            advanceTurn(); updateAll(); return;
+            advanceTurn(1); updateAll(); return;
         }
 
-        // RIP
+        // 2. RIP
         if (card.value === 'RIP') {
             if (getAlivePlayersCount() < 2) {
                 player.hand.splice(cardIndex, 1); discardPile.push(card);
-                io.emit('notification', '💀 RIP fallido.');
-                advanceTurn(); updateAll(); return;
+                advanceTurn(1); updateAll(); return;
             }
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip');
-            
             gameState = 'rip_decision';
             const attacker = player;
-            const defender = players[getNextPlayerIndex()];
-            
-            duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
-            io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`);
+            // Víctima es el siguiente jugador
+            const victimIdx = getNextPlayerIndex(1);
+            const defender = players[victimIdx];
+            duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, history: [] };
+            io.emit('notification', `💀 ¡${attacker.name} RIP a ${defender.name}!`);
             updateAll(); return;
         }
 
-        // JUGADA NORMAL
+        // 3. JUGADA ESTÁNDAR
         player.hand.splice(cardIndex, 1);
         discardPile.push(card);
         io.emit('cardPlayedEffect', { color: card.color });
 
-        // Actualizar Color Activo
         if (card.color === 'negro' && chosenColor) activeColor = chosenColor;
         else if (card.color !== 'negro') activeColor = card.color;
 
-        // Efectos de Flujo
-        if (card.value === 'R') {
-            direction *= -1;
-            if (getAlivePlayersCount() === 2) advanceTurn(); 
-        }
-        if (card.value === 'X') advanceTurn();
+        let steps = 1;
 
-        // Efectos de Ataque
+        // LÓGICA DE TURNOS (Salto y Reversa)
+        if (card.value === 'R') {
+            if (getAlivePlayersCount() === 2) {
+                steps = 2; // En 1vs1, Reversa es Salto (Juega de nuevo)
+            } else {
+                direction *= -1; // En >2, cambia sentido
+            }
+        }
+        if (card.value === 'X') {
+            steps = 2; // Salta al siguiente
+        }
+
+        // CASTIGOS
         if (['+2', '+4', '+12'].includes(card.value)) {
             const val = parseInt(card.value.replace('+',''));
             pendingPenalty += val;
             let sound = val === 2 ? 'attack' : (val === 4 ? 'attack' : 'thunder');
-            io.emit('notification', `💥 ¡+${val}! Acumulado: ${pendingPenalty}`);
+            io.emit('notification', `💥 +${val} (Total: ${pendingPenalty})`);
             io.emit('playSound', sound);
             if (val > 4) io.emit('shakeScreen');
-            advanceTurn(); updateAll(); return;
+        } else {
+            if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft');
         }
 
-        if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft');
-
         if (player.hand.length === 0) finishRound(player);
-        else { advanceTurn(); updateAll(); }
+        else { advanceTurn(steps); updateAll(); }
     });
 
     // --- ROBAR ---
     socket.on('draw', () => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1 || players[pIndex].isDead) return;
+        if (pIndex === -1) return;
 
+        // FIX DE EMERGENCIA: Si es mi turno pero el server dice que ya robé,
+        // permitimos resetear si no hay cartas jugadas, para evitar bloqueo.
         if (pIndex === currentTurn) {
-            // MODO CASTIGO
             if (pendingPenalty > 0) {
                 drawCards(pIndex, 1);
                 pendingPenalty--;
                 io.emit('playSound', 'soft');
-
-                if (pendingPenalty > 0) {
-                    io.emit('notification', `😰 Faltan: ${pendingPenalty}`);
-                    updateAll();
+                if (pendingPenalty <= 0) {
+                    io.emit('notification', 'Terminó castigo. Pasa turno.');
+                    advanceTurn(1);
                 } else {
-                    io.emit('notification', `😓 Terminó castigo. Pasa turno.`);
-                    advanceTurn();
                     updateAll();
                 }
-            } 
-            // MODO NORMAL
-            else {
-                // Validación simplificada para evitar bloqueos
+            } else {
                 if (!players[pIndex].hasDrawn) {
                     drawCards(pIndex, 1);
                     players[pIndex].hasDrawn = true;
@@ -331,24 +286,29 @@ io.on('connection', (socket) => {
                     socket.emit('notification', 'Ya robaste.');
                 }
             }
-        } else {
-            socket.emit('notification', 'No es tu turno.');
         }
     });
 
-    // --- PASAR ---
     socket.on('passTurn', () => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1) return;
-
         if (pIndex === currentTurn && players[pIndex].hasDrawn && pendingPenalty === 0) {
-            advanceTurn();
+            advanceTurn(1);
             updateAll();
         }
     });
 
-    // --- OTROS EVENTOS ---
+    // --- CHAT Y OTROS ---
+    socket.on('sendChat', (text) => {
+        const p = players.find(x => x.id === socket.id);
+        if (p) {
+            const msg = { name: p.name, text };
+            chatHistory.push(msg);
+            if(chatHistory.length > 50) chatHistory.shift(); // Limitar historial
+            io.emit('chatMessage', msg);
+        }
+    });
+
     socket.on('playGraceDefense', (chosenColor) => {
         if (gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
         const defender = players.find(p => p.id === socket.id);
@@ -357,21 +317,25 @@ io.on('connection', (socket) => {
             defender.hand.splice(cardIndex, 1);
             discardPile.push(defender.hand[cardIndex]);
             activeColor = chosenColor || 'rojo';
-            io.emit('showDivine', `${defender.name} salvado por Gracia`);
+            io.emit('showDivine', `¡${defender.name} usa Gracia!`);
             io.emit('playSound', 'divine');
+            
             const attIndex = players.findIndex(p => p.id === duelState.attackerId);
-            drawCards(attIndex, 4);
+            drawCards(attIndex, 4); // Castigo al atacante
             gameState = 'playing';
-            advanceTurn();
+            advanceTurn(1);
             updateAll();
         }
     });
 
     socket.on('ripDecision', (d) => {
         if (gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
-        const def = players.find(p => p.id === duelState.defenderId);
-        if (d === 'surrender') { io.emit('notification', `🏳️ ${def.name} se rindió.`); eliminatePlayer(def.id); checkWinCondition(); }
-        else { io.emit('playSound', 'bell'); gameState = 'dueling'; updateAll(); }
+        if (d === 'surrender') {
+            eliminatePlayer(duelState.defenderId);
+            checkWinCondition();
+        } else {
+            gameState = 'dueling'; updateAll();
+        }
     });
 
     socket.on('duelPick', (c) => {
@@ -384,36 +348,25 @@ io.on('connection', (socket) => {
 
     socket.on('sayUno', () => {
         const p = players.find(p => p.id === socket.id);
-        if (p && !p.isDead) { io.emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2! 🚨`); io.emit('playSound', 'uno'); }
+        if (p && !p.isDead) {
+            io.emit('notification', `🚨 ¡${p.name} gritó UNO! 🚨`);
+            io.emit('playSound', 'uno');
+        }
     });
 
     socket.on('restartGame', () => { resetGame(); updateAll(); });
-    socket.on('sendChat', (text) => { const p = players.find(x => x.id === socket.id); if (p) io.emit('chatMessage', { name: p.name, text }); });
 
     socket.on('disconnect', () => {
-        const p = players.find(p => p.id === socket.id);
-        if (!p) return;
-        if (gameState === 'dueling' || gameState === 'rip_decision') {
-            if (p.id === duelState.attackerId) { io.emit('notification', `🏃‍♂️ Atacante huyó.`); gameState = 'playing'; advanceTurn(); }
-            else if (p.id === duelState.defenderId) { io.emit('notification', `🏃‍♂️ Defensor huyó.`); eliminatePlayer(p.id); checkWinCondition(); return; }
-        }
         players = players.filter(pl => pl.id !== socket.id);
-        if (gameState === 'playing' || gameState === 'counting') {
-            if (players.length < 1) resetGame();
-            else { 
-                if (currentTurn >= players.length) currentTurn = 0; 
-                // Asegurar limpieza si el turno quedó en el aire
-                if(players[currentTurn]) players[currentTurn].hasDrawn = false;
-            }
-        }
+        if (players.length < 1) resetGame();
+        else if (gameState === 'playing' && currentTurn >= players.length) currentTurn = 0;
         updateAll();
     });
 });
 
-// --- FUNCIONES AUXILIARES (RESET GLOBAL IMPLEMENTADO) ---
+// --- FUNCIONES AUXILIARES ROBUSTAS ---
 
 function startCountdown() {
-    if (players.length < 1) return;
     gameState = 'counting';
     let count = 3;
     createDeck();
@@ -424,12 +377,12 @@ function startCountdown() {
     discardPile = [safeCard];
     activeColor = safeCard.color;
     currentTurn = 0; pendingPenalty = 0;
-    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; for (let i = 0; i < 7; i++) drawCards(players.indexOf(p), 1); });
-    io.emit('countdownTick', 3);
-    countdownInterval = setInterval(() => {
-        if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
-        io.emit('countdownTick', count); io.emit('playSound', 'soft');
-        if (count <= 0) { clearInterval(countdownInterval); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); } count--;
+    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; drawCards(players.indexOf(p), 7); });
+    
+    let int = setInterval(() => {
+        io.emit('countdownTick', count);
+        if (count <= 0) { clearInterval(int); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); }
+        count--;
     }, 1000);
 }
 
@@ -441,81 +394,94 @@ function drawCards(pid, n) {
     } 
 }
 
-function advanceTurn() {
-    // 1. LIMPIEZA TOTAL: Reseteamos hasDrawn de TODOS para evitar bloqueos
+// NUEVA LÓGICA DE AVANCE MATEMÁTICO (SOLUCIÓN AL BLOQUEO)
+function advanceTurn(steps) {
+    if (players.length === 0) return;
+    
+    // 1. Limpieza preventiva global
     players.forEach(p => p.hasDrawn = false);
+
+    let found = false;
+    let attempts = 0;
     
-    let attempts = 0; let aliveCount = getAlivePlayersCount();
-    if (aliveCount < 2 && gameState === 'playing' && players.length > 1) return;
-    
-    // 2. Cálculo del siguiente turno
-    do { 
-        currentTurn = (currentTurn + direction + players.length) % players.length; 
-        attempts++; 
-    } while (players[currentTurn].isDead && attempts < players.length * 2);
-    
-    // 3. Garantía final
+    // Avanzamos 'steps' veces buscando al siguiente vivo
+    while (steps > 0 && attempts < players.length * 2) {
+        currentTurn = (currentTurn + direction + players.length) % players.length;
+        if (!players[currentTurn].isDead) {
+            steps--; // Solo descontamos si el jugador está vivo
+        }
+        attempts++;
+    }
+    // Asegurar limpieza del nuevo jugador actual
     if (players[currentTurn]) players[currentTurn].hasDrawn = false;
 }
 
-function getNextPlayerIndex() {
-    let next = currentTurn; let attempts = 0;
-    do { next = (next + direction + players.length) % players.length; attempts++; } while (players[next].isDead && attempts < players.length * 2);
+function getNextPlayerIndex(steps) {
+    let next = currentTurn;
+    let attempts = 0;
+    while (steps > 0 && attempts < players.length * 2) {
+        next = (next + direction + players.length) % players.length;
+        if (!players[next].isDead) steps--;
+        attempts++;
+    }
     return next;
 }
 
 function finishRound(w) {
     gameState = 'waiting';
-    const res = players.map(p => ({ name: p.name + (p.isDead ? "(💀)" : ""), points: p.isDead ? 0 : calculateHandPoints(p.hand), winner: p.id === w.id }));
-    if (res.find(r => r.winner)) { res.find(r => r.winner).points = res.reduce((a, b) => a + b.points, 0); }
-    io.emit('gameOver', { winner: w.name, results: res }); io.emit('playSound', 'win');
+    const res = players.map(p => ({ name: p.name, points: p.isDead ? 0 : calculateHandPoints(p.hand), winner: p.id === w.id }));
+    io.emit('gameOver', { winner: w.name, results: res });
+    io.emit('playSound', 'win');
 }
 
 function checkWinCondition() {
-    if (players.length > 1 && getAlivePlayersCount() <= 1) {
-        const winner = players.find(p => !p.isDead); if (winner) finishRound(winner); else resetGame(); updateAll();
-    } else { gameState = 'playing'; advanceTurn(); updateAll(); }
+    if (getAlivePlayersCount() <= 1) {
+        const winner = players.find(p => !p.isDead);
+        if (winner) finishRound(winner); else resetGame();
+    } else {
+        gameState = 'playing'; advanceTurn(1); updateAll();
+    }
 }
 
+function eliminatePlayer(id) { const p = players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
+function getAlivePlayersCount() { return players.filter(p => !p.isDead).length; }
+
 function resolveDuelRound() {
+    // Lógica simple de piedra papel tijera
     const att = duelState.attackerChoice, def = duelState.defenderChoice;
     let winner = 'tie';
     if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
     else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
     
     if (winner == 'attacker') duelState.scoreAttacker++; else if (winner == 'defender') duelState.scoreDefender++;
-    duelState.history.push({ round: duelState.round, att, def, winnerName: winner == 'attacker' ? duelState.attackerName : (winner == 'defender' ? duelState.defenderName : 'Empate') });
-    duelState.attackerChoice = null; duelState.defenderChoice = null; io.emit('playSound', 'soft');
+    duelState.history.push({ round: duelState.round, att, def, winner: winner });
+    duelState.attackerChoice = null; duelState.defenderChoice = null;
     
-    if (duelState.round >= 3 || duelState.scoreAttacker >= 2 || duelState.scoreDefender >= 2) setTimeout(finalizeDuel, 2000); else { duelState.round++; updateAll(); }
+    if (duelState.round >= 3 || duelState.scoreAttacker >= 2 || duelState.scoreDefender >= 2) {
+        const finalWinner = duelState.scoreAttacker > duelState.scoreDefender ? 'att' : (duelState.scoreDefender > duelState.scoreAttacker ? 'def' : 'tie');
+        if (finalWinner === 'att') { eliminatePlayer(duelState.defenderId); checkWinCondition(); }
+        else if (finalWinner === 'def') { drawCards(players.findIndex(p => p.id === duelState.attackerId), 4); gameState = 'playing'; advanceTurn(1); updateAll(); }
+        else { gameState = 'playing'; advanceTurn(1); updateAll(); }
+    } else {
+        duelState.round++; updateAll();
+    }
 }
-
-function finalizeDuel() {
-    const att = players.find(p => p.id === duelState.attackerId); const def = players.find(p => p.id === duelState.defenderId);
-    if (!att || !def) { gameState = 'playing'; updateAll(); return; }
-    if (duelState.scoreAttacker > duelState.scoreDefender) { io.emit('notification', `💀 ${att.name} GANA.`); io.emit('playSound', 'thunder'); eliminatePlayer(def.id); checkWinCondition(); }
-    else if (duelState.scoreDefender > duelState.scoreAttacker) { io.emit('notification', `🛡️ ${def.name} GANA. Castigo atacante.`); drawCards(players.findIndex(p => p.id === duelState.attackerId), 4); gameState = 'playing'; advanceTurn(); updateAll(); }
-    else { io.emit('notification', `🤝 EMPATE.`); gameState = 'playing'; advanceTurn(); updateAll(); }
-}
-
-function eliminatePlayer(id) { const p = players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
-function getAlivePlayersCount() { return players.filter(p => !p.isDead).length; }
 
 function updateAll() {
-    const duelInfo = (gameState === 'dueling' || gameState === 'rip_decision') ? {
-        attackerName: duelState.attackerName, defenderName: duelState.defenderName, round: duelState.round, scoreAttacker: duelState.scoreAttacker, scoreDefender: duelState.scoreDefender, history: duelState.history, attackerId: duelState.attackerId, defenderId: duelState.defenderId, myChoice: null
-    } : null;
+    const duelInfo = (gameState === 'dueling' || gameState === 'rip_decision') ? duelState : null;
     const pack = {
-        state: gameState, players: players.map((p, i) => ({ name: p.name, cardCount: p.hand.length, id: p.id, isTurn: (gameState === 'playing' && i === currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator })),
-        topCard: discardPile.length > 0 ? discardPile[discardPile.length - 1] : null, activeColor, currentTurn, duelInfo, pendingPenalty
+        state: gameState, 
+        players: players.map((p, i) => ({ 
+            name: p.name, cardCount: p.hand.length, id: p.id, 
+            isTurn: (gameState === 'playing' && i === currentTurn), 
+            hasDrawn: p.hasDrawn, isDead: p.isDead 
+        })),
+        topCard: discardPile[discardPile.length - 1], 
+        activeColor, currentTurn, duelInfo, pendingPenalty
     };
     players.forEach(p => {
-        const mp = JSON.parse(JSON.stringify(pack));
-        if (mp.duelInfo) {
-            if (p.id === duelState.attackerId) mp.duelInfo.myChoice = duelState.attackerChoice;
-            if (p.id === duelState.defenderId) mp.duelInfo.myChoice = duelState.defenderChoice;
-        }
-        io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand);
+        io.to(p.id).emit('updateState', pack);
+        io.to(p.id).emit('handUpdate', p.hand);
     });
 }
 
@@ -526,272 +492,228 @@ app.get('/', (req, res) => {
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>UNO y 1/2</title>
     <style>
         * { box-sizing: border-box; }
-        :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
-        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        body { margin: 0; background: #1e272e; color: white; font-family: sans-serif; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+        .screen { position: absolute; top:0; left:0; width:100%; height:100%; display:none; flex-direction:column; justify-content:center; align-items:center; z-index:10; background:#2c3e50; }
         
-        #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(200px + var(--safe-bottom)); }
-        #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
-        .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
-        .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
-        .is-dead { text-decoration: line-through; opacity: 0.6; }
+        #game-area { display: none; flex-direction: column; height: 100%; }
+        #players-zone { padding: 10px; display: flex; justify-content: center; gap: 5px; background: rgba(0,0,0,0.5); flex-wrap: wrap; }
+        .player-badge { padding: 5px 10px; background: #333; border-radius: 15px; border: 1px solid #555; }
+        .is-turn { background: #2ecc71; color: black; border: 2px solid white; transform: scale(1.1); font-weight: bold; }
+        .is-dead { text-decoration: line-through; opacity: 0.5; }
 
-        #alert-zone { flex: 0 1 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 50px; pointer-events: none; margin-top: 10px; }
-        .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
-        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
-
-        #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
-        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
-        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; }
-        #deck-pile { background: #e74c3c; cursor: pointer; }
-        #top-card { background: #333; }
+        #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 20px; }
+        .card { width: 80px; height: 120px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 30px; font-weight: bold; text-shadow: 1px 1px 0 #000; box-shadow: 0 4px 8px rgba(0,0,0,0.5); position: relative; }
+        #deck { background: #e74c3c; cursor: pointer; }
         
-        #uno-btn-area { display: flex; gap: 15px; margin-top: 20px; z-index: 30; }
-        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
-        .btn-uno:active { transform: translateY(4px); box-shadow: none; }
-        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
+        #hand-zone { height: 160px; background: rgba(0,0,0,0.9); display: flex; align-items: center; padding: 10px; gap: 10px; overflow-x: auto; border-top: 2px solid #555; z-index: 100; }
+        .hand-card { min-width: 90px; height: 130px; border-radius: 8px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-size: 40px; cursor: pointer; }
 
-        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 99999 !important; }
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; text-shadow: 2px 2px 0 #000; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
-        .hand-card:active { transform: scale(0.95); }
-
-        body.bg-rojo { background-color: #4a1c1c !important; } 
-        body.bg-azul { background-color: #1c2a4a !important; } 
-        body.bg-verde { background-color: #1c4a2a !important; } 
-        body.bg-amarillo { background-color: #4a451c !important; }
-
-        #login, #lobby { background: #2c3e50; z-index: 2000; }
-        #rip-screen { background: rgba(50,0,0,0.98); z-index: 3000; }
-        #duel-screen { background: rgba(0,0,0,0.98); z-index: 3000; }
+        /* Colores dinámicos */
+        .bg-rojo { background: #c0392b !important; }
+        .bg-azul { background: #2980b9 !important; }
+        .bg-verde { background: #27ae60 !important; }
+        .bg-amarillo { background: #f1c40f !important; }
+        .bg-negro { background: #2c3e50 !important; }
         
-        #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
-        .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
+        /* Chat Flotante mejorado */
+        #chat-btn { position: fixed; bottom: 180px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; z-index: 2000; display: flex; justify-content: center; align-items: center; cursor: pointer; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 24px; border: 2px solid white; }
+        #chat-win { position: fixed; bottom: 240px; right: 20px; width: 250px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #7f8c8d; z-index: 2000; display: none; flex-direction: column; border-radius: 10px; overflow: hidden; }
+        #chat-history { flex: 1; overflow-y: auto; padding: 10px; font-size: 12px; }
+        #chat-input { width: 100%; border: none; padding: 10px; background: #333; color: white; }
 
-        #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
-        #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
-        @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
+        /* Notificaciones */
+        #notification { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border: 2px solid gold; border-radius: 10px; font-size: 20px; display: none; z-index: 3000; text-align: center; }
+        
+        #color-picker { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 10px; display: none; z-index: 4000; }
+        .cp-btn { width: 50px; height: 50px; border-radius: 50%; display: inline-block; margin: 5px; cursor: pointer; border: 2px solid #ccc; }
     </style>
 </head>
 <body>
-    <div id="login" class="screen" style="display:flex;">
-        <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Unbreakable Edition</p>
-        <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
-        <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
-    </div>
 
-    <div id="lobby" class="screen">
-        <h1>Sala de Espera</h1>
-        <div id="lobby-users" style="font-size:20px; margin-bottom:20px;"></div>
-        <button id="start-btn" onclick="start()" style="display:none; padding:15px 40px; background:#e67e22; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">EMPEZAR</button>
+    <div id="login" class="screen" style="display:flex;">
+        <h1>UNO y 1/2</h1>
+        <input id="name-in" placeholder="Nombre" style="padding:10px; font-size:16px;">
+        <br><button onclick="join()" style="padding:10px 20px; font-size:16px;">Entrar</button>
     </div>
 
     <div id="game-area">
         <div id="players-zone"></div>
-        <div id="alert-zone">
-            <div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div>
-            <div id="main-alert" class="alert-box"></div>
-        </div>
+        
         <div id="table-zone">
-            <div id="decks-container">
-                <div id="deck-pile" class="card-pile" onclick="draw()">📦</div>
-                <div id="top-card" class="card-pile"></div>
+            <div id="notification"></div>
+            <div style="display:flex; gap:20px;">
+                <div id="deck" class="card" onclick="draw()">📦</div>
+                <div id="top-card" class="card"></div>
             </div>
-            <div id="uno-btn-area">
-                <button id="btn-pass" class="btn-pass" onclick="pass()">PASAR</button>
-                <button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button>
-            </div>
+            <button onclick="uno()" style="padding:10px 20px; background:#e74c3c; color:white; border:none; border-radius:20px; font-weight:bold; margin-top:20px;">¡UNO y 1/2!</button>
+            <button id="pass-btn" onclick="pass()" style="display:none; padding:10px 20px; background:#f39c12; color:white; border:none; border-radius:20px; margin-top:10px;">PASAR</button>
         </div>
-    </div>
 
-    <div id="hand-zone"></div>
+        <div id="hand-zone"></div>
+    </div>
 
     <div id="chat-btn" onclick="toggleChat()">💬</div>
     <div id="chat-win">
-        <div id="chat-msgs" style="flex:1; overflow-y:auto; padding:10px; font-size:12px; color:#ddd;"></div>
-        <input id="chat-in" style="width:100%; padding:10px; border:none; background:#333; color:white;" placeholder="Mensaje..." onkeypress="if(event.key==='Enter') sendChat()">
-    </div>
-
-    <div id="rip-screen" class="screen">
-        <h1 style="color:red; font-size:50px;">💀 RIP 💀</h1>
-        <p>Defiéndete o muere</p>
-        <button onclick="ripResp('duel')" style="padding:20px; background:red; border:3px solid gold; color:white; font-size:18px; margin:10px; border-radius:10px;">⚔️ ACEPTAR DUELO</button>
-        <button onclick="ripResp('surrender')" style="padding:15px; background:#444; border:1px solid white; color:white; margin:10px; border-radius:10px;">🏳️ Rendirse</button>
-        <div id="grace-btn" style="display:none; margin-top:20px;">
-            <button onclick="graceDef()" style="padding:20px; background:white; color:red; border:3px solid gold; font-weight:bold; border-radius:10px;">❤️ USAR MILAGRO</button>
-        </div>
-    </div>
-
-    <div id="duel-screen" class="screen">
-        <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
-        <h2 id="duel-names">... vs ...</h2>
-        <h3 id="duel-sc">0 - 0</h3>
-        <div id="duel-opts" style="margin-top:20px;">
-            <button onclick="pick('fuego')" style="font-size:40px; background:none; border:none; cursor:pointer;">🔥</button>
-            <button onclick="pick('hielo')" style="font-size:40px; background:none; border:none; cursor:pointer;">❄️</button>
-            <button onclick="pick('agua')" style="font-size:40px; background:none; border:none; cursor:pointer;">💧</button>
-        </div>
-        <div id="duel-info" style="margin-top:20px; color:#aaa;"></div>
+        <div id="chat-history"></div>
+        <input id="chat-input" placeholder="Mensaje..." onkeypress="if(event.key==='Enter') sendChat()">
     </div>
 
     <div id="color-picker">
-        <h3>Elige Color</h3>
-        <div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div>
-        <div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div>
-        <div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div>
-        <div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div>
+        <div class="cp-btn" style="background:#c0392b" onclick="pickColor('rojo')"></div>
+        <div class="cp-btn" style="background:#2980b9" onclick="pickColor('azul')"></div>
+        <div class="cp-btn" style="background:#27ae60" onclick="pickColor('verde')"></div>
+        <div class="cp-btn" style="background:#f1c40f" onclick="pickColor('amarillo')"></div>
     </div>
 
-    <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:6000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
+    <div id="rip-modal" class="screen" style="background:rgba(0,0,0,0.95)">
+        <h1 style="color:red">TE HAN LANZADO RIP</h1>
+        <button onclick="socket.emit('ripDecision','duel')">ACEPTAR DUELO</button>
+        <button onclick="socket.emit('ripDecision','surrender')">RENDIRSE</button>
+        <br><br>
+        <button id="grace-btn" style="display:none; border:2px solid gold; color:gold; background:transparent;" onclick="graceDef()">USAR GRACIA</button>
+    </div>
+
+    <div id="duel-modal" class="screen">
+        <h1 style="color:gold">DUELO</h1>
+        <h2 id="duel-score">0 - 0</h2>
+        <div style="font-size:40px;">
+            <span onclick="socket.emit('duelPick','fuego')">🔥</span>
+            <span onclick="socket.emit('duelPick','hielo')">❄️</span>
+            <span onclick="socket.emit('duelPick','agua')">💧</span>
+        </div>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myId = ''; let pendingCard = null; let pendingGrace = false;
-        
-        const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
-        const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
-        const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
-        function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
+        let myId = null;
+        let pendingCard = null;
+        let pendingGrace = false;
 
-        function join() { socket.emit('join', document.getElementById('user-in').value); play('soft'); }
-        function start() { socket.emit('requestStart'); }
+        const colorHex = { 'rojo': '#c0392b', 'azul': '#2980b9', 'verde': '#27ae60', 'amarillo': '#f1c40f', 'negro': '#2c3e50' };
+
+        function join() {
+            const name = document.getElementById('name-in').value;
+            if(name) { socket.emit('join', name); document.getElementById('login').style.display='none'; document.getElementById('game-area').style.display='flex'; }
+        }
+
         function draw() { socket.emit('draw'); }
         function pass() { socket.emit('passTurn'); }
         function uno() { socket.emit('sayUno'); }
-        function sendChat() { const i=document.getElementById('chat-in'); if(i.value){socket.emit('sendChat',i.value);i.value='';} }
-        function toggleChat() { const w=document.getElementById('chat-win'); w.style.display=w.style.display==='flex'?'none':'flex'; }
         
-        document.getElementById('hand-zone').addEventListener('wheel', e => { e.preventDefault(); document.getElementById('hand-zone').scrollLeft += e.deltaY; });
-
-        function pickCol(c) { 
-            document.getElementById('color-picker').style.display='none'; 
-            if(pendingGrace) { socket.emit('playGraceDefense', c); pendingGrace=false; }
-            else { socket.emit('playCard', pendingCard, c); pendingCard=null; }
+        function sendChat() {
+            const inp = document.getElementById('chat-input');
+            if(inp.value.trim()) { socket.emit('sendChat', inp.value); inp.value = ''; }
         }
-        function ripResp(d) { socket.emit('ripDecision', d); }
-        function pick(c) { socket.emit('duelPick', c); }
-        function graceDef() { pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
+        function toggleChat() {
+            const win = document.getElementById('chat-win');
+            win.style.display = win.style.display === 'flex' ? 'none' : 'flex';
+        }
 
+        function pickColor(c) {
+            document.getElementById('color-picker').style.display = 'none';
+            if(pendingGrace) { socket.emit('playGraceDefense', c); pendingGrace=false; }
+            else { socket.emit('playCard', pendingCard, c); pendingCard = null; }
+        }
+        function graceDef() { pendingGrace=true; document.getElementById('rip-modal').style.display='none'; document.getElementById('color-picker').style.display='block'; }
+
+        // SONIDOS
+        const sounds = {
+            soft: new Audio('https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3'),
+            attack: new Audio('https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3'),
+            start: new Audio('https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3')
+        };
+        socket.on('playSound', k => { if(sounds[k]) sounds[k].play().catch(()=>{}); });
+
+        // UPDATES
         socket.on('connect', () => myId = socket.id);
-        socket.on('playSound', k => play(k));
-        socket.on('notification', m => {
-            const el = document.getElementById('main-alert');
-            el.innerText = m; el.style.display = 'block';
-            setTimeout(() => el.style.display='none', 3000);
+        
+        socket.on('chatHistory', hist => {
+            const box = document.getElementById('chat-history');
+            box.innerHTML = '';
+            hist.forEach(m => box.innerHTML += \`<div><b>\${m.name}:</b> \${m.text}</div>\`);
         });
-
-        socket.on('showDivine', m => {
-            const el = document.getElementById('main-alert');
-            el.innerText = m; el.style.display='block'; el.style.background='white'; el.style.color='gold';
-            setTimeout(() => { el.style.display='none'; el.style.background='rgba(0,0,0,0.95)'; el.style.color='white'; }, 4000);
-        });
-
         socket.on('chatMessage', m => {
-            const b = document.getElementById('chat-msgs');
-            b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`;
-            b.scrollTop = b.scrollHeight;
+            const box = document.getElementById('chat-history');
+            box.innerHTML += \`<div><b>\${m.name}:</b> \${m.text}</div>\`;
+            box.scrollTop = box.scrollHeight;
         });
 
-        socket.on('countdownTick', n => {
-            document.getElementById('lobby').style.display='none';
-            document.getElementById('game-area').style.display='flex';
-            document.getElementById('hand-zone').style.display='flex';
-            const c = document.getElementById('countdown');
-            c.style.display='flex'; c.innerText=n;
-            if(n<=0) c.style.display='none';
+        socket.on('notification', t => {
+            const n = document.getElementById('notification');
+            n.innerText = t; n.style.display = 'block';
+            setTimeout(() => n.style.display='none', 2000);
         });
 
         socket.on('updateState', s => {
-            document.getElementById('login').style.display='none';
-            document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
-            document.getElementById('rip-screen').style.display = 'none';
-            document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none';
-            
-            if(s.state === 'waiting') {
-                document.getElementById('lobby-users').innerHTML = s.players.map(p=>\`<div>\${p.name}</div>\`).join('');
-                document.getElementById('start-btn').style.display = s.players.length>=1 ? 'block':'none';
-                document.getElementById('hand-zone').style.display='none';
-                return;
-            }
-
-            document.getElementById('game-area').style.display='flex';
-            document.getElementById('hand-zone').style.display='flex';
-            document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
-
-            const top = s.topCard;
-            const tEl = document.getElementById('top-card');
-            if(top) {
-                tEl.className = 'card-pile';
-                let bg = colorMap[top.color] || '#444'; let txt = 'white'; let border = '3px solid white';
-                
-                if(s.activeColor && top.color !== 'negro') bg = colorMap[top.color];
-                else if(s.activeColor && top.color === 'negro') bg = colorMap[s.activeColor];
-
-                if(top.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
-                else if(top.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
-                else if(top.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
-                else if(top.color === 'amarillo' || top.color === 'verde') txt = 'black';
-
-                tEl.style.backgroundColor = bg; tEl.style.color = txt; tEl.style.border = border;
-                tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
-            }
-
-            document.getElementById('players-zone').innerHTML = s.players.map(p => 
-                \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.name} (\${p.cardCount})</div>\`
+            // Render Players
+            const pz = document.getElementById('players-zone');
+            pz.innerHTML = s.players.map(p => 
+                \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">
+                    \${p.name} (\${p.cardCount})
+                </div>\`
             ).join('');
 
-            const me = s.players.find(p=>p.id===myId);
-            document.getElementById('btn-pass').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
-            
-            const penEl = document.getElementById('penalty-display');
-            if(me && me.isTurn && s.pendingPenalty>0) {
-                penEl.style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty;
-            } else penEl.style.display='none';
-
-            if(s.state === 'rip_decision') {
-                if(s.duelInfo.defenderId === myId) document.getElementById('rip-screen').style.display='flex';
-                else { const al = document.getElementById('main-alert'); al.innerText = "⏳ Esperando Duelo..."; al.style.display = 'block'; }
+            // Render Table
+            const tc = document.getElementById('top-card');
+            if(s.topCard) {
+                const c = s.topCard;
+                tc.style.backgroundColor = colorHex[s.activeColor || c.color] || '#333';
+                tc.style.color = (s.activeColor==='amarillo'||c.color==='amarillo') ? 'black':'white';
+                tc.innerText = c.value;
+                if(c.value==='RIP') tc.innerText = '💀';
+                if(c.value==='GRACIA') tc.innerText = '❤️';
             }
 
+            // Controls
+            const me = s.players.find(p => p.id === myId);
+            document.getElementById('pass-btn').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'block' : 'none';
+
+            // Modals
+            if(s.state === 'rip_decision') {
+                if(s.duelInfo && s.duelInfo.defenderId === myId) {
+                    document.getElementById('rip-modal').style.display = 'flex';
+                }
+            } else {
+                document.getElementById('rip-modal').style.display = 'none';
+            }
+            
             if(s.state === 'dueling') {
-                document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
-                document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
-                document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>\`<div>Gana: \${h.winnerName}</div>\`).join('');
-                const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
-                document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+                document.getElementById('duel-modal').style.display = 'flex';
+                if(s.duelInfo) document.getElementById('duel-score').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
+            } else {
+                document.getElementById('duel-modal').style.display = 'none';
             }
         });
 
-        socket.on('handUpdate', h => {
+        socket.on('handUpdate', hand => {
             const hz = document.getElementById('hand-zone');
             hz.innerHTML = '';
-            const hasGrace = h.some(c=>c.value==='GRACIA');
-            document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
+            const hasGrace = hand.some(c => c.value === 'GRACIA');
+            document.getElementById('grace-btn').style.display = hasGrace ? 'block' : 'none';
 
-            h.forEach(c => {
-                const d = document.createElement('div');
-                d.className = 'hand-card';
-                let bg = colorMap[c.color] || '#444'; let txt = 'white'; let border = '2px solid white';
-
-                if(c.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
-                else if(c.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
-                else if(c.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
-                else if(c.color === 'amarillo' || c.color === 'verde') { txt = 'black'; }
-
-                d.style.backgroundColor = bg; d.style.color = txt; d.style.border = border;
-                d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
-                d.onclick = () => {
-                     if(c.color==='negro' && c.value!=='GRACIA') {
-                        if(c.value==='RIP') socket.emit('playCard', c.id, null);
-                        else { pendingCard=c.id; document.getElementById('color-picker').style.display='block'; }
-                     } else socket.emit('playCard', c.id, null);
+            hand.forEach(c => {
+                const el = document.createElement('div');
+                el.className = 'hand-card';
+                el.style.backgroundColor = colorHex[c.color] || '#333';
+                el.style.color = c.color==='amarillo'?'black':'white';
+                el.innerText = c.value;
+                if(c.value==='RIP') el.innerText = '💀';
+                if(c.value==='GRACIA') el.innerText = '❤️';
+                
+                el.onclick = () => {
+                    if(c.color === 'negro' && c.value !== 'GRACIA') {
+                         if(c.value === 'RIP') socket.emit('playCard', c.id, null);
+                         else { pendingCard = c.id; document.getElementById('color-picker').style.display='block'; }
+                    } else {
+                        socket.emit('playCard', c.id, null);
+                    }
                 };
-                hz.appendChild(d);
+                hz.appendChild(el);
             });
         });
     </script>
@@ -800,4 +722,4 @@ app.get('/', (req, res) => {
     `);
 });
 
-http.listen(process.env.PORT || 3000, () => console.log('SERVER LISTO'));
+http.listen(process.env.PORT || 3000, () => console.log('SERVER OK'));

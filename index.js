@@ -3,7 +3,7 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- VARIABLES GLOBALES (TU LÓGICA ORIGINAL) ---
+// --- VARIABLES GLOBALES (Lógica del Servidor) ---
 let gameState = 'waiting'; 
 let players = [];
 let deck = [];
@@ -14,7 +14,7 @@ let activeColor = '';
 let pendingPenalty = 0; 
 let countdownInterval = null;
 
-// VARIABLES DEL DUELO
+// DUELO
 let duelState = {
     attackerId: null, defenderId: null, attackerName: '', defenderName: '',
     round: 1, scoreAttacker: 0, scoreDefender: 0,
@@ -27,7 +27,7 @@ let chatHistory = [];
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+2', 'X', 'R'];
 
-// --- FUNCIONES CORE DEL JUEGO ---
+// --- FUNCIONES CORE ---
 
 function resetGame() {
     gameState = 'waiting';
@@ -38,14 +38,7 @@ function resetGame() {
     activeColor = '';
     pendingPenalty = 0;
     if (countdownInterval) clearInterval(countdownInterval);
-    
-    players.forEach(p => {
-        p.hand = [];
-        p.hasDrawn = false;
-        p.isDead = false;
-        p.isSpectator = true; 
-    });
-    
+    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = true; });
     duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
 }
 
@@ -57,18 +50,16 @@ function createDeck() {
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    
+    // Especiales
     for(let i=0; i<4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     }
-    
     for(let i=0; i<2; i++) {
         deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     }
-
     shuffle();
 }
 
@@ -101,7 +92,7 @@ function calculateHandPoints(hand) {
     return points;
 }
 
-// --- LÓGICA DE SOCKETS ---
+// --- SOCKET LOGIC ---
 
 io.on('connection', (socket) => {
     socket.emit('chatHistory', chatHistory);
@@ -110,14 +101,7 @@ io.on('connection', (socket) => {
         const existing = players.find(p => p.id === socket.id);
         if(!existing) {
             const isLate = gameState !== 'waiting' && gameState !== 'counting';
-            const player = { 
-                id: socket.id, 
-                name: name.substring(0, 15), 
-                hand: [], 
-                hasDrawn: false, 
-                isSpectator: isLate, 
-                isDead: false 
-            };
+            const player = { id: socket.id, name: name.substring(0, 15), hand: [], hasDrawn: false, isSpectator: isLate, isDead: false };
             players.push(player);
             io.emit('notification', `👋 ${player.name} entró.`);
             
@@ -125,7 +109,6 @@ io.on('connection', (socket) => {
             chatHistory.push(sysMsg);
             if(chatHistory.length > 50) chatHistory.shift();
             io.emit('chatMessage', sysMsg);
-            
             updateAll();
         }
     });
@@ -141,11 +124,8 @@ io.on('connection', (socket) => {
     });
 
     socket.on('requestStart', () => {
-        if(gameState === 'waiting' && players.length >= 1) {
-            startCountdown();
-        } else {
-            io.emit('notification', '🚫 Esperando jugadores...');
-        }
+        if(gameState === 'waiting' && players.length >= 1) startCountdown();
+        else io.emit('notification', '🚫 Esperando jugadores...');
     });
 
     socket.on('playCard', (cardId, chosenColor) => {
@@ -162,7 +142,7 @@ io.on('connection', (socket) => {
 
         if (top.color !== 'negro') activeColor = top.color;
 
-        // Validaciones de penalización
+        // Penalizaciones
         if (pIndex === currentTurn && pendingPenalty > 0) {
             let allowed = false;
             if (top.value === '+12' && card.value === '+12') allowed = true;
@@ -178,13 +158,12 @@ io.on('connection', (socket) => {
             if (top.value === '+12' && (card.value === '+2' || card.value === '+4')) { io.emit('notification', `⛔ Jerarquía: +12 es supremo.`); return; }
         }
 
-        // SAFF Logic
-        let isSaff = false;
+        // SAFF
         if (pIndex !== currentTurn) {
             if (card.color === 'negro') return; 
             if (card.value === top.value && card.color === top.color) {
-                isSaff = true; currentTurn = pIndex; pendingPenalty = 0; 
                 io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.emit('playSound', 'saff'); 
+                currentTurn = pIndex; pendingPenalty = 0; 
             } else { return; }
         } else {
             let valid = false;
@@ -193,7 +172,7 @@ io.on('connection', (socket) => {
             if (!valid) return;
         }
 
-        // Efectos de cartas especiales
+        // GRACIA
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine'); 
@@ -206,15 +185,24 @@ io.on('connection', (socket) => {
             advanceTurn(); updateAll(); return;
         }
 
+        // RIP (SOLUCIÓN BUG)
         if (card.value === 'RIP') {
             if(getAlivePlayersCount() < 2) {
                 player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('notification', '💀 RIP fallido.'); advanceTurn(); updateAll(); return;
             }
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip'); 
+            
+            // Cambio de estado
             gameState = 'rip_decision';
-            const attacker = player; const defender = players[getNextPlayerIndex()];
+            const attacker = player; 
+            const defender = players[getNextPlayerIndex()];
+            
             duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
-            updateAll(); io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`); return;
+            
+            // IMPORTANTE: Notificar a todos que estamos en estado RIP
+            io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`); 
+            updateAll(); 
+            return;
         }
 
         player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('cardPlayedEffect', { color: card.color });
@@ -304,8 +292,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- FUNCIONES AUXILIARES ---
-
 function checkWinCondition() {
     if(players.length > 1 && getAlivePlayersCount() <= 1) {
         const winner = players.find(p => !p.isDead); if(winner) finishRound(winner); else resetGame(); updateAll();
@@ -381,12 +367,18 @@ function updateAll() {
     };
     players.forEach(p => {
         const mp = JSON.parse(JSON.stringify(pack));
-        if(mp.duelInfo) { if(p.id===duelState.attackerId) mp.duelInfo.myChoice=duelState.attackerChoice; if(p.id===duelState.defenderId) mp.duelInfo.myChoice=duelState.defenderChoice; }
+        // Permitir que el atacante sepa quiénes están peleando, pero no la elección del otro
+        if(mp.duelInfo) { 
+            mp.duelInfo.attackerId = duelState.attackerId; // Enviar IDs para validación cliente
+            mp.duelInfo.defenderId = duelState.defenderId;
+            if(p.id===duelState.attackerId) mp.duelInfo.myChoice=duelState.attackerChoice; 
+            if(p.id===duelState.defenderId) mp.duelInfo.myChoice=duelState.defenderChoice; 
+        }
         io.to(p.id).emit('updateState', mp); if(!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand);
     });
 }
 
-// --- CLIENTE VISUAL OPTIMIZADO (AQUÍ ESTÁ LA MEJORA) ---
+// --- CLIENTE VISUAL REESTRUCTURADO (Layout Vertical + Bugfix) ---
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -396,332 +388,368 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>UNO y 1/2</title>
     <style>
-        /* BASE & RESETS */
+        /* RESET */
+        * { box-sizing: border-box; }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: 100vh; display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
-        .screen { display: none; width: 100%; height: 100vh; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; }
         
-        /* FONDOS DINÁMICOS */
-        .bg-rojo { background: #4a1c1c; } .bg-azul { background: #1c2a4a; } .bg-verde { background: #1c4a2a; } .bg-amarillo { background: #4a451c; }
+        /* PANTALLAS */
+        .screen { display: none; width: 100%; height: 100vh; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        /* CARTAS (ESTÉTICA) */
-        .card { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-weight: 900; font-size: 24px; color: white; text-shadow: 2px 2px 0 #000; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; position: relative; background: #333; cursor: pointer; }
-        .card:active { transform: scale(0.95); }
-        .rojo { background: #ff6b6b; } .azul { background: #48dbfb; } .verde { background: #1dd1a1; } .amarillo { background: #feca57; color: black; text-shadow: none; }
-        .negro { background: #222; border-color: gold; } .death-card { background: #000; border: 3px solid #666; color: red; font-size: 30px; } .divine-card { background: white; border: 3px solid gold; color: red; font-size: 30px; text-shadow: none; }
-        .mega-wild { background: #4b0082; border: 3px solid #ff00ff; color: #fff; box-shadow: 0 0 10px #ff00ff; }
-        .card.zombie { opacity: 0.5; filter: grayscale(100%); cursor: not-allowed; }
-
-        /* MANO DEL JUGADOR (MEJORA: SCROLL HORIZONTAL) */
-        #hand-container {
-            position: absolute; bottom: 0; left: 0; right: 0; height: 130px;
-            background: rgba(0,0,0,0.6); border-top: 1px solid #555;
-            display: flex; align-items: center; padding: 0 15px; gap: 10px;
-            overflow-x: auto; overflow-y: hidden; white-space: nowrap;
-            /* Scroll fluido y snap para móvil */
-            scroll-behavior: smooth; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory;
+        /* LAYOUT DE JUEGO PRINCIPAL (FLEXBOX VERTICAL) */
+        #game-area {
+            display: none; /* Se activa con JS */
+            flex-direction: column;
+            justify-content: space-between;
+            height: 100vh;
+            width: 100%;
+            position: relative;
+            z-index: 5;
         }
-        /* Ajuste para que las cartas no se encojan en la mano */
-        #hand-container .card { flex: 0 0 70px; scroll-snap-align: center; }
-        #hand-container .card:hover { transform: translateY(-15px); z-index: 10; border-color: gold; }
 
-        /* TABLERO CENTRAL */
-        #game-area { z-index: 5; }
-        #table-center { display: flex; gap: 20px; justify-content: center; align-items: center; margin-bottom: 140px; transform: scale(1.2); }
+        /* NIVEL 1: JUGADORES */
+        #players-zone {
+            flex: 0 0 auto;
+            padding: 10px;
+            background: rgba(0,0,0,0.6);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 5px;
+            z-index: 20;
+        }
+        .player-badge { background: #333; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
+        .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
+        .is-dead { text-decoration: line-through; opacity: 0.6; }
+
+        /* NIVEL 2: NOTIFICACIONES (Zona reservada opaca) */
+        #alert-zone {
+            flex: 1 1 auto; /* Ocupa el espacio disponible superior */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            min-height: 80px;
+        }
+        .alert-box {
+            background: rgba(0,0,0,0.95);
+            border: 2px solid gold;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 20px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+            animation: pop 0.3s ease-out;
+            max-width: 90%;
+            display: none; /* Controlado por JS */
+        }
+        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
+
+        /* NIVEL 3: MESA CENTRAL */
+        #table-zone {
+            flex: 2 1 auto;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            position: relative;
+        }
+        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
+        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
+        #top-card { background: #333; }
         
-        /* LISTA DE JUGADORES */
-        #players-list { position: absolute; top: 10px; width: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; pointer-events: none; }
-        .player-badge { background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 15px; font-size: 12px; transition: all 0.3s; border: 1px solid #555; }
-        .is-turn { background: #2ecc71; color: black; font-weight: bold; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; border: 2px solid white; }
-        .is-dead { text-decoration: line-through; color: #aaa; background: #000; }
+        #uno-btn-area { margin-top: 10px; }
+        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
+        .btn-uno:active { transform: translateY(4px); box-shadow: none; }
+        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* MODALES Y POPUPS (Z-INDEX ALTO) */
-        #rip-decision-screen, #duel-arena { z-index: 100; background: rgba(0,0,0,0.95); }
-        #color-picker { z-index: 200; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; padding: 20px; border-radius: 15px; box-shadow: 0 0 50px rgba(0,0,0,0.8); text-align: center; }
-        #color-picker h3 { color: #333; margin-top: 0; }
-        .color-opt { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 5px; cursor: pointer; border: 2px solid #ddd; }
+        /* NIVEL 4: MANO DEL JUGADOR */
+        #hand-zone {
+            flex: 0 0 170px; /* Altura fija aumentada */
+            background: rgba(0,0,0,0.8);
+            border-top: 1px solid #555;
+            display: flex;
+            align-items: center;
+            padding: 10px 15px;
+            padding-bottom: 25px; /* Espacio extra para barras de móvil */
+            gap: 10px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            white-space: nowrap;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+            width: 100%;
+        }
+        /* Estilos Cartas en mano */
+        .hand-card {
+            flex: 0 0 80px; /* Ancho fijo */
+            height: 120px;
+            border-radius: 8px;
+            border: 2px solid white;
+            background: #444;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 30px;
+            font-weight: 900;
+            color: white;
+            text-shadow: 2px 2px 0 #000;
+            scroll-snap-align: center;
+            position: relative;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+        }
+        /* Colores */
+        .bg-rojo { background: #4a1c1c !important; } .bg-azul { background: #1c2a4a !important; } .bg-verde { background: #1c4a2a !important; } .bg-amarillo { background: #4a451c !important; }
+        .rojo { background: #ff6b6b; } .azul { background: #48dbfb; } .verde { background: #1dd1a1; } .amarillo { background: #feca57; color: black; text-shadow: none; }
+        .negro { background: #222; border-color: gold; }
+        .death-card { background: #000; border: 3px solid #666; color: red; } 
+        .divine-card { background: white; border: 3px solid gold; color: red; text-shadow: none; }
+        .mega-wild { background: #4b0082; border: 3px solid #ff00ff; box-shadow: 0 0 10px #ff00ff; }
+
+        /* MODALES */
+        #login, #lobby { background: #2c3e50; z-index: 100; }
+        #rip-screen { background: rgba(50,0,0,0.98); z-index: 200; }
+        #duel-screen { background: rgba(0,0,0,0.98); z-index: 200; }
         
-        /* NOTIFICACIONES */
-        #notification { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: gold; color: black; padding: 10px 20px; border-radius: 20px; font-weight: bold; z-index: 300; display: none; box-shadow: 0 5px 15px rgba(0,0,0,0.3); width: 80%; text-align: center; }
-        #penalty-alert { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: #ff4757; font-size: 40px; font-weight: 900; text-shadow: 2px 2px 0 white; display: none; pointer-events: none; z-index: 50; animation: pulse 0.5s infinite alternate; }
-        @keyframes pulse { to { transform: translate(-50%, -50%) scale(1.1); } }
+        #color-picker { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 300; display: none; text-align: center; box-shadow: 0 0 50px black; }
+        .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
-        /* CHAT FLOTANTE (SOLUCIÓN MÓVIL) */
-        #chat-toggle { position: fixed; bottom: 150px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.4); cursor: pointer; z-index: 200; border: 2px solid white; }
-        #chat-window { position: fixed; bottom: 210px; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.9); border: 1px solid #555; border-radius: 10px; display: none; flex-direction: column; z-index: 200; }
-        #chat-messages { flex: 1; overflow-y: auto; padding: 10px; font-size: 13px; color: #ddd; }
-        #chat-input-area { display: flex; border-top: 1px solid #555; }
-        #chat-input { flex: 1; background: #222; border: none; color: white; padding: 10px; border-bottom-left-radius: 10px; outline: none; }
-        #chat-send { background: #3498db; border: none; color: white; padding: 0 15px; border-bottom-right-radius: 10px; cursor: pointer; }
-
-        /* CONTROLES DE JUEGO (UNO y PASAR) */
-        #game-controls { position: fixed; bottom: 140px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; }
-        .action-btn { padding: 10px 20px; border-radius: 25px; border: none; font-weight: bold; color: white; font-size: 16px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .btn-uno { background: #e74c3c; border: 2px solid white; }
-        .btn-pass { background: #f39c12; border: 2px solid white; display: none; }
-
-        /* ESTILOS DE DUELO */
-        .duel-btn { width: 80px; height: 80px; border-radius: 50%; font-size: 30px; margin: 10px; border: 4px solid white; cursor: pointer; }
-        .duel-btn.selected { border-color: gold; box-shadow: 0 0 20px gold; transform: scale(1.1); }
-        .fuego { background: #e74c3c; } .hielo { background: #74b9ff; } .agua { background: #0984e3; }
+        /* CHAT */
+        #chat-btn { position: fixed; bottom: 190px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 90; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 250px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 90; border-radius: 10px; }
+        
+        @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>
 <body>
-    <script>
-        const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
-        const audioObj = {}; Object.keys(sounds).forEach(k => { audioObj[k] = new Audio(sounds[k]); audioObj[k].volume = 0.3; });
-        function playSound(key) { if(audioObj[key]) { audioObj[key].currentTime=0; audioObj[key].play().catch(e=>{}); } }
-    </script>
 
-    <div id="login" class="screen" style="display:flex; background: #2c3e50;">
-        <h1 style="font-size:60px; margin-bottom:10px;">UNO y 1/2</h1>
-        <p style="opacity:0.7;">Edición Mobile & PC</p>
-        <input id="username" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:18px; border-radius:25px; border:none; text-align:center; width: 70%;">
-        <br>
-        <button onclick="joinGame()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:25px; font-size:20px; font-weight:bold; cursor:pointer;">JUGAR</button>
+    <div id="login" class="screen" style="display:flex;">
+        <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
+        <p>Vertical Edition</p>
+        <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
+        <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
 
-    <div id="lobby" class="screen" style="background: #34495e;">
+    <div id="lobby" class="screen">
         <h1>Sala de Espera</h1>
-        <div id="lobby-list" style="font-size:20px; margin-bottom:20px;"></div>
-        <button id="btn-start" onclick="requestStart()" style="display:none; padding:15px 40px; background:#e67e22; color:white; border:none; border-radius:25px; font-size:20px; cursor:pointer;">EMPEZAR PARTIDA</button>
+        <div id="lobby-users" style="font-size:20px; margin-bottom:20px;"></div>
+        <button id="start-btn" onclick="start()" style="display:none; padding:15px 40px; background:#e67e22; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">EMPEZAR</button>
     </div>
 
-    <div id="game-area" class="screen">
-        <div id="players-list"></div>
-        <div id="notification"></div>
-        <div id="penalty-alert">¡CASTIGO!<br>+<span id="penalty-count">0</span></div>
-        
-        <div id="table-center">
-            <div id="deck-pile" class="card" onclick="drawCard()">📦</div>
-            <div id="top-card" class="card"></div>
+    <div id="game-area">
+        <div id="players-zone"></div>
+
+        <div id="alert-zone">
+            <div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div>
+            <div id="main-alert" class="alert-box"></div>
         </div>
 
-        <div id="game-controls">
-            <button id="btn-pass" class="action-btn btn-pass" onclick="passTurn()">Pasar Turno</button>
-            <button class="action-btn btn-uno" onclick="sayUno()">¡UNO y 1/2!</button>
+        <div id="table-zone">
+            <div id="decks-container">
+                <div id="deck-pile" class="card-pile" onclick="draw()">📦</div>
+                <div id="top-card" class="card-pile"></div>
+            </div>
+            <div id="uno-btn-area">
+                <button id="btn-pass" class="btn-pass" onclick="pass()">PASAR TURNO</button>
+                <button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button>
+            </div>
         </div>
 
-        <div id="hand-container"></div>
+        <div id="hand-zone"></div>
     </div>
 
-    <div id="chat-toggle" onclick="toggleChat()">💬</div>
-    <div id="chat-window">
-        <div id="chat-messages"></div>
-        <div id="chat-input-area">
-            <input id="chat-input" type="text" placeholder="Mensaje..." onkeypress="handleChatKey(event)">
-            <button id="chat-send" onclick="sendChat()">Enviar</button>
-        </div>
+    <div id="chat-btn" onclick="toggleChat()">💬</div>
+    <div id="chat-win">
+        <div id="chat-msgs" style="flex:1; overflow-y:auto; padding:10px; font-size:12px; color:#ddd;"></div>
+        <input id="chat-in" style="width:100%; padding:10px; border:none; background:#333; color:white;" placeholder="Mensaje..." onkeypress="if(event.key==='Enter') sendChat()">
     </div>
 
-    <div id="color-picker" style="display:none;">
-        <h3>Elige Color</h3>
-        <div class="color-opt" style="background:red;" onclick="selectColor('rojo')"></div>
-        <div class="color-opt" style="background:#00a8ff;" onclick="selectColor('azul')"></div>
-        <div class="color-opt" style="background:#4cd137;" onclick="selectColor('verde')"></div>
-        <div class="color-opt" style="background:gold;" onclick="selectColor('amarillo')"></div>
-    </div>
-
-    <div id="rip-decision-screen" class="screen">
-        <h1>💀 ¡TE LANZARON RIP!</h1>
-        <p>Defiéndete o muere</p>
-        <button onclick="ripResponse('duel')" style="padding:20px; background:#c0392b; color:white; border:2px solid gold; font-size:18px; border-radius:10px;">⚔️ ACEPTAR DUELO</button>
-        <br><br>
-        <button onclick="ripResponse('surrender')" style="padding:15px; background:#555; color:white; border:none; font-size:14px; border-radius:10px;">🏳️ Rendirse</button>
-        <div id="grace-option" style="display:none; margin-top:20px;">
-            <button onclick="playGraceDefense()" style="padding:20px; background:white; color:red; border:3px solid gold; font-weight:bold; border-radius:10px;">❤️ USAR MILAGRO</button>
+    <div id="rip-screen" class="screen">
+        <h1 style="color:red; font-size:50px;">💀 RIP 💀</h1>
+        <p style="font-size:20px;">¡Te han desafiado a muerte!</p>
+        <button onclick="ripResp('duel')" style="padding:20px; background:red; border:3px solid gold; color:white; font-size:18px; margin:10px; border-radius:10px;">⚔️ ACEPTAR DUELO</button>
+        <button onclick="ripResp('surrender')" style="padding:15px; background:#444; border:1px solid white; color:white; margin:10px; border-radius:10px;">🏳️ Rendirse</button>
+        <div id="grace-btn" style="display:none; margin-top:20px;">
+            <button onclick="graceDef()" style="padding:20px; background:white; color:red; border:3px solid gold; font-weight:bold; border-radius:10px;">❤️ USAR MILAGRO</button>
         </div>
     </div>
 
-    <div id="duel-arena" class="screen">
+    <div id="duel-screen" class="screen">
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
-        <h2 id="duel-vs" style="margin:0;">...</h2>
-        <h3 id="duel-score">0 - 0</h3>
-        
-        <div id="duel-controls" style="display:none; margin-top:20px;">
-            <button id="btn-fuego" class="duel-btn fuego" onclick="duelPick('fuego')">🔥</button>
-            <button id="btn-hielo" class="duel-btn hielo" onclick="duelPick('hielo')">❄️</button>
-            <button id="btn-agua" class="duel-btn agua" onclick="duelPick('agua')">💧</button>
+        <h2 id="duel-names">... vs ...</h2>
+        <h3 id="duel-sc">0 - 0</h3>
+        <div id="duel-opts" style="margin-top:20px;">
+            <button onclick="pick('fuego')" style="font-size:40px; background:none; border:none; cursor:pointer;">🔥</button>
+            <button onclick="pick('hielo')" style="font-size:40px; background:none; border:none; cursor:pointer;">❄️</button>
+            <button onclick="pick('agua')" style="font-size:40px; background:none; border:none; cursor:pointer;">💧</button>
         </div>
-        <div id="duel-spectator"><p>Esperando movimiento...</p></div>
-        <div id="duel-history" style="margin-top:20px; color:#aaa; font-size:14px;"></div>
+        <div id="duel-info" style="margin-top:20px; color:#aaa;"></div>
     </div>
 
-    <div id="countdown-overlay" style="display:none; position:fixed; top:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:500; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
+    <div id="color-picker">
+        <h3>Elige Color</h3>
+        <div class="color-circle" style="background:red;" onclick="pickCol('rojo')"></div>
+        <div class="color-circle" style="background:#00a8ff;" onclick="pickCol('azul')"></div>
+        <div class="color-circle" style="background:#4cd137;" onclick="pickCol('verde')"></div>
+        <div class="color-circle" style="background:gold;" onclick="pickCol('amarillo')"></div>
+    </div>
+
+    <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:500; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myId = ''; let isMyTurn = false; let pendingCardId = null; let pendingGraceDefense = false;
-        
-        // --- UX / UI HELPERS ---
-        function toggleChat() {
-            const w = document.getElementById('chat-window');
-            w.style.display = (w.style.display === 'flex') ? 'none' : 'flex';
-        }
-        
-        // Scroll horizontal con rueda de mouse para PC
-        document.getElementById('hand-container').addEventListener('wheel', (evt) => {
-            evt.preventDefault();
-            document.getElementById('hand-container').scrollLeft += evt.deltaY;
-        });
+        let myId = ''; let pendingCard = null; let pendingGrace = false;
+        const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
+        const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
+        function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
 
-        // --- GAME LOGIC ---
-        function joinGame() {
-            const name = document.getElementById('username').value;
-            if(!name) return;
-            playSound('soft');
-            socket.emit('join', name);
-            document.getElementById('login').style.display = 'none';
-        }
+        function join() { socket.emit('join', document.getElementById('user-in').value); play('soft'); }
+        function start() { socket.emit('requestStart'); }
+        function draw() { socket.emit('draw'); }
+        function pass() { socket.emit('passTurn'); }
+        function uno() { socket.emit('sayUno'); }
+        function sendChat() { const i=document.getElementById('chat-in'); if(i.value){socket.emit('sendChat',i.value);i.value='';} }
+        function toggleChat() { const w=document.getElementById('chat-win'); w.style.display=w.style.display==='flex'?'none':'flex'; }
         
-        function requestStart() { socket.emit('requestStart'); }
-        function drawCard() { socket.emit('draw'); }
-        function passTurn() { socket.emit('passTurn'); }
-        function sayUno() { socket.emit('sayUno'); }
-        function sendChat() {
-            const input = document.getElementById('chat-input');
-            if(input.value.trim()) { socket.emit('sendChat', input.value); input.value=''; }
-        }
-        function handleChatKey(e) { if(e.key==='Enter') sendChat(); }
-        
-        function selectColor(c) {
-            document.getElementById('color-picker').style.display = 'none';
-            if(pendingGraceDefense) { socket.emit('playGraceDefense', c); pendingGraceDefense = false; }
-            else { socket.emit('playCard', pendingCardId, c); pendingCardId = null; }
-        }
-        
-        function ripResponse(d) { socket.emit('ripDecision', d); }
-        function duelPick(c) { socket.emit('duelPick', c); }
-        function playGraceDefense() { pendingGraceDefense = true; document.getElementById('color-picker').style.display = 'block'; }
+        // Hand Scroll PC
+        document.getElementById('hand-zone').addEventListener('wheel', e => { e.preventDefault(); document.getElementById('hand-zone').scrollLeft += e.deltaY; });
 
-        // --- SOCKET LISTENERS ---
+        function pickCol(c) { 
+            document.getElementById('color-picker').style.display='none'; 
+            if(pendingGrace) { socket.emit('playGraceDefense', c); pendingGrace=false; }
+            else { socket.emit('playCard', pendingCard, c); pendingCard=null; }
+        }
+        function ripResp(d) { socket.emit('ripDecision', d); }
+        function pick(c) { socket.emit('duelPick', c); }
+        function graceDef() { pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
+
         socket.on('connect', () => myId = socket.id);
+        socket.on('playSound', k => play(k));
         
-        socket.on('notification', msg => {
-            const n = document.getElementById('notification');
-            n.innerText = msg; n.style.display = 'block';
-            setTimeout(() => n.style.display = 'none', 3000);
-        });
-        
-        socket.on('chatMessage', msg => {
-            const box = document.getElementById('chat-messages');
-            const d = document.createElement('div');
-            d.innerHTML = \`<b style="color:#f1c40f">\${msg.name}:</b> \${msg.text}\`;
-            box.appendChild(d); box.scrollTop = box.scrollHeight;
+        socket.on('notification', m => {
+            const el = document.getElementById('main-alert');
+            el.innerText = m; el.style.display = 'block';
+            setTimeout(() => el.style.display='none', 3000);
         });
 
-        socket.on('playSound', k => playSound(k));
+        socket.on('showDivine', m => {
+            const el = document.getElementById('main-alert');
+            el.innerText = m; el.style.display='block'; el.style.background='white'; el.style.color='gold';
+            setTimeout(() => { el.style.display='none'; el.style.background='rgba(0,0,0,0.95)'; el.style.color='white'; }, 4000);
+        });
+
+        socket.on('chatMessage', m => {
+            const b = document.getElementById('chat-msgs');
+            b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`;
+            b.scrollTop = b.scrollHeight;
+        });
+
         socket.on('countdownTick', n => {
-            document.getElementById('lobby').style.display = 'none';
-            document.getElementById('game-area').style.display = 'flex';
-            const ov = document.getElementById('countdown-overlay');
-            ov.style.display = 'flex'; ov.innerText = n;
-            if(n===0) ov.style.display = 'none';
+            document.getElementById('lobby').style.display='none';
+            document.getElementById('game-area').style.display='flex';
+            const c = document.getElementById('countdown');
+            c.style.display='flex'; c.innerText=n;
+            if(n<=0) c.style.display='none';
         });
 
-        socket.on('updateState', state => {
-            // Ocultar todas las pantallas y mostrar la activa
-            ['login','lobby','rip-decision-screen','duel-arena'].forEach(id => document.getElementById(id).style.display = 'none');
+        socket.on('updateState', s => {
+            // Manejo de pantallas
+            document.getElementById('login').style.display='none';
+            document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
+            document.getElementById('rip-screen').style.display = 'none'; // Reset por defecto
+            document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none';
             
-            if(state.state === 'waiting') {
-                document.getElementById('lobby').style.display = 'flex';
-                document.getElementById('game-area').style.display = 'none';
-                document.getElementById('lobby-list').innerHTML = state.players.map(p => \`<div>\${p.name}</div>\`).join('');
-                document.getElementById('btn-start').style.display = state.players.length >= 1 ? 'inline-block' : 'none';
+            if(s.state === 'waiting') {
+                document.getElementById('lobby-users').innerHTML = s.players.map(p=>\`<div>\${p.name}</div>\`).join('');
+                document.getElementById('start-btn').style.display = s.players.length>=1 ? 'block':'none';
                 return;
             }
 
-            document.getElementById('game-area').style.display = 'flex';
-            
-            // Renderizar Tablero
-            document.body.className = state.activeColor ? 'bg-'+state.activeColor : '';
-            const top = state.topCard;
-            const topEl = document.getElementById('top-card');
+            // Mostrar juego base (incluso durante RIP para el atacante)
+            document.getElementById('game-area').style.display='flex';
+            document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
+
+            // Render Mesa
+            const top = s.topCard;
+            const tEl = document.getElementById('top-card');
             if(top) {
-                topEl.className = \`card \${top.color !== 'negro' ? top.color : state.activeColor}\`;
-                if(top.value === 'RIP') topEl.className += ' death-card';
-                if(top.value === 'GRACIA') topEl.className += ' divine-card';
-                if(top.value === '+12') topEl.className += ' mega-wild';
-                topEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
+                tEl.className = \`card-pile \${top.color!=='negro'?top.color:s.activeColor}\`;
+                if(top.value==='RIP') tEl.className+=' death-card';
+                if(top.value==='GRACIA') tEl.className+=' divine-card';
+                if(top.value==='+12') tEl.className+=' mega-wild';
+                tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
             }
 
-            // Lista Jugadores
-            const plList = document.getElementById('players-list');
-            plList.innerHTML = '';
-            state.players.forEach(p => {
-                const badge = document.createElement('div');
-                badge.className = \`player-badge \${p.isTurn ? 'is-turn' : ''} \${p.isDead ? 'is-dead' : ''}\`;
-                badge.innerText = \`\${p.name} (\${p.cardCount})\`;
-                plList.appendChild(badge);
-            });
+            // Render Jugadores
+            document.getElementById('players-zone').innerHTML = s.players.map(p => 
+                \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.name} (\${p.cardCount})</div>\`
+            ).join('');
 
-            // Lógica Turno
-            const me = state.players.find(p => p.id === myId);
-            const btnPass = document.getElementById('btn-pass');
-            if(me && me.isTurn && me.hasDrawn && state.pendingPenalty === 0) btnPass.style.display = 'block'; else btnPass.style.display = 'none';
+            // UI Contextual
+            const me = s.players.find(p=>p.id===myId);
+            document.getElementById('btn-pass').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
             
-            const penAlert = document.getElementById('penalty-alert');
-            if(me && me.isTurn && state.pendingPenalty > 0) { penAlert.style.display = 'block'; document.getElementById('penalty-count').innerText = state.pendingPenalty; } 
-            else penAlert.style.display = 'none';
+            // Penalizaciones
+            const penEl = document.getElementById('penalty-display');
+            if(me && me.isTurn && s.pendingPenalty>0) {
+                penEl.style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty;
+            } else penEl.style.display='none';
 
-            // Estados Especiales
-            if(state.state === 'rip_decision') {
-                if(myId === state.duelInfo.defenderId) document.getElementById('rip-decision-screen').style.display = 'flex'; // Fix ID comparison
+            // ESTADO RIP (SOLUCIÓN)
+            if(s.state === 'rip_decision') {
+                if(s.duelInfo.defenderId === myId) {
+                    document.getElementById('rip-screen').style.display='flex';
+                } else {
+                    // Si soy el atacante u otro, muestro alerta persistente
+                    const al = document.getElementById('main-alert');
+                    al.innerText = "⏳ Esperando decisión de Duelo...";
+                    al.style.display = 'block';
+                }
             }
-            if(state.state === 'dueling') {
-                document.getElementById('duel-arena').style.display = 'flex';
-                renderDuel(state.duelInfo, myId);
-            }
-        });
 
-        socket.on('handUpdate', hand => {
-            const cont = document.getElementById('hand-container');
-            cont.innerHTML = '';
-            const hasGrace = hand.some(c => c.value === 'GRACIA');
-            document.getElementById('grace-option').style.display = hasGrace ? 'block' : 'none';
-
-            hand.forEach(c => {
-                const el = document.createElement('div');
-                let cls = c.color; 
-                if(c.value==='RIP') cls+=' death-card'; else if(c.value==='GRACIA') cls+=' divine-card'; else if(c.value==='+12') cls+=' mega-wild';
-                el.className = \`card \${cls}\`;
-                el.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
+            // Duelo
+            if(s.state === 'dueling') {
+                document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
+                document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
+                document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>\`<div>Gana: \${h.winnerName}</div>\`).join('');
                 
-                el.onclick = () => {
-                   if(c.color === 'negro' && c.value !== 'GRACIA') { 
-                       if(c.value === 'RIP') socket.emit('playCard', c.id, null); 
-                       else { pendingCardId = c.id; document.getElementById('color-picker').style.display = 'block'; }
-                   } else {
-                       socket.emit('playCard', c.id, null);
-                   }
-                };
-                cont.appendChild(el);
-            });
+                // Mostrar controles solo si estoy peleando
+                const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId); // Requiere IDs en duelInfo, los agregué en updateAll server
+                document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+            }
         });
 
-        function renderDuel(info, myId) {
-            document.getElementById('duel-vs').innerText = \`\${info.attackerName} vs \${info.defenderName}\`;
-            document.getElementById('duel-score').innerText = \`\${info.scoreAttacker} - \${info.scoreDefender}\`;
-            const isFighter = (myId === players.find(p => p.name === info.attackerName)?.id || myId === players.find(p => p.name === info.defenderName)?.id); // Simplified check logic needed here but keeping generic for string length
-            
-            // Simple visual check for controls
-            const amIAttacker = info.attackerName === document.getElementById('username').value; // Basic check, better with IDs if available in info
-            // Since we pass full info, let's trust server logic for 'myChoice'
-            
-            document.getElementById('duel-controls').style.display = (info.myChoice !== undefined) ? 'block' : 'block'; 
-            // In a real patch, we'd rely on 'isFighter' logic properly. 
-            // Assuming server sends 'myChoice' as null if I'm spectator.
-            
-            document.getElementById('duel-history').innerHTML = info.history.map(h => \`<div>R\${h.round}: Ganó \${h.winnerName}</div>\`).join('');
-        }
+        socket.on('handUpdate', h => {
+            const hz = document.getElementById('hand-zone');
+            hz.innerHTML = '';
+            const hasGrace = h.some(c=>c.value==='GRACIA');
+            document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
+
+            h.forEach(c => {
+                const d = document.createElement('div');
+                let cls = c.color;
+                if(c.value==='RIP') cls+=' death-card'; else if(c.value==='GRACIA') cls+=' divine-card'; else if(c.value==='+12') cls+=' mega-wild';
+                d.className = \`hand-card \${cls}\`;
+                d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
+                d.onclick = () => {
+                     if(c.color==='negro' && c.value!=='GRACIA') {
+                        if(c.value==='RIP') socket.emit('playCard', c.id, null);
+                        else { pendingCard=c.id; document.getElementById('color-picker').style.display='block'; }
+                     } else socket.emit('playCard', c.id, null);
+                };
+                hz.appendChild(d);
+            });
+        });
     </script>
 </body>
 </html>
     `);
 });
 
-// PUERTO (Corrección para Glitch/Heroku/Local)
-http.listen(process.env.PORT || 3000, () => {
-    console.log('UNO y 1/2: Servidor Listo en puerto 3000');
-});
+http.listen(process.env.PORT || 3000, () => console.log('SERVER LISTO'));

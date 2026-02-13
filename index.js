@@ -43,21 +43,31 @@ function resetGame() {
 
 function createDeck() {
     deck = [];
+    // 1. Cartas de Colores (Normales y Acción simple)
     colors.forEach(color => {
         values.forEach(val => {
+            // Una carta 0 por color
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
+            // Dos cartas del 1-9 y acciones especiales de color
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
+
+    // 2. Cartas Negras (Especiales)
     for(let i=0; i<4; i++) {
-        deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
-        deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
-        deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
-        deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
+        deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) }); // Cambio Color
+        deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });    // Tomar 4
     }
-    for(let i=0; i<2; i++) {
-        deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
-    }
+    
+    // 3. Cartas Únicas
+    deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
+    deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
+    deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
+    deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
+    
+    deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
+    deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
+
     shuffle();
 }
 
@@ -110,78 +120,50 @@ io.on('connection', (socket) => {
         else io.emit('notification', '🚫 Esperando jugadores...');
     });
 
-    // --- LÓGICA DE JUGAR CARTA (MEJORADA PARA FEEDBACK) ---
     socket.on('playCard', (cardId, chosenColor) => {
         if(gameState !== 'playing') return;
-        
         const pIndex = players.findIndex(p => p.id === socket.id);
         if (pIndex === -1) return;
         const player = players[pIndex];
         if (player.isDead) return;
         
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
-        if(cardIndex === -1) {
-            socket.emit('notification', '❌ Error: Carta no encontrada.');
-            return;
-        }
-        
+        if(cardIndex === -1) return;
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
-        if (top.color !== 'negro') activeColor = top.color; // Asegurar color activo
 
-        // 1. CHEQUEO DE TURNO Y SAFF
+        if (top.color !== 'negro') activeColor = top.color;
+
         let isSaff = false;
         if (pIndex !== currentTurn) {
-            // Si NO es mi turno, solo puedo jugar si es SAFF (Exactamente igual)
             if (card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                isSaff = true; 
-                currentTurn = pIndex; 
-                pendingPenalty = 0; 
-                io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`); 
-                io.emit('playSound', 'saff'); 
-            } else { 
-                // Si no es SAFF y no es mi turno, avisar al usuario
-                socket.emit('notification', '⏳ No es tu turno.');
-                return; 
-            }
+                isSaff = true; currentTurn = pIndex; pendingPenalty = 0; 
+                io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.emit('playSound', 'saff'); 
+            } else { socket.emit('notification', '⏳ No es tu turno.'); return; }
         }
 
-        // 2. CHEQUEO DE PENALIZACIONES (Si es mi turno)
         if (pIndex === currentTurn && pendingPenalty > 0) {
             let allowed = false;
             if (top.value === '+12' && card.value === '+12') allowed = true;
             if (top.value === '+4' && card.value === '+4') allowed = true;
             if (top.value === '+2' && card.value === '+2') allowed = true;
             if (card.value === 'GRACIA') allowed = true;
-            
-            if (!allowed) { 
-                socket.emit('notification', `🚫 ¡Tienes castigo! Debes responder o robar.`); 
-                return; 
-            }
+            if (!allowed) { socket.emit('notification', `🚫 ¡Tienes castigo!`); return; }
         }
 
-        // 3. CHEQUEO DE VALIDEZ NORMAL (Si es mi turno y no es SAFF)
         if (pIndex === currentTurn && !isSaff) {
-            // Jerarquía de sumas
-            if (top.value === '+4' && card.value === '+2') { socket.emit('notification', `⛔ No puedes tirar +2 sobre +4.`); return; }
+            if (top.value === '+4' && card.value === '+2') { socket.emit('notification', `⛔ No +2 sobre +4.`); return; }
             if (top.value === '+12' && (card.value === '+2' || card.value === '+4')) { socket.emit('notification', `⛔ +12 es supremo.`); return; }
-
-            // Coincidencia Color/Valor
+            
             let valid = false;
             if (card.value === 'GRACIA') valid = true;
             else if (card.color === 'negro') valid = true;
             else if (card.color === activeColor) valid = true;
             else if (card.value === top.value) valid = true;
-
-            if (!valid) {
-                socket.emit('notification', `❌ No coincide color (${activeColor}) ni valor.`);
-                return;
-            }
+            if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
         }
 
-        // --- SI LLEGAMOS ACÁ, LA JUGADA ES VÁLIDA ---
-
-        // Ejecutar Carta
+        // GRACIA
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine'); 
@@ -194,43 +176,32 @@ io.on('connection', (socket) => {
             advanceTurn(); updateAll(); return;
         }
 
+        // RIP
         if (card.value === 'RIP') {
             if(getAlivePlayersCount() < 2) {
-                player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('notification', '💀 RIP fallido (pocos jugadores).'); advanceTurn(); updateAll(); return;
+                player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('notification', '💀 RIP fallido.'); advanceTurn(); updateAll(); return;
             }
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip'); 
             gameState = 'rip_decision';
-            const attacker = player; 
-            const defender = players[getNextPlayerIndex()];
+            const attacker = player; const defender = players[getNextPlayerIndex()];
             duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
             io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`); 
-            updateAll(); 
-            return;
+            updateAll(); return;
         }
 
-        // Jugar carta normal/especial
-        player.hand.splice(cardIndex, 1); 
-        discardPile.push(card); 
-        io.emit('cardPlayedEffect', { color: card.color });
-        
-        // Actualizar Color
-        if (card.color === 'negro' && chosenColor) activeColor = chosenColor; 
-        else if (card.color !== 'negro') activeColor = card.color;
+        player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('cardPlayedEffect', { color: card.color });
+        if (card.color === 'negro' && chosenColor) activeColor = chosenColor; else if (card.color !== 'negro') activeColor = card.color;
 
-        // Efectos
         if (card.value === 'R') { direction *= -1; if(getAlivePlayersCount() === 2) advanceTurn(); }
         if (card.value === 'X') advanceTurn(); 
-        
         if (card.value === '+2') { pendingPenalty += 2; io.emit('notification', `💥 +2! Castigo: ${pendingPenalty}`); io.emit('playSound', 'attack'); io.emit('shakeScreen'); advanceTurn(); updateAll(); return; }
         if (card.value === '+4') { pendingPenalty += 4; io.emit('notification', `💣 +4! Castigo: ${pendingPenalty}`); io.emit('playSound', 'attack'); io.emit('shakeScreen'); advanceTurn(); updateAll(); return; }
         if (card.value === '+12') { pendingPenalty += 12; io.emit('notification', `☢️ ¡+12! Castigo: ${pendingPenalty}`); io.emit('playSound', 'thunder'); io.emit('shakeScreen'); advanceTurn(); updateAll(); return; }
 
         if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft'); 
-
         if (player.hand.length === 0) finishRound(player); else { advanceTurn(); updateAll(); }
     });
 
-    // --- RESTO DE SOCKETS (Sin cambios lógicos mayores) ---
     socket.on('playGraceDefense', (chosenColor) => {
         if(gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
         const defender = players.find(p => p.id === socket.id);
@@ -262,7 +233,6 @@ io.on('connection', (socket) => {
         if(gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
         if(pIndex === -1 || players[pIndex].isDead) return;
-        
         if (pIndex === currentTurn) {
             io.emit('playSound', 'soft'); 
             if (pendingPenalty > 0) {
@@ -271,11 +241,9 @@ io.on('connection', (socket) => {
                 else { io.emit('notification', `😓 Terminó. Pierde turno.`); advanceTurn(); updateAll(); }
             } else {
                 if (!players[pIndex].hasDrawn) { drawCards(pIndex, 1); players[pIndex].hasDrawn = true; updateAll(); }
-                else { socket.emit('notification', 'Ya robaste carta.'); }
+                else { socket.emit('notification', 'Ya robaste.'); }
             }
-        } else {
-            socket.emit('notification', 'No es tu turno.');
-        }
+        } else { socket.emit('notification', 'No es tu turno.'); }
     });
 
     socket.on('passTurn', () => {
@@ -292,7 +260,6 @@ io.on('connection', (socket) => {
 
     socket.on('restartGame', () => { resetGame(); updateAll(); });
     socket.on('sendChat', (text) => { const p=players.find(x=>x.id===socket.id); if(p){ io.emit('chatMessage',{name:p.name, text}); } });
-
     socket.on('disconnect', () => {
         const p = players.find(p => p.id === socket.id);
         if(!p) return;
@@ -334,12 +301,27 @@ function finalizeDuel() {
 }
 function eliminatePlayer(id) { const p = players.find(p => p.id === id); if(p) { p.isDead = true; p.isSpectator = true; } }
 function getAlivePlayersCount() { return players.filter(p => !p.isDead).length; }
+
+// **FIX: INICIO LIMPIO (Sin cartas especiales)**
 function startCountdown() {
     if (players.length < 1) return; 
-    gameState = 'counting'; let count = 3; createDeck(); discardPile = [deck.pop()];
-    activeColor = discardPile[0].color === 'negro' ? colors[Math.floor(Math.random()*4)] : discardPile[0].color;
+    gameState = 'counting'; 
+    let count = 3; 
+    createDeck(); 
+    
+    // Garantizar que la primera carta no sea especial (negra)
+    let safeCard = deck.pop();
+    while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
+        deck.unshift(safeCard); // Devolver al fondo
+        shuffle(); // Barajar para probar suerte de nuevo
+        safeCard = deck.pop();
+    }
+    discardPile = [safeCard];
+    activeColor = safeCard.color;
+
     currentTurn = 0; pendingPenalty = 0;
     players.forEach(p => { p.hand=[]; p.hasDrawn=false; p.isDead=false; p.isSpectator=false; for(let i=0; i<7; i++) p.hand.push(deck.pop()); });
+    
     io.emit('countdownTick', 3);
     countdownInterval = setInterval(() => { 
         if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
@@ -347,6 +329,7 @@ function startCountdown() {
         if(count <= 0){ clearInterval(countdownInterval); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); } count--; 
     }, 1000);
 }
+
 function drawCards(pid, n) { if (pid < 0 || pid >= players.length) return; for(let i=0; i<n; i++) { if(deck.length===0) recycleDeck(); if(deck.length>0) players[pid].hand.push(deck.pop()); } }
 function advanceTurn() {
     if(players[currentTurn]) players[currentTurn].hasDrawn = false;
@@ -390,18 +373,19 @@ app.get('/', (req, res) => {
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>UNO y 1/2</title>
     <style>
-        /* RESET */
+        /* RESET & VARS */
         * { box-sizing: border-box; }
+        :root { --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: 100vh; display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
         /* PANTALLAS */
         .screen { display: none; width: 100%; height: 100vh; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
         /* JUEGO */
-        #game-area { display: none; flex-direction: column; justify-content: space-between; height: 100vh; width: 100%; position: relative; z-index: 5; }
+        #game-area { display: none; flex-direction: column; height: 100vh; width: 100%; position: relative; z-index: 5; }
 
         /* ZONA 1: JUGADORES */
         #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.6); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
@@ -409,25 +393,62 @@ app.get('/', (req, res) => {
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
 
-        /* ZONA 2: NOTIFICACIONES (Encima del mazo) */
+        /* ZONA 2: NOTIFICACIONES (Flexible) */
         #alert-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; pointer-events: none; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
 
         /* ZONA 3: MESA CENTRAL */
-        #table-zone { flex: 0 0 auto; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 15px; z-index: 15; }
-        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
+        #table-zone { flex: 0 0 auto; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 15; padding-bottom: 20px; }
+        #decks-container { display: flex; gap: 30px; transform: scale(1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
         #top-card { background: #333; }
         
-        #uno-btn-area { margin-top: 10px; display: flex; gap: 10px; }
-        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
-        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
+        #uno-btn-area { margin-top: 5px; display: flex; gap: 10px; }
+        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 8px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
+        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 8px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* ZONA 4: MANO (Z-INDEX ALTO PARA EVITAR BLOQUEOS) */
-        #hand-zone { flex: 0 0 160px; background: rgba(0,0,0,0.8); border-top: 1px solid #555; display: flex; align-items: center; padding: 10px 15px; padding-bottom: 20px; gap: 10px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; width: 100%; position: relative; z-index: 9999; }
-        .hand-card { flex: 0 0 80px; height: 110px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 30px; font-weight: 900; color: white; text-shadow: 2px 2px 0 #000; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.5); user-select: none; }
+        /* ZONA 4: MANO (ELEVADA Y FIX PARA MÓVIL) */
+        #hand-zone { 
+            flex: 0 0 auto; 
+            height: 180px; /* Altura generosa */
+            background: rgba(0,0,0,0.85); 
+            border-top: 1px solid #555; 
+            display: flex; 
+            align-items: center; /* Centrado vertical */
+            padding: 10px 15px; 
+            padding-bottom: calc(10px + var(--safe-bottom)); /* Espacio extra para barra Home */
+            gap: 10px; 
+            overflow-x: auto; 
+            overflow-y: hidden; 
+            white-space: nowrap; 
+            scroll-snap-type: x mandatory; 
+            -webkit-overflow-scrolling: touch; 
+            width: 100%; 
+            position: relative; 
+            z-index: 9999; 
+        }
+        .hand-card { 
+            flex: 0 0 80px; 
+            height: 115px; /* Carta completa */
+            border-radius: 8px; 
+            border: 2px solid white; 
+            background: #444; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            font-size: 30px; 
+            font-weight: 900; 
+            color: white; 
+            text-shadow: 2px 2px 0 #000; 
+            scroll-snap-align: center; 
+            position: relative; 
+            cursor: pointer; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5); 
+            user-select: none; 
+            margin-bottom: 10px; /* Elevar un poco visualmente */
+        }
         .hand-card:active { transform: scale(0.95); }
 
         /* Colores */
@@ -447,8 +468,8 @@ app.get('/', (req, res) => {
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
         /* CHAT */
-        #chat-btn { position: fixed; bottom: 180px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
-        #chat-win { position: fixed; bottom: 240px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>

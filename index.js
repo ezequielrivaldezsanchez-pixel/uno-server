@@ -4,21 +4,21 @@ const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
 // --- VARIABLES GLOBALES ---
-let gameState = 'waiting'; 
+let gameState = 'waiting';
 let players = [];
 let deck = [];
 let discardPile = [];
 let currentTurn = 0;
-let direction = 1; 
-let activeColor = ''; 
-let pendingPenalty = 0; 
+let direction = 1;
+let activeColor = '';
+let pendingPenalty = 0;
 let countdownInterval = null;
 
 // DUELO
 let duelState = {
     attackerId: null, defenderId: null, attackerName: '', defenderName: '',
     round: 1, scoreAttacker: 0, scoreDefender: 0,
-    attackerChoice: null, defenderChoice: null, history: [] 
+    attackerChoice: null, defenderChoice: null, history: []
 };
 
 // CHAT
@@ -28,6 +28,7 @@ const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+2', 'X', 'R'];
 
 // --- FUNCIONES CORE ---
+
 function resetGame() {
     gameState = 'waiting';
     deck = [];
@@ -43,25 +44,30 @@ function resetGame() {
 
 function createDeck() {
     deck = [];
-    // 1. Cartas Normales
+    // 1. Cartas Normales (Números y Acción Color)
     colors.forEach(color => {
         values.forEach(val => {
+            // Una carta 0
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
+            // Dos cartas del 1-9 y especiales de color
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // 2. Especiales Negras
-    for(let i=0; i<4; i++) {
+
+    // 2. Especiales Negras (Solo estas pueden ser negras)
+    for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // 3. Únicas
+
+    // 3. Cartas Únicas
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
+
     shuffle();
 }
 
@@ -84,7 +90,7 @@ function recycleDeck() {
 function calculateHandPoints(hand) {
     let points = 0;
     hand.forEach(card => {
-        if (card.value === 'RIP') points += 100; 
+        if (card.value === 'RIP') points += 100;
         else if (card.value === 'GRACIA') points += 150;
         else if (card.value === '+12') points += 200;
         else if (card.type === 'wild') points += 50;
@@ -95,12 +101,13 @@ function calculateHandPoints(hand) {
 }
 
 // --- SOCKET LOGIC ---
+
 io.on('connection', (socket) => {
     socket.emit('chatHistory', chatHistory);
 
     socket.on('join', (name) => {
         const existing = players.find(p => p.id === socket.id);
-        if(!existing) {
+        if (!existing) {
             const isLate = gameState !== 'waiting' && gameState !== 'counting';
             const player = { id: socket.id, name: name.substring(0, 15), hand: [], hasDrawn: false, isSpectator: isLate, isDead: false };
             players.push(player);
@@ -110,19 +117,19 @@ io.on('connection', (socket) => {
     });
 
     socket.on('requestStart', () => {
-        if(gameState === 'waiting' && players.length >= 1) startCountdown();
+        if (gameState === 'waiting' && players.length >= 1) startCountdown();
         else io.emit('notification', '🚫 Esperando jugadores...');
     });
 
     socket.on('playCard', (cardId, chosenColor) => {
-        if(gameState !== 'playing') return;
+        if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
         if (pIndex === -1) return;
         const player = players[pIndex];
         if (player.isDead) return;
-        
+
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
-        if(cardIndex === -1) return;
+        if (cardIndex === -1) return;
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
@@ -131,8 +138,8 @@ io.on('connection', (socket) => {
         let isSaff = false;
         if (pIndex !== currentTurn) {
             if (card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                isSaff = true; currentTurn = pIndex; pendingPenalty = 0; 
-                io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.emit('playSound', 'saff'); 
+                isSaff = true; currentTurn = pIndex; pendingPenalty = 0;
+                io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.emit('playSound', 'saff');
             } else { socket.emit('notification', '⏳ No es tu turno.'); return; }
         }
 
@@ -148,7 +155,7 @@ io.on('connection', (socket) => {
         if (pIndex === currentTurn && !isSaff) {
             if (top.value === '+4' && card.value === '+2') { socket.emit('notification', `⛔ No +2 sobre +4.`); return; }
             if (top.value === '+12' && (card.value === '+2' || card.value === '+4')) { socket.emit('notification', `⛔ +12 es supremo.`); return; }
-            
+
             let valid = false;
             if (card.value === 'GRACIA') valid = true;
             else if (card.color === 'negro') valid = true;
@@ -159,7 +166,7 @@ io.on('connection', (socket) => {
 
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
-            player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine'); 
+            player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine');
             if (pendingPenalty > 0) {
                 io.emit('showDivine', `${player.name} salvado por Gracia Divina`); pendingPenalty = 0; advanceTurn(); updateAll(); return;
             }
@@ -170,66 +177,66 @@ io.on('connection', (socket) => {
         }
 
         if (card.value === 'RIP') {
-            if(getAlivePlayersCount() < 2) {
+            if (getAlivePlayersCount() < 2) {
                 player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('notification', '💀 RIP fallido.'); advanceTurn(); updateAll(); return;
             }
-            player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip'); 
+            player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip');
             gameState = 'rip_decision';
             const attacker = player; const defender = players[getNextPlayerIndex()];
             duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
-            io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`); 
+            io.emit('notification', `💀 ¡${attacker.name} usó RIP contra ${defender.name}!`);
             updateAll(); return;
         }
 
         player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('cardPlayedEffect', { color: card.color });
         if (card.color === 'negro' && chosenColor) activeColor = chosenColor; else if (card.color !== 'negro') activeColor = card.color;
 
-        if (card.value === 'R') { direction *= -1; if(getAlivePlayersCount() === 2) advanceTurn(); }
-        if (card.value === 'X') advanceTurn(); 
+        if (card.value === 'R') { direction *= -1; if (getAlivePlayersCount() === 2) advanceTurn(); }
+        if (card.value === 'X') advanceTurn();
         if (card.value === '+2') { pendingPenalty += 2; io.emit('notification', `💥 +2! Castigo: ${pendingPenalty}`); io.emit('playSound', 'attack'); io.emit('shakeScreen'); advanceTurn(); updateAll(); return; }
         if (card.value === '+4') { pendingPenalty += 4; io.emit('notification', `💣 +4! Castigo: ${pendingPenalty}`); io.emit('playSound', 'attack'); io.emit('shakeScreen'); advanceTurn(); updateAll(); return; }
         if (card.value === '+12') { pendingPenalty += 12; io.emit('notification', `☢️ ¡+12! Castigo: ${pendingPenalty}`); io.emit('playSound', 'thunder'); io.emit('shakeScreen'); advanceTurn(); updateAll(); return; }
 
-        if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft'); 
+        if (card.color === 'negro') io.emit('playSound', 'wild'); else io.emit('playSound', 'soft');
         if (player.hand.length === 0) finishRound(player); else { advanceTurn(); updateAll(); }
     });
 
     socket.on('playGraceDefense', (chosenColor) => {
-        if(gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
+        if (gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
         const defender = players.find(p => p.id === socket.id);
         const cardIndex = defender.hand.findIndex(c => c.value === 'GRACIA');
-        if(cardIndex !== -1) {
-            defender.hand.splice(cardIndex, 1); discardPile.push(defender.hand[cardIndex]); activeColor = chosenColor || 'rojo'; 
+        if (cardIndex !== -1) {
+            defender.hand.splice(cardIndex, 1); discardPile.push(defender.hand[cardIndex]); activeColor = chosenColor || 'rojo';
             io.emit('showDivine', `${defender.name} salvado por Gracia Divina`); io.emit('playSound', 'divine');
-            const attIndex = players.findIndex(p => p.id === duelState.attackerId); drawCards(attIndex, 4); 
+            const attIndex = players.findIndex(p => p.id === duelState.attackerId); drawCards(attIndex, 4);
             gameState = 'playing'; advanceTurn(); updateAll();
         }
     });
 
     socket.on('ripDecision', (d) => {
-        if(gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
+        if (gameState !== 'rip_decision' || socket.id !== duelState.defenderId) return;
         const def = players.find(p => p.id === duelState.defenderId);
-        if (d === 'surrender') { io.emit('notification', `🏳️ ${def.name} se rindió.`); eliminatePlayer(def.id); checkWinCondition(); } 
+        if (d === 'surrender') { io.emit('notification', `🏳️ ${def.name} se rindió.`); eliminatePlayer(def.id); checkWinCondition(); }
         else { io.emit('playSound', 'bell'); gameState = 'dueling'; updateAll(); }
     });
-    
+
     socket.on('duelPick', (c) => {
-        if(gameState !== 'dueling') return;
+        if (gameState !== 'dueling') return;
         if (socket.id === duelState.attackerId) duelState.attackerChoice = c;
         if (socket.id === duelState.defenderId) duelState.defenderChoice = c;
         if (duelState.attackerChoice && duelState.defenderChoice) resolveDuelRound();
-        else updateAll(); 
+        else updateAll();
     });
 
     socket.on('draw', () => {
-        if(gameState !== 'playing') return;
+        if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if(pIndex === -1 || players[pIndex].isDead) return;
+        if (pIndex === -1 || players[pIndex].isDead) return;
         if (pIndex === currentTurn) {
-            io.emit('playSound', 'soft'); 
+            io.emit('playSound', 'soft');
             if (pendingPenalty > 0) {
-                drawCards(pIndex, 1); pendingPenalty--; 
-                if (pendingPenalty > 0) { io.emit('notification', `😰 Faltan: ${pendingPenalty}`); updateAll(); } 
+                drawCards(pIndex, 1); pendingPenalty--;
+                if (pendingPenalty > 0) { io.emit('notification', `😰 Faltan: ${pendingPenalty}`); updateAll(); }
                 else { io.emit('notification', `😓 Terminó. Pierde turno.`); advanceTurn(); updateAll(); }
             } else {
                 if (!players[pIndex].hasDrawn) { drawCards(pIndex, 1); players[pIndex].hasDrawn = true; updateAll(); }
@@ -239,24 +246,24 @@ io.on('connection', (socket) => {
     });
 
     socket.on('passTurn', () => {
-        if(gameState !== 'playing') return;
+        if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if(pIndex === -1 || players[pIndex].isDead) return;
+        if (pIndex === -1 || players[pIndex].isDead) return;
         if (pIndex === currentTurn && players[pIndex].hasDrawn && pendingPenalty === 0) { advanceTurn(); updateAll(); }
     });
 
     socket.on('sayUno', () => {
         const p = players.find(p => p.id === socket.id);
-        if(p && !p.isDead) { io.emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2! 🚨`); io.emit('playSound', 'uno'); }
+        if (p && !p.isDead) { io.emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2! 🚨`); io.emit('playSound', 'uno'); }
     });
 
     socket.on('restartGame', () => { resetGame(); updateAll(); });
-    socket.on('sendChat', (text) => { const p=players.find(x=>x.id===socket.id); if(p){ io.emit('chatMessage',{name:p.name, text}); } });
+    socket.on('sendChat', (text) => { const p = players.find(x => x.id === socket.id); if (p) { io.emit('chatMessage', { name: p.name, text }); } });
     socket.on('disconnect', () => {
         const p = players.find(p => p.id === socket.id);
-        if(!p) return;
+        if (!p) return;
         if (gameState === 'dueling' || gameState === 'rip_decision') {
-            if (p.id === duelState.attackerId) { io.emit('notification', `🏃‍♂️ Atacante huyó.`); gameState = 'playing'; advanceTurn(); } 
+            if (p.id === duelState.attackerId) { io.emit('notification', `🏃‍♂️ Atacante huyó.`); gameState = 'playing'; advanceTurn(); }
             else if (p.id === duelState.defenderId) { io.emit('notification', `🏃‍♂️ Defensor huyó.`); eliminatePlayer(p.id); checkWinCondition(); return; }
         }
         players = players.filter(pl => pl.id !== socket.id);
@@ -269,91 +276,91 @@ io.on('connection', (socket) => {
 
 // --- HELPERS ---
 function checkWinCondition() {
-    if(players.length > 1 && getAlivePlayersCount() <= 1) {
-        const winner = players.find(p => !p.isDead); if(winner) finishRound(winner); else resetGame(); updateAll();
+    if (players.length > 1 && getAlivePlayersCount() <= 1) {
+        const winner = players.find(p => !p.isDead); if (winner) finishRound(winner); else resetGame(); updateAll();
     } else { gameState = 'playing'; advanceTurn(); updateAll(); }
 }
 function resolveDuelRound() {
     const att = duelState.attackerChoice, def = duelState.defenderChoice;
     let winner = 'tie';
-    if ((att=='fuego'&&def=='hielo')||(att=='hielo'&&def=='agua')||(att=='agua'&&def=='fuego')) winner='attacker';
-    else if ((def=='fuego'&&att=='hielo')||(def=='hielo'&&att=='agua')||(def=='agua'&&att=='fuego')) winner='defender';
-    if(winner=='attacker') duelState.scoreAttacker++; else if(winner=='defender') duelState.scoreDefender++;
-    duelState.history.push({ round: duelState.round, att, def, winnerName: winner=='attacker'?duelState.attackerName:(winner=='defender'?duelState.defenderName:'Empate') });
+    if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
+    else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
+    if (winner == 'attacker') duelState.scoreAttacker++; else if (winner == 'defender') duelState.scoreDefender++;
+    duelState.history.push({ round: duelState.round, att, def, winnerName: winner == 'attacker' ? duelState.attackerName : (winner == 'defender' ? duelState.defenderName : 'Empate') });
     duelState.attackerChoice = null; duelState.defenderChoice = null; io.emit('playSound', 'soft');
     if (duelState.round >= 3 || duelState.scoreAttacker >= 2 || duelState.scoreDefender >= 2) setTimeout(finalizeDuel, 2000); else { duelState.round++; updateAll(); }
 }
 function finalizeDuel() {
     const att = players.find(p => p.id === duelState.attackerId); const def = players.find(p => p.id === duelState.defenderId);
     if (!att || !def) { gameState = 'playing'; updateAll(); return; }
-    if (duelState.scoreAttacker > duelState.scoreDefender) { io.emit('notification', `💀 ${att.name} GANA. ${def.name} eliminado.`); io.emit('playSound', 'thunder'); eliminatePlayer(def.id); checkWinCondition(); } 
-    else if (duelState.scoreDefender > duelState.scoreAttacker) { io.emit('notification', `🛡️ ${def.name} GANA. Castigo para ${att.name}.`); drawCards(players.findIndex(p=>p.id===duelState.attackerId), 4); gameState = 'playing'; advanceTurn(); updateAll(); } 
+    if (duelState.scoreAttacker > duelState.scoreDefender) { io.emit('notification', `💀 ${att.name} GANA. ${def.name} eliminado.`); io.emit('playSound', 'thunder'); eliminatePlayer(def.id); checkWinCondition(); }
+    else if (duelState.scoreDefender > duelState.scoreAttacker) { io.emit('notification', `🛡️ ${def.name} GANA. Castigo para ${att.name}.`); drawCards(players.findIndex(p => p.id === duelState.attackerId), 4); gameState = 'playing'; advanceTurn(); updateAll(); }
     else { io.emit('notification', `🤝 EMPATE.`); gameState = 'playing'; advanceTurn(); updateAll(); }
 }
-function eliminatePlayer(id) { const p = players.find(p => p.id === id); if(p) { p.isDead = true; p.isSpectator = true; } }
+function eliminatePlayer(id) { const p = players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
 function getAlivePlayersCount() { return players.filter(p => !p.isDead).length; }
 
 function startCountdown() {
-    if (players.length < 1) return; 
-    gameState = 'counting'; 
-    let count = 3; 
-    createDeck(); 
+    if (players.length < 1) return;
+    gameState = 'counting';
+    let count = 3;
+    createDeck();
     // INICIO SEGURO: Barajar hasta que la primera NO sea negra
     let safeCard = deck.pop();
     while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
-        deck.unshift(safeCard); 
-        shuffle(); 
+        deck.unshift(safeCard);
+        shuffle();
         safeCard = deck.pop();
     }
     discardPile = [safeCard];
     activeColor = safeCard.color;
 
     currentTurn = 0; pendingPenalty = 0;
-    players.forEach(p => { p.hand=[]; p.hasDrawn=false; p.isDead=false; p.isSpectator=false; for(let i=0; i<7; i++) p.hand.push(deck.pop()); });
+    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = true; for (let i = 0; i < 7; i++) p.hand.push(deck.pop()); });
     io.emit('countdownTick', 3);
-    countdownInterval = setInterval(() => { 
+    countdownInterval = setInterval(() => {
         if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
-        io.emit('countdownTick', count); io.emit('playSound', 'soft'); 
-        if(count <= 0){ clearInterval(countdownInterval); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); } count--; 
+        io.emit('countdownTick', count); io.emit('playSound', 'soft');
+        if (count <= 0) { clearInterval(countdownInterval); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); } count--;
     }, 1000);
 }
-function drawCards(pid, n) { if (pid < 0 || pid >= players.length) return; for(let i=0; i<n; i++) { if(deck.length===0) recycleDeck(); if(deck.length>0) players[pid].hand.push(deck.pop()); } }
+function drawCards(pid, n) { if (pid < 0 || pid >= players.length) return; for (let i = 0; i < n; i++) { if (deck.length === 0) recycleDeck(); if (deck.length > 0) players[pid].hand.push(deck.pop()); } }
 function advanceTurn() {
-    if(players[currentTurn]) players[currentTurn].hasDrawn = false;
+    if (players[currentTurn]) players[currentTurn].hasDrawn = false;
     let attempts = 0; let aliveCount = getAlivePlayersCount();
     if (aliveCount < 2 && gameState === 'playing' && players.length > 1) return;
-    do { currentTurn = (currentTurn + direction + players.length) % players.length; attempts++; } while(players[currentTurn].isDead && attempts < players.length*2);
+    do { currentTurn = (currentTurn + direction + players.length) % players.length; attempts++; } while (players[currentTurn].isDead && attempts < players.length * 2);
 }
 function getNextPlayerIndex() {
     let next = currentTurn; let attempts = 0;
-    do { next = (next + direction + players.length) % players.length; attempts++; } while(players[next].isDead && attempts < players.length * 2); 
+    do { next = (next + direction + players.length) % players.length; attempts++; } while (players[next].isDead && attempts < players.length * 2);
     return next;
 }
 function finishRound(w) {
     gameState = 'waiting';
-    const res = players.map(p => ({ name: p.name + (p.isDead?"(💀)":""), points: p.isDead ? 0 : calculateHandPoints(p.hand), winner: p.id === w.id }));
-    if(res.find(r=>r.winner)) { res.find(r=>r.winner).points = res.reduce((a,b) => a + b.points, 0); }
+    const res = players.map(p => ({ name: p.name + (p.isDead ? "(💀)" : ""), points: p.isDead ? 0 : calculateHandPoints(p.hand), winner: p.id === w.id }));
+    if (res.find(r => r.winner)) { res.find(r => r.winner).points = res.reduce((a, b) => a + b.points, 0); }
     io.emit('gameOver', { winner: w.name, results: res }); io.emit('playSound', 'win');
 }
 function updateAll() {
     const duelInfo = (gameState === 'dueling' || gameState === 'rip_decision') ? {
-        attackerName: duelState.attackerName, defenderName: duelState.defenderName, round: duelState.round, scoreAttacker: duelState.scoreAttacker, scoreDefender: duelState.scoreDefender, history: duelState.history, attackerId: duelState.attackerId, defenderId: duelState.defenderId, myChoice: null 
+        attackerName: duelState.attackerName, defenderName: duelState.defenderName, round: duelState.round, scoreAttacker: duelState.scoreAttacker, scoreDefender: duelState.scoreDefender, history: duelState.history, attackerId: duelState.attackerId, defenderId: duelState.defenderId, myChoice: null
     } : null;
     const pack = {
         state: gameState, players: players.map((p, i) => ({ name: p.name, cardCount: p.hand.length, id: p.id, isTurn: (gameState === 'playing' && i === currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator })),
-        topCard: discardPile.length > 0 ? discardPile[discardPile.length - 1] : null, activeColor, currentTurn, duelInfo, pendingPenalty 
+        topCard: discardPile.length > 0 ? discardPile[discardPile.length - 1] : null, activeColor, currentTurn, duelInfo, pendingPenalty
     };
     players.forEach(p => {
         const mp = JSON.parse(JSON.stringify(pack));
-        if(mp.duelInfo) { 
-            if(p.id===duelState.attackerId) mp.duelInfo.myChoice=duelState.attackerChoice; 
-            if(p.id===duelState.defenderId) mp.duelInfo.myChoice=duelState.defenderChoice; 
+        if (mp.duelInfo) {
+            if (p.id === duelState.attackerId) mp.duelInfo.myChoice = duelState.attackerChoice;
+            if (p.id === duelState.defenderId) mp.duelInfo.myChoice = duelState.defenderChoice;
         }
-        io.to(p.id).emit('updateState', mp); if(!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand);
+        io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand);
     });
 }
 
-// --- CLIENTE VISUAL ---
+// --- CLIENTE VISUAL CORREGIDO ---
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -365,50 +372,88 @@ app.get('/', (req, res) => {
     <style>
         /* RESET & VARS */
         * { box-sizing: border-box; }
-        :root { --safe-bottom: env(safe-area-inset-bottom, 20px); }
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: 100vh; display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
+        :root { 
+            --safe-bottom: env(safe-area-inset-bottom, 20px); 
+            --app-height: 100dvh; /* Altura dinámica para móvil */
+        }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
         /* PANTALLAS */
-        .screen { display: none; width: 100%; height: 100vh; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        /* JUEGO */
-        #game-area { display: none; flex-direction: column; height: 100vh; width: 100%; position: relative; z-index: 5; }
+        /* JUEGO: ESTRUCTURA FLEXIBLE VERTICAL */
+        #game-area { 
+            display: none; 
+            flex-direction: column; 
+            height: 100%; 
+            width: 100%; 
+            position: relative; 
+            z-index: 5; 
+            overflow: hidden;
+        }
 
-        /* ZONA 1: JUGADORES */
-        #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.6); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
+        /* 1. ZONA JUGADORES (TOP) */
+        #players-zone { 
+            flex: 0 0 auto; 
+            padding: 10px; 
+            background: rgba(0,0,0,0.5); 
+            display: flex; 
+            flex-wrap: wrap; 
+            justify-content: center; 
+            gap: 5px; 
+            z-index: 20; 
+        }
         .player-badge { background: #333; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
 
-        /* ZONA 2: NOTIFICACIONES (Flexible) */
-        #alert-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; pointer-events: none; }
+        /* 2. ZONA ALERTAS (ESPACIO FLEXIBLE SUPERIOR) */
+        #alert-zone { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            position: relative; 
+            pointer-events: none; 
+        }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
 
-        /* ZONA 3: MESA CENTRAL */
-        #table-zone { flex: 0 0 auto; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 15; padding-bottom: 240px; /* IMPORTANTE: Espacio para que el mazo no quede bajo la mano */ }
-        #decks-container { display: flex; gap: 30px; transform: scale(1); }
+        /* 3. ZONA MESA (CENTRO) */
+        #table-zone { 
+            flex: 0 0 auto; 
+            padding: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            gap: 15px; 
+            z-index: 15; 
+            /* Importante: Dejar espacio para que la mano fija no tape el mazo en pantallas chicas */
+            margin-bottom: 220px; 
+        }
+        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
         #top-card { background: #333; }
         
-        #uno-btn-area { margin-top: 5px; display: flex; gap: 10px; }
-        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 8px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
-        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 8px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
+        #uno-btn-area { margin-top: 10px; display: flex; gap: 10px; }
+        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
+        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* ZONA 4: MANO (FIXED BOTTOM) - CORRECCIÓN CELULAR */
+        /* 4. ZONA MANO (FIXED BOTTOM - CORREGIDO PARA MÓVIL) */
         #hand-zone { 
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 220px; /* Aumentado para seguridad */
-            background: rgba(0,0,0,0.85); 
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 200px; /* Altura fija segura */
+            background: rgba(0,0,0,0.9); 
             border-top: 1px solid #555; 
             display: flex; 
             align-items: center; 
             padding: 10px 15px; 
-            padding-bottom: calc(30px + var(--safe-bottom)); /* Mucho padding abajo */
+            padding-bottom: calc(20px + var(--safe-bottom)); /* Padding extra para iPhone */
             gap: 10px; 
             overflow-x: auto; 
             overflow-y: hidden; 
@@ -417,13 +462,12 @@ app.get('/', (req, res) => {
             -webkit-overflow-scrolling: touch; 
             z-index: 9999; 
         }
-        
         .hand-card { 
             flex: 0 0 80px; 
             height: 120px; 
             border-radius: 8px; 
             border: 2px solid white; 
-            background: #444; /* Color base */
+            background: #444; 
             display: flex; 
             justify-content: center; 
             align-items: center; 
@@ -439,18 +483,26 @@ app.get('/', (req, res) => {
         }
         .hand-card:active { transform: scale(0.95); }
 
-        /* CLASES DE COLOR - ¡DEFINIDAS AL FINAL CON !IMPORTANT PARA ARREGLAR BUG DE CARTAS NEGRAS! */
-        .bg-rojo { background: #4a1c1c !important; } .bg-azul { background: #1c2a4a !important; } .bg-verde { background: #1c4a2a !important; } .bg-amarillo { background: #4a451c !important; }
+        /* --- COLORES: DEFINICIÓN FORZADA (Arreglo Bug Cartas Negras) --- */
+        /* Usamos !important y selectores específicos para asegurar que ganen al estilo base */
         
-        .rojo { background: #ff6b6b !important; } 
-        .azul { background: #48dbfb !important; } 
-        .verde { background: #1dd1a1 !important; } 
-        .amarillo { background: #feca57 !important; color: black !important; text-shadow: none !important; }
+        /* Fondos de Pantalla */
+        body.bg-rojo { background: #4a1c1c !important; } 
+        body.bg-azul { background: #1c2a4a !important; } 
+        body.bg-verde { background: #1c4a2a !important; } 
+        body.bg-amarillo { background: #4a451c !important; }
         
-        .negro { background: #222 !important; border-color: gold !important; }
-        .death-card { background: #000 !important; border: 3px solid #666 !important; color: red !important; } 
-        .divine-card { background: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
-        .mega-wild { background: #4b0082 !important; border: 3px solid #ff00ff !important; box-shadow: 0 0 10px #ff00ff !important; }
+        /* Cartas */
+        .rojo { background-color: #ff5252 !important; color: white !important; }
+        .azul { background-color: #448aff !important; color: white !important; }
+        .verde { background-color: #69f0ae !important; color: #000 !important; text-shadow: none !important; }
+        .amarillo { background-color: #ffd740 !important; color: black !important; text-shadow: none !important; }
+        
+        /* Especiales */
+        .negro { background-color: #212121 !important; border-color: gold !important; color: white !important; }
+        .death-card { background-color: #000 !important; border: 3px solid #666 !important; color: red !important; }
+        .divine-card { background-color: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
+        .mega-wild { background-color: #4a148c !important; border: 3px solid #ea80fc !important; box-shadow: 0 0 10px #ea80fc !important; }
 
         /* MODALES */
         #login, #lobby { background: #2c3e50; z-index: 2000; }
@@ -461,8 +513,8 @@ app.get('/', (req, res) => {
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
         /* CHAT */
-        #chat-btn { position: fixed; bottom: 240px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
-        #chat-win { position: fixed; bottom: 300px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        #chat-btn { position: fixed; bottom: 210px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 270px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>
@@ -470,7 +522,7 @@ app.get('/', (req, res) => {
 
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Vertical Edition</p>
+        <p>Final Edition Mobile</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -483,10 +535,12 @@ app.get('/', (req, res) => {
 
     <div id="game-area">
         <div id="players-zone"></div>
+        
         <div id="alert-zone">
             <div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div>
             <div id="main-alert" class="alert-box"></div>
         </div>
+        
         <div id="table-zone">
             <div id="decks-container">
                 <div id="deck-pile" class="card-pile" onclick="draw()">📦</div>
@@ -497,6 +551,7 @@ app.get('/', (req, res) => {
                 <button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button>
             </div>
         </div>
+        
         <div id="hand-zone"></div>
     </div>
 
@@ -530,10 +585,10 @@ app.get('/', (req, res) => {
 
     <div id="color-picker">
         <h3>Elige Color</h3>
-        <div class="color-circle" style="background:red;" onclick="pickCol('rojo')"></div>
-        <div class="color-circle" style="background:#00a8ff;" onclick="pickCol('azul')"></div>
-        <div class="color-circle" style="background:#4cd137;" onclick="pickCol('verde')"></div>
-        <div class="color-circle" style="background:gold;" onclick="pickCol('amarillo')"></div>
+        <div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div>
+        <div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div>
+        <div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div>
+        <div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div>
     </div>
 
     <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:6000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
@@ -542,6 +597,8 @@ app.get('/', (req, res) => {
     <script>
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false;
+        
+        // --- SONIDOS (Cargados al inicio para evitar lag) ---
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
         const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
         function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
@@ -554,6 +611,7 @@ app.get('/', (req, res) => {
         function sendChat() { const i=document.getElementById('chat-in'); if(i.value){socket.emit('sendChat',i.value);i.value='';} }
         function toggleChat() { const w=document.getElementById('chat-win'); w.style.display=w.style.display==='flex'?'none':'flex'; }
         
+        // Scroll horizontal mouse
         document.getElementById('hand-zone').addEventListener('wheel', e => { e.preventDefault(); document.getElementById('hand-zone').scrollLeft += e.deltaY; });
 
         function pickCol(c) { 
@@ -607,18 +665,29 @@ app.get('/', (req, res) => {
             }
 
             document.getElementById('game-area').style.display='flex';
+            
+            // Background update
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
+            // Top Card
             const top = s.topCard;
             const tEl = document.getElementById('top-card');
             if(top) {
-                tEl.className = \`card-pile \${top.color!=='negro'?top.color:s.activeColor}\`;
-                if(top.value==='RIP') tEl.className+=' death-card';
-                if(top.value==='GRACIA') tEl.className+=' divine-card';
-                if(top.value==='+12') tEl.className+=' mega-wild';
+                // Classname reset is vital
+                tEl.className = 'card-pile';
+                // Logic: If wild (black), use activeColor. If normal, use its color.
+                const colorClass = top.color !== 'negro' ? top.color : s.activeColor;
+                tEl.classList.add(colorClass);
+                
+                if(top.value==='RIP') tEl.classList.add('death-card');
+                if(top.value==='GRACIA') tEl.classList.add('divine-card');
+                if(top.value==='+12') tEl.classList.add('mega-wild');
+                if(top.value==='+4' || top.value==='color') tEl.classList.add('negro');
+                
                 tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
             }
 
+            // Players
             document.getElementById('players-zone').innerHTML = s.players.map(p => 
                 \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.name} (\${p.cardCount})</div>\`
             ).join('');
@@ -657,9 +726,13 @@ app.get('/', (req, res) => {
 
             h.forEach(c => {
                 const d = document.createElement('div');
-                let cls = c.color;
-                if(c.value==='RIP') cls+=' death-card'; else if(c.value==='GRACIA') cls+=' divine-card'; else if(c.value==='+12') cls+=' mega-wild';
-                d.className = \`hand-card \${cls}\`;
+                // Construct class string
+                let cls = 'hand-card ' + c.color;
+                if(c.value==='RIP') cls+=' death-card'; 
+                else if(c.value==='GRACIA') cls+=' divine-card'; 
+                else if(c.value==='+12') cls+=' mega-wild';
+                
+                d.className = cls;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 d.onclick = () => {
                      if(c.color==='negro' && c.value!=='GRACIA') {

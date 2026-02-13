@@ -3,7 +3,7 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- VARIABLES GLOBALES ---
+// --- VARIABLES DE JUEGO ---
 let gameState = 'waiting';
 let players = [];
 let deck = [];
@@ -27,7 +27,7 @@ let chatHistory = [];
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+2', 'X', 'R'];
 
-// --- FUNCIONES CORE ---
+// --- FUNCIONES DEL SERVIDOR ---
 
 function resetGame() {
     gameState = 'waiting';
@@ -44,21 +44,19 @@ function resetGame() {
 
 function createDeck() {
     deck = [];
-    // 1. Cartas Normales
+    // Normales
     colors.forEach(color => {
         values.forEach(val => {
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-
-    // 2. Especiales Negras
+    // Especiales Negras
     for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-
-    // 3. Únicas
+    // Únicas
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -98,7 +96,7 @@ function calculateHandPoints(hand) {
     return points;
 }
 
-// --- SOCKET LOGIC ---
+// --- SOCKETS ---
 
 io.on('connection', (socket) => {
     socket.emit('chatHistory', chatHistory);
@@ -304,9 +302,8 @@ function startCountdown() {
     let count = 3;
     createDeck();
     let safeCard = deck.pop();
-    // Lógica para que no empiece con carta especial
     while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
-        deck.unshift(safeCard); // Devolver al fondo
+        deck.unshift(safeCard);
         shuffle();
         safeCard = deck.pop();
     }
@@ -368,12 +365,12 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>UNO y 1/2</title>
     <style>
-        /* RESET & CORE VARIABLES */
+        /* RESET & VARS */
         * { box-sizing: border-box; }
         :root { 
-            /* Altura Dinámica para Móvil (crucial para barra de navegación) */
+            /* Altura Dinámica Real */
             --app-height: 100dvh; 
-            /* Zona segura para iPhone X+ */
+            /* Margen seguro inferior (iPhone X) */
             --safe-bottom: env(safe-area-inset-bottom, 20px);
         }
         body { 
@@ -390,7 +387,7 @@ app.get('/', (req, res) => {
         /* PANTALLAS */
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        /* LAYOUT PRINCIPAL - FLEXBOX VERTICAL ESTRICO */
+        /* CONTENEDOR PRINCIPAL DEL JUEGO */
         #game-area { 
             display: none; 
             flex-direction: column; 
@@ -398,11 +395,11 @@ app.get('/', (req, res) => {
             width: 100%; 
             position: relative; 
             z-index: 5;
-            /* La mano es fija, así que añadimos padding abajo para que nada quede oculto */
-            padding-bottom: calc(180px + var(--safe-bottom)); 
+            /* CRUCIAL: Padding inferior para que el contenido no quede detrás de la mano fija */
+            padding-bottom: calc(200px + var(--safe-bottom)); 
         }
 
-        /* 1. TOP: JUGADORES (No crece, tamaño fijo) */
+        /* 1. TOP: JUGADORES */
         #players-zone { 
             flex: 0 0 auto; 
             padding: 10px; 
@@ -413,64 +410,64 @@ app.get('/', (req, res) => {
             gap: 5px; 
             z-index: 20; 
         }
-        .player-badge { background: #333; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
+        .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
 
-        /* 2. MEDIO: ALERTAS (Flexible, empuja la mesa hacia abajo si es necesario) */
+        /* 2. MEDIO: ALERTAS */
         #alert-zone { 
             flex: 0 1 auto; 
             display: flex; 
             flex-direction: column; 
             justify-content: center; 
             align-items: center; 
-            min-height: 60px;
+            min-height: 50px;
             pointer-events: none; 
+            margin-top: 10px;
         }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
 
-        /* 3. CENTRO: MESA (Toma el espacio restante y centra el contenido) */
+        /* 3. CENTRO: MESA (SE EXPANDE) */
         #table-zone { 
             flex: 1; 
             display: flex; 
             flex-direction: column; 
             justify-content: center; 
             align-items: center; 
-            gap: 20px; 
+            gap: 15px; 
             z-index: 15; 
             position: relative;
         }
         
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
-        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
+        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
         #top-card { background: #333; }
         
-        /* BOTONES: Separados del mazo para que no se superpongan */
+        /* BOTONES DE ACCIÓN (Separados verticalmente del mazo) */
         #uno-btn-area { 
             display: flex; 
             gap: 15px; 
-            margin-top: 10px; 
-            z-index: 30; /* Encima de todo en la mesa */
+            margin-top: 20px; 
+            z-index: 30; 
         }
         .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
         .btn-uno:active { transform: translateY(4px); box-shadow: none; }
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* 4. BOTTOM: MANO (FIJA - NO FLEX ITEM) */
+        /* 4. BOTTOM: MANO (FUERA DEL FLUJO - FIXED - Z-INDEX MAXIMO) */
         #hand-zone { 
             position: fixed; 
             bottom: 0; 
             left: 0; 
             width: 100%; 
             height: 180px; 
-            background: rgba(0,0,0,0.9); /* Fondo oscuro para contraste */
-            border-top: 1px solid #555; 
+            background: rgba(20, 20, 20, 0.95); /* Fondo casi negro opaco */
+            border-top: 2px solid #555; 
             display: flex; 
             align-items: center; 
             padding: 10px 20px; 
-            /* Padding inferior dinámico para iPhone */
             padding-bottom: calc(10px + var(--safe-bottom)); 
             gap: 15px; 
             overflow-x: auto; 
@@ -478,11 +475,11 @@ app.get('/', (req, res) => {
             white-space: nowrap; 
             scroll-snap-type: x mandatory; 
             -webkit-overflow-scrolling: touch; 
-            z-index: 9999; /* Siempre encima */
+            z-index: 99999 !important; /* Capa superior absoluta */
         }
         
         .hand-card { 
-            flex: 0 0 85px; /* NO ENCOGER (flex-shrink: 0) - CRUCIAL */
+            flex: 0 0 85px; 
             height: 130px; 
             border-radius: 8px; 
             border: 2px solid white; 
@@ -499,30 +496,15 @@ app.get('/', (req, res) => {
             cursor: pointer; 
             box-shadow: 0 4px 8px rgba(0,0,0,0.6); 
             user-select: none; 
-            /* Asegurar que el texto/icono esté encima del fondo */
             z-index: 1;
         }
         .hand-card:active { transform: scale(0.95); }
 
-        /* --- SISTEMA DE COLORES (Selectores específicos para ganar prioridad) --- */
-        
-        /* Fondos Dinámicos */
-        body.bg-rojo { background: #4a1c1c !important; } 
-        body.bg-azul { background: #1c2a4a !important; } 
-        body.bg-verde { background: #1c4a2a !important; } 
-        body.bg-amarillo { background: #4a451c !important; }
-        
-        /* Cartas de Mano y Mesa (Uso de !important para evitar conflictos) */
-        .hand-card.rojo, .card-pile.rojo { background-color: #ff5252 !important; color: white !important; }
-        .hand-card.azul, .card-pile.azul { background-color: #448aff !important; color: white !important; }
-        .hand-card.verde, .card-pile.verde { background-color: #69f0ae !important; color: #000 !important; text-shadow: none !important; }
-        .hand-card.amarillo, .card-pile.amarillo { background-color: #ffd740 !important; color: black !important; text-shadow: none !important; }
-        
-        /* Especiales */
-        .hand-card.negro, .card-pile.negro { background-color: #212121 !important; border-color: gold !important; color: white !important; }
-        .hand-card.death-card, .card-pile.death-card { background-color: #000 !important; border: 3px solid #666 !important; color: red !important; }
-        .hand-card.divine-card, .card-pile.divine-card { background-color: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
-        .hand-card.mega-wild, .card-pile.mega-wild { background-color: #4a148c !important; border: 3px solid #ea80fc !important; box-shadow: 0 0 10px #ea80fc !important; }
+        /* FONDOS (Aplicados al body con !important) */
+        body.bg-rojo { background-color: #4a1c1c !important; } 
+        body.bg-azul { background-color: #1c2a4a !important; } 
+        body.bg-verde { background-color: #1c4a2a !important; } 
+        body.bg-amarillo { background-color: #4a451c !important; }
 
         /* MODALES */
         #login, #lobby { background: #2c3e50; z-index: 2000; }
@@ -532,10 +514,9 @@ app.get('/', (req, res) => {
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
-        /* CHAT FLOTANTE */
+        /* CHAT */
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
         #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
-        
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>
@@ -543,7 +524,7 @@ app.get('/', (req, res) => {
 
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Fixed Edition</p>
+        <p>Nuclear Fix Edition</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -572,9 +553,9 @@ app.get('/', (req, res) => {
                 <button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button>
             </div>
         </div>
-        
-        <div id="hand-zone"></div>
     </div>
+
+    <div id="hand-zone"></div>
 
     <div id="chat-btn" onclick="toggleChat()">💬</div>
     <div id="chat-win">
@@ -619,6 +600,18 @@ app.get('/', (req, res) => {
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false;
         
+        // Mapeo de colores hexadecimales para FORZAR los estilos en línea
+        const colorMap = {
+            'rojo': '#ff5252',
+            'azul': '#448aff',
+            'verde': '#69f0ae',
+            'amarillo': '#ffd740',
+            'negro': '#212121',
+            'death-card': '#000000',
+            'divine-card': '#ffffff',
+            'mega-wild': '#4a148c'
+        };
+
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
         const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
         function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
@@ -666,6 +659,7 @@ app.get('/', (req, res) => {
         socket.on('countdownTick', n => {
             document.getElementById('lobby').style.display='none';
             document.getElementById('game-area').style.display='flex';
+            document.getElementById('hand-zone').style.display='flex'; // Asegurar que la mano aparezca
             const c = document.getElementById('countdown');
             c.style.display='flex'; c.innerText=n;
             if(n<=0) c.style.display='none';
@@ -680,24 +674,35 @@ app.get('/', (req, res) => {
             if(s.state === 'waiting') {
                 document.getElementById('lobby-users').innerHTML = s.players.map(p=>\`<div>\${p.name}</div>\`).join('');
                 document.getElementById('start-btn').style.display = s.players.length>=1 ? 'block':'none';
+                document.getElementById('hand-zone').style.display='none'; // Ocultar mano en lobby
                 return;
             }
 
             document.getElementById('game-area').style.display='flex';
+            document.getElementById('hand-zone').style.display='flex';
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
+            // Render Top Card usando ESTILOS EN LINEA para evitar bugs de CSS
             const top = s.topCard;
             const tEl = document.getElementById('top-card');
             if(top) {
                 tEl.className = 'card-pile';
-                const colorClass = top.color !== 'negro' ? top.color : s.activeColor;
-                tEl.classList.add(colorClass);
                 
-                if(top.value==='RIP') tEl.classList.add('death-card');
-                if(top.value==='GRACIA') tEl.classList.add('divine-card');
-                if(top.value==='+12') tEl.classList.add('mega-wild');
-                if(top.value==='+4' || top.value==='color') tEl.classList.add('negro');
+                // Color base
+                let bg = colorMap[top.color] || '#444';
+                let txt = 'white';
                 
+                // Overrides especiales
+                if(s.activeColor && top.color !== 'negro') bg = colorMap[top.color];
+                else if(s.activeColor && top.color === 'negro') bg = colorMap[s.activeColor];
+
+                if(top.value==='RIP') { bg = 'black'; txt = 'red'; tEl.style.border = '3px solid #666'; }
+                else if(top.value==='GRACIA') { bg = 'white'; txt = 'red'; tEl.style.border = '3px solid gold'; }
+                else if(top.value==='+12') { bg = '#4a148c'; tEl.style.border = '3px solid #ea80fc'; }
+                else if(top.color === 'amarillo' || top.color === 'verde') txt = 'black';
+
+                tEl.style.backgroundColor = bg;
+                tEl.style.color = txt;
                 tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
             }
 
@@ -739,14 +744,22 @@ app.get('/', (req, res) => {
 
             h.forEach(c => {
                 const d = document.createElement('div');
-                // IMPORTANTE: Concatenamos clases con espacio seguro
-                let cls = 'hand-card ' + c.color;
+                d.className = 'hand-card';
                 
-                if(c.value==='RIP') cls+=' death-card'; 
-                else if(c.value==='GRACIA') cls+=' divine-card'; 
-                else if(c.value==='+12') cls+=' mega-wild';
+                // LÓGICA DE COLOR EN LÍNEA (NUCLEAR FIX)
+                let bg = colorMap[c.color] || '#444';
+                let txt = 'white';
+                let border = '2px solid white';
+
+                if(c.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
+                else if(c.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
+                else if(c.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
+                else if(c.color === 'amarillo' || c.color === 'verde') { txt = 'black'; }
+
+                d.style.backgroundColor = bg;
+                d.style.color = txt;
+                d.style.border = border;
                 
-                d.className = cls;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 d.onclick = () => {
                      if(c.color==='negro' && c.value!=='GRACIA') {

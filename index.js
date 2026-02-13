@@ -47,14 +47,12 @@ function createDeck() {
     // 1. Cartas Normales (Números y Acción Color)
     colors.forEach(color => {
         values.forEach(val => {
-            // Una carta 0
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
-            // Dos cartas del 1-9 y especiales de color
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
 
-    // 2. Especiales Negras (Solo estas pueden ser negras)
+    // 2. Especiales Negras
     for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
@@ -305,7 +303,6 @@ function startCountdown() {
     gameState = 'counting';
     let count = 3;
     createDeck();
-    // INICIO SEGURO: Barajar hasta que la primera NO sea negra
     let safeCard = deck.pop();
     while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
         deck.unshift(safeCard);
@@ -374,14 +371,14 @@ app.get('/', (req, res) => {
         * { box-sizing: border-box; }
         :root { 
             --safe-bottom: env(safe-area-inset-bottom, 20px); 
-            --app-height: 100dvh; /* Altura dinámica para móvil */
+            --app-height: 100dvh; 
         }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
         /* PANTALLAS */
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        /* JUEGO: ESTRUCTURA FLEXIBLE VERTICAL */
+        /* JUEGO: ESTRUCTURA FLEXIBLE VERTICAL CON ESPACIO RESERVADO */
         #game-area { 
             display: none; 
             flex-direction: column; 
@@ -390,6 +387,8 @@ app.get('/', (req, res) => {
             position: relative; 
             z-index: 5; 
             overflow: hidden;
+            /* AQUÍ ESTÁ LA CLAVE: Padding inferior gigante para que nada baje hasta la mano */
+            padding-bottom: calc(260px + var(--safe-bottom));
         }
 
         /* 1. ZONA JUGADORES (TOP) */
@@ -429,8 +428,7 @@ app.get('/', (req, res) => {
             align-items: center; 
             gap: 15px; 
             z-index: 15; 
-            /* Importante: Dejar espacio para que la mano fija no tape el mazo en pantallas chicas */
-            margin-bottom: 220px; 
+            /* Eliminamos el margen, ahora el padding del contenedor padre se encarga */
         }
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
@@ -441,19 +439,19 @@ app.get('/', (req, res) => {
         .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* 4. ZONA MANO (FIXED BOTTOM - CORREGIDO PARA MÓVIL) */
+        /* 4. ZONA MANO (FIXED BOTTOM) */
         #hand-zone { 
             position: fixed; 
             bottom: 0; 
             left: 0; 
             width: 100%; 
-            height: 200px; /* Altura fija segura */
+            height: 200px; 
             background: rgba(0,0,0,0.9); 
             border-top: 1px solid #555; 
             display: flex; 
             align-items: center; 
             padding: 10px 15px; 
-            padding-bottom: calc(20px + var(--safe-bottom)); /* Padding extra para iPhone */
+            padding-bottom: calc(20px + var(--safe-bottom)); 
             gap: 10px; 
             overflow-x: auto; 
             overflow-y: hidden; 
@@ -483,22 +481,17 @@ app.get('/', (req, res) => {
         }
         .hand-card:active { transform: scale(0.95); }
 
-        /* --- COLORES: DEFINICIÓN FORZADA (Arreglo Bug Cartas Negras) --- */
-        /* Usamos !important y selectores específicos para asegurar que ganen al estilo base */
-        
-        /* Fondos de Pantalla */
+        /* COLORES FORZADOS */
         body.bg-rojo { background: #4a1c1c !important; } 
         body.bg-azul { background: #1c2a4a !important; } 
         body.bg-verde { background: #1c4a2a !important; } 
         body.bg-amarillo { background: #4a451c !important; }
         
-        /* Cartas */
         .rojo { background-color: #ff5252 !important; color: white !important; }
         .azul { background-color: #448aff !important; color: white !important; }
         .verde { background-color: #69f0ae !important; color: #000 !important; text-shadow: none !important; }
         .amarillo { background-color: #ffd740 !important; color: black !important; text-shadow: none !important; }
         
-        /* Especiales */
         .negro { background-color: #212121 !important; border-color: gold !important; color: white !important; }
         .death-card { background-color: #000 !important; border: 3px solid #666 !important; color: red !important; }
         .divine-card { background-color: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
@@ -513,8 +506,8 @@ app.get('/', (req, res) => {
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
         /* CHAT */
-        #chat-btn { position: fixed; bottom: 210px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
-        #chat-win { position: fixed; bottom: 270px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        #chat-btn { position: fixed; bottom: 220px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 280px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>
@@ -522,7 +515,7 @@ app.get('/', (req, res) => {
 
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Final Edition Mobile</p>
+        <p>Mobile Fix Edition</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -598,7 +591,7 @@ app.get('/', (req, res) => {
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false;
         
-        // --- SONIDOS (Cargados al inicio para evitar lag) ---
+        // --- SONIDOS ---
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
         const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
         function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
@@ -611,7 +604,6 @@ app.get('/', (req, res) => {
         function sendChat() { const i=document.getElementById('chat-in'); if(i.value){socket.emit('sendChat',i.value);i.value='';} }
         function toggleChat() { const w=document.getElementById('chat-win'); w.style.display=w.style.display==='flex'?'none':'flex'; }
         
-        // Scroll horizontal mouse
         document.getElementById('hand-zone').addEventListener('wheel', e => { e.preventDefault(); document.getElementById('hand-zone').scrollLeft += e.deltaY; });
 
         function pickCol(c) { 
@@ -665,29 +657,21 @@ app.get('/', (req, res) => {
             }
 
             document.getElementById('game-area').style.display='flex';
-            
-            // Background update
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
-            // Top Card
             const top = s.topCard;
             const tEl = document.getElementById('top-card');
             if(top) {
-                // Classname reset is vital
                 tEl.className = 'card-pile';
-                // Logic: If wild (black), use activeColor. If normal, use its color.
                 const colorClass = top.color !== 'negro' ? top.color : s.activeColor;
                 tEl.classList.add(colorClass);
-                
                 if(top.value==='RIP') tEl.classList.add('death-card');
                 if(top.value==='GRACIA') tEl.classList.add('divine-card');
                 if(top.value==='+12') tEl.classList.add('mega-wild');
                 if(top.value==='+4' || top.value==='color') tEl.classList.add('negro');
-                
                 tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
             }
 
-            // Players
             document.getElementById('players-zone').innerHTML = s.players.map(p => 
                 \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.name} (\${p.cardCount})</div>\`
             ).join('');
@@ -726,12 +710,10 @@ app.get('/', (req, res) => {
 
             h.forEach(c => {
                 const d = document.createElement('div');
-                // Construct class string
                 let cls = 'hand-card ' + c.color;
                 if(c.value==='RIP') cls+=' death-card'; 
                 else if(c.value==='GRACIA') cls+=' divine-card'; 
                 else if(c.value==='+12') cls+=' mega-wild';
-                
                 d.className = cls;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 d.onclick = () => {

@@ -43,31 +43,25 @@ function resetGame() {
 
 function createDeck() {
     deck = [];
-    // 1. Cartas de Colores (Normales y Acción simple)
+    // 1. Cartas Normales
     colors.forEach(color => {
         values.forEach(val => {
-            // Una carta 0 por color
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
-            // Dos cartas del 1-9 y acciones especiales de color
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-
-    // 2. Cartas Negras (Especiales)
+    // 2. Especiales Negras
     for(let i=0; i<4; i++) {
-        deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) }); // Cambio Color
-        deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });    // Tomar 4
+        deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
+        deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    
-    // 3. Cartas Únicas
+    // 3. Únicas
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
-    
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
-
     shuffle();
 }
 
@@ -163,7 +157,6 @@ io.on('connection', (socket) => {
             if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
         }
 
-        // GRACIA
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine'); 
@@ -176,7 +169,6 @@ io.on('connection', (socket) => {
             advanceTurn(); updateAll(); return;
         }
 
-        // RIP
         if (card.value === 'RIP') {
             if(getAlivePlayersCount() < 2) {
                 player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('notification', '💀 RIP fallido.'); advanceTurn(); updateAll(); return;
@@ -286,7 +278,6 @@ function resolveDuelRound() {
     let winner = 'tie';
     if ((att=='fuego'&&def=='hielo')||(att=='hielo'&&def=='agua')||(att=='agua'&&def=='fuego')) winner='attacker';
     else if ((def=='fuego'&&att=='hielo')||(def=='hielo'&&att=='agua')||(def=='agua'&&att=='fuego')) winner='defender';
-    
     if(winner=='attacker') duelState.scoreAttacker++; else if(winner=='defender') duelState.scoreDefender++;
     duelState.history.push({ round: duelState.round, att, def, winnerName: winner=='attacker'?duelState.attackerName:(winner=='defender'?duelState.defenderName:'Empate') });
     duelState.attackerChoice = null; duelState.defenderChoice = null; io.emit('playSound', 'soft');
@@ -302,18 +293,16 @@ function finalizeDuel() {
 function eliminatePlayer(id) { const p = players.find(p => p.id === id); if(p) { p.isDead = true; p.isSpectator = true; } }
 function getAlivePlayersCount() { return players.filter(p => !p.isDead).length; }
 
-// **FIX: INICIO LIMPIO (Sin cartas especiales)**
 function startCountdown() {
     if (players.length < 1) return; 
     gameState = 'counting'; 
     let count = 3; 
     createDeck(); 
-    
-    // Garantizar que la primera carta no sea especial (negra)
+    // INICIO SEGURO: Barajar hasta que la primera NO sea negra
     let safeCard = deck.pop();
     while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
-        deck.unshift(safeCard); // Devolver al fondo
-        shuffle(); // Barajar para probar suerte de nuevo
+        deck.unshift(safeCard); 
+        shuffle(); 
         safeCard = deck.pop();
     }
     discardPile = [safeCard];
@@ -321,7 +310,6 @@ function startCountdown() {
 
     currentTurn = 0; pendingPenalty = 0;
     players.forEach(p => { p.hand=[]; p.hasDrawn=false; p.isDead=false; p.isSpectator=false; for(let i=0; i<7; i++) p.hand.push(deck.pop()); });
-    
     io.emit('countdownTick', 3);
     countdownInterval = setInterval(() => { 
         if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
@@ -329,7 +317,6 @@ function startCountdown() {
         if(count <= 0){ clearInterval(countdownInterval); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); } count--; 
     }, 1000);
 }
-
 function drawCards(pid, n) { if (pid < 0 || pid >= players.length) return; for(let i=0; i<n; i++) { if(deck.length===0) recycleDeck(); if(deck.length>0) players[pid].hand.push(deck.pop()); } }
 function advanceTurn() {
     if(players[currentTurn]) players[currentTurn].hasDrawn = false;
@@ -399,7 +386,7 @@ app.get('/', (req, res) => {
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
 
         /* ZONA 3: MESA CENTRAL */
-        #table-zone { flex: 0 0 auto; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 15; padding-bottom: 20px; }
+        #table-zone { flex: 0 0 auto; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 15; padding-bottom: 240px; /* IMPORTANTE: Espacio para que el mazo no quede bajo la mano */ }
         #decks-container { display: flex; gap: 30px; transform: scale(1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
@@ -409,32 +396,34 @@ app.get('/', (req, res) => {
         .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 8px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 8px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* ZONA 4: MANO (ELEVADA Y FIX PARA MÓVIL) */
+        /* ZONA 4: MANO (FIXED BOTTOM) - CORRECCIÓN CELULAR */
         #hand-zone { 
-            flex: 0 0 auto; 
-            height: 180px; /* Altura generosa */
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 220px; /* Aumentado para seguridad */
             background: rgba(0,0,0,0.85); 
             border-top: 1px solid #555; 
             display: flex; 
-            align-items: center; /* Centrado vertical */
+            align-items: center; 
             padding: 10px 15px; 
-            padding-bottom: calc(10px + var(--safe-bottom)); /* Espacio extra para barra Home */
+            padding-bottom: calc(30px + var(--safe-bottom)); /* Mucho padding abajo */
             gap: 10px; 
             overflow-x: auto; 
             overflow-y: hidden; 
             white-space: nowrap; 
             scroll-snap-type: x mandatory; 
             -webkit-overflow-scrolling: touch; 
-            width: 100%; 
-            position: relative; 
             z-index: 9999; 
         }
+        
         .hand-card { 
             flex: 0 0 80px; 
-            height: 115px; /* Carta completa */
+            height: 120px; 
             border-radius: 8px; 
             border: 2px solid white; 
-            background: #444; 
+            background: #444; /* Color base */
             display: flex; 
             justify-content: center; 
             align-items: center; 
@@ -447,17 +436,21 @@ app.get('/', (req, res) => {
             cursor: pointer; 
             box-shadow: 0 2px 5px rgba(0,0,0,0.5); 
             user-select: none; 
-            margin-bottom: 10px; /* Elevar un poco visualmente */
         }
         .hand-card:active { transform: scale(0.95); }
 
-        /* Colores */
+        /* CLASES DE COLOR - ¡DEFINIDAS AL FINAL CON !IMPORTANT PARA ARREGLAR BUG DE CARTAS NEGRAS! */
         .bg-rojo { background: #4a1c1c !important; } .bg-azul { background: #1c2a4a !important; } .bg-verde { background: #1c4a2a !important; } .bg-amarillo { background: #4a451c !important; }
-        .rojo { background: #ff6b6b; } .azul { background: #48dbfb; } .verde { background: #1dd1a1; } .amarillo { background: #feca57; color: black; text-shadow: none; }
-        .negro { background: #222; border-color: gold; }
-        .death-card { background: #000; border: 3px solid #666; color: red; } 
-        .divine-card { background: white; border: 3px solid gold; color: red; text-shadow: none; }
-        .mega-wild { background: #4b0082; border: 3px solid #ff00ff; box-shadow: 0 0 10px #ff00ff; }
+        
+        .rojo { background: #ff6b6b !important; } 
+        .azul { background: #48dbfb !important; } 
+        .verde { background: #1dd1a1 !important; } 
+        .amarillo { background: #feca57 !important; color: black !important; text-shadow: none !important; }
+        
+        .negro { background: #222 !important; border-color: gold !important; }
+        .death-card { background: #000 !important; border: 3px solid #666 !important; color: red !important; } 
+        .divine-card { background: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
+        .mega-wild { background: #4b0082 !important; border: 3px solid #ff00ff !important; box-shadow: 0 0 10px #ff00ff !important; }
 
         /* MODALES */
         #login, #lobby { background: #2c3e50; z-index: 2000; }
@@ -468,8 +461,8 @@ app.get('/', (req, res) => {
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
         /* CHAT */
-        #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
-        #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        #chat-btn { position: fixed; bottom: 240px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 300px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>

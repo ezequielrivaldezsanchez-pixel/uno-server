@@ -44,7 +44,7 @@ function resetGame() {
 
 function createDeck() {
     deck = [];
-    // 1. Cartas Normales (Números y Acción Color)
+    // 1. Cartas Normales
     colors.forEach(color => {
         values.forEach(val => {
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
@@ -58,7 +58,7 @@ function createDeck() {
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
 
-    // 3. Cartas Únicas
+    // 3. Únicas
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -304,8 +304,9 @@ function startCountdown() {
     let count = 3;
     createDeck();
     let safeCard = deck.pop();
+    // Lógica para que no empiece con carta especial
     while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
-        deck.unshift(safeCard);
+        deck.unshift(safeCard); // Devolver al fondo
         shuffle();
         safeCard = deck.pop();
     }
@@ -313,7 +314,7 @@ function startCountdown() {
     activeColor = safeCard.color;
 
     currentTurn = 0; pendingPenalty = 0;
-    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = true; for (let i = 0; i < 7; i++) p.hand.push(deck.pop()); });
+    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; for (let i = 0; i < 7; i++) p.hand.push(deck.pop()); });
     io.emit('countdownTick', 3);
     countdownInterval = setInterval(() => {
         if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
@@ -357,7 +358,7 @@ function updateAll() {
     });
 }
 
-// --- CLIENTE VISUAL CORREGIDO ---
+// --- CLIENTE VISUAL BLINDADO ---
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -367,31 +368,41 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>UNO y 1/2</title>
     <style>
-        /* RESET & VARS */
+        /* RESET & CORE VARIABLES */
         * { box-sizing: border-box; }
         :root { 
-            --safe-bottom: env(safe-area-inset-bottom, 20px); 
+            /* Altura Dinámica para Móvil (crucial para barra de navegación) */
             --app-height: 100dvh; 
+            /* Zona segura para iPhone X+ */
+            --safe-bottom: env(safe-area-inset-bottom, 20px);
         }
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
+        body { 
+            margin: 0; padding: 0; 
+            font-family: 'Segoe UI', sans-serif; 
+            background: #1e272e; color: white; 
+            overflow: hidden; 
+            height: var(--app-height); 
+            display: flex; flex-direction: column; 
+            user-select: none; 
+            transition: background 0.5s; 
+        }
         
         /* PANTALLAS */
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        /* JUEGO: ESTRUCTURA FLEXIBLE VERTICAL CON ESPACIO RESERVADO */
+        /* LAYOUT PRINCIPAL - FLEXBOX VERTICAL ESTRICO */
         #game-area { 
             display: none; 
             flex-direction: column; 
             height: 100%; 
             width: 100%; 
             position: relative; 
-            z-index: 5; 
-            overflow: hidden;
-            /* AQUÍ ESTÁ LA CLAVE: Padding inferior gigante para que nada baje hasta la mano */
-            padding-bottom: calc(260px + var(--safe-bottom));
+            z-index: 5;
+            /* La mano es fija, así que añadimos padding abajo para que nada quede oculto */
+            padding-bottom: calc(180px + var(--safe-bottom)); 
         }
 
-        /* 1. ZONA JUGADORES (TOP) */
+        /* 1. TOP: JUGADORES (No crece, tamaño fijo) */
         #players-zone { 
             flex: 0 0 auto; 
             padding: 10px; 
@@ -406,96 +417,112 @@ app.get('/', (req, res) => {
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
 
-        /* 2. ZONA ALERTAS (ESPACIO FLEXIBLE SUPERIOR) */
+        /* 2. MEDIO: ALERTAS (Flexible, empuja la mesa hacia abajo si es necesario) */
         #alert-zone { 
-            flex: 1; 
+            flex: 0 1 auto; 
             display: flex; 
             flex-direction: column; 
             justify-content: center; 
             align-items: center; 
-            position: relative; 
+            min-height: 60px;
             pointer-events: none; 
         }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
 
-        /* 3. ZONA MESA (CENTRO) */
+        /* 3. CENTRO: MESA (Toma el espacio restante y centra el contenido) */
         #table-zone { 
-            flex: 0 0 auto; 
-            padding: 20px; 
+            flex: 1; 
             display: flex; 
             flex-direction: column; 
+            justify-content: center; 
             align-items: center; 
-            gap: 15px; 
+            gap: 20px; 
             z-index: 15; 
-            /* Eliminamos el margen, ahora el padding del contenedor padre se encarga */
+            position: relative;
         }
+        
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
         #top-card { background: #333; }
         
-        #uno-btn-area { margin-top: 10px; display: flex; gap: 10px; }
-        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
-        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
+        /* BOTONES: Separados del mazo para que no se superpongan */
+        #uno-btn-area { 
+            display: flex; 
+            gap: 15px; 
+            margin-top: 10px; 
+            z-index: 30; /* Encima de todo en la mesa */
+        }
+        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
+        .btn-uno:active { transform: translateY(4px); box-shadow: none; }
+        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
-        /* 4. ZONA MANO (FIXED BOTTOM) */
+        /* 4. BOTTOM: MANO (FIJA - NO FLEX ITEM) */
         #hand-zone { 
             position: fixed; 
             bottom: 0; 
             left: 0; 
             width: 100%; 
-            height: 200px; 
-            background: rgba(0,0,0,0.9); 
+            height: 180px; 
+            background: rgba(0,0,0,0.9); /* Fondo oscuro para contraste */
             border-top: 1px solid #555; 
             display: flex; 
             align-items: center; 
-            padding: 10px 15px; 
-            padding-bottom: calc(20px + var(--safe-bottom)); 
-            gap: 10px; 
+            padding: 10px 20px; 
+            /* Padding inferior dinámico para iPhone */
+            padding-bottom: calc(10px + var(--safe-bottom)); 
+            gap: 15px; 
             overflow-x: auto; 
             overflow-y: hidden; 
             white-space: nowrap; 
             scroll-snap-type: x mandatory; 
             -webkit-overflow-scrolling: touch; 
-            z-index: 9999; 
+            z-index: 9999; /* Siempre encima */
         }
+        
         .hand-card { 
-            flex: 0 0 80px; 
-            height: 120px; 
+            flex: 0 0 85px; /* NO ENCOGER (flex-shrink: 0) - CRUCIAL */
+            height: 130px; 
             border-radius: 8px; 
             border: 2px solid white; 
-            background: #444; 
+            background: #444; /* Fallback */
             display: flex; 
             justify-content: center; 
             align-items: center; 
-            font-size: 30px; 
+            font-size: 32px; 
             font-weight: 900; 
             color: white; 
             text-shadow: 2px 2px 0 #000; 
             scroll-snap-align: center; 
             position: relative; 
             cursor: pointer; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.5); 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.6); 
             user-select: none; 
+            /* Asegurar que el texto/icono esté encima del fondo */
+            z-index: 1;
         }
         .hand-card:active { transform: scale(0.95); }
 
-        /* COLORES FORZADOS */
+        /* --- SISTEMA DE COLORES (Selectores específicos para ganar prioridad) --- */
+        
+        /* Fondos Dinámicos */
         body.bg-rojo { background: #4a1c1c !important; } 
         body.bg-azul { background: #1c2a4a !important; } 
         body.bg-verde { background: #1c4a2a !important; } 
         body.bg-amarillo { background: #4a451c !important; }
         
-        .rojo { background-color: #ff5252 !important; color: white !important; }
-        .azul { background-color: #448aff !important; color: white !important; }
-        .verde { background-color: #69f0ae !important; color: #000 !important; text-shadow: none !important; }
-        .amarillo { background-color: #ffd740 !important; color: black !important; text-shadow: none !important; }
+        /* Cartas de Mano y Mesa (Uso de !important para evitar conflictos) */
+        .hand-card.rojo, .card-pile.rojo { background-color: #ff5252 !important; color: white !important; }
+        .hand-card.azul, .card-pile.azul { background-color: #448aff !important; color: white !important; }
+        .hand-card.verde, .card-pile.verde { background-color: #69f0ae !important; color: #000 !important; text-shadow: none !important; }
+        .hand-card.amarillo, .card-pile.amarillo { background-color: #ffd740 !important; color: black !important; text-shadow: none !important; }
         
-        .negro { background-color: #212121 !important; border-color: gold !important; color: white !important; }
-        .death-card { background-color: #000 !important; border: 3px solid #666 !important; color: red !important; }
-        .divine-card { background-color: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
-        .mega-wild { background-color: #4a148c !important; border: 3px solid #ea80fc !important; box-shadow: 0 0 10px #ea80fc !important; }
+        /* Especiales */
+        .hand-card.negro, .card-pile.negro { background-color: #212121 !important; border-color: gold !important; color: white !important; }
+        .hand-card.death-card, .card-pile.death-card { background-color: #000 !important; border: 3px solid #666 !important; color: red !important; }
+        .hand-card.divine-card, .card-pile.divine-card { background-color: white !important; border: 3px solid gold !important; color: red !important; text-shadow: none !important; }
+        .hand-card.mega-wild, .card-pile.mega-wild { background-color: #4a148c !important; border: 3px solid #ea80fc !important; box-shadow: 0 0 10px #ea80fc !important; }
 
         /* MODALES */
         #login, #lobby { background: #2c3e50; z-index: 2000; }
@@ -505,9 +532,10 @@ app.get('/', (req, res) => {
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
 
-        /* CHAT */
-        #chat-btn { position: fixed; bottom: 220px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
-        #chat-win { position: fixed; bottom: 280px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        /* CHAT FLOTANTE */
+        #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
 </head>
@@ -515,7 +543,7 @@ app.get('/', (req, res) => {
 
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Mobile Fix Edition</p>
+        <p>Fixed Edition</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -591,7 +619,6 @@ app.get('/', (req, res) => {
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false;
         
-        // --- SONIDOS ---
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
         const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
         function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
@@ -665,10 +692,12 @@ app.get('/', (req, res) => {
                 tEl.className = 'card-pile';
                 const colorClass = top.color !== 'negro' ? top.color : s.activeColor;
                 tEl.classList.add(colorClass);
+                
                 if(top.value==='RIP') tEl.classList.add('death-card');
                 if(top.value==='GRACIA') tEl.classList.add('divine-card');
                 if(top.value==='+12') tEl.classList.add('mega-wild');
                 if(top.value==='+4' || top.value==='color') tEl.classList.add('negro');
+                
                 tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
             }
 
@@ -710,10 +739,13 @@ app.get('/', (req, res) => {
 
             h.forEach(c => {
                 const d = document.createElement('div');
+                // IMPORTANTE: Concatenamos clases con espacio seguro
                 let cls = 'hand-card ' + c.color;
+                
                 if(c.value==='RIP') cls+=' death-card'; 
                 else if(c.value==='GRACIA') cls+=' divine-card'; 
                 else if(c.value==='+12') cls+=' mega-wild';
+                
                 d.className = cls;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 d.onclick = () => {

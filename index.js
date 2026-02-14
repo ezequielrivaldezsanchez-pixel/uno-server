@@ -37,7 +37,7 @@ function initRoom(roomId) {
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
             attackerChoice: null, defenderChoice: null, history: [], turn: null,
-            narrative: '' // NUEVO: Para contarle a los espectadores qué pasa
+            narrative: '' // TEXTO DEL RELATOR
         },
         chatHistory: [],
         lastActivity: Date.now()
@@ -265,17 +265,20 @@ io.on('connection', (socket) => {
             }
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
             
-            // INICIO DE DUELO
+            // INICIO DE DUELO - FASE 1: DESAFÍO
             room.gameState = 'rip_decision';
             const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
             
+            // Inicializar Narrativa
+            const startNarrative = `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!`;
+
             room.duelState = { 
                 attackerId: attacker.id, defenderId: defender.id, 
                 attackerName: attacker.name, defenderName: defender.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, 
                 attackerChoice: null, defenderChoice: null, history: [], 
                 turn: attacker.id,
-                narrative: `⚔️ ¡${attacker.name} ha retado a muerte a ${defender.name}!` // Narrativa Inicial
+                narrative: startNarrative 
             };
             
             io.to(roomId).emit('notification', `💀 ¡${attacker.name} RIP a ${defender.name}!`);
@@ -347,7 +350,8 @@ io.on('connection', (socket) => {
         else { 
             io.to(roomId).emit('playSound', 'bell'); 
             room.gameState = 'dueling';
-            room.duelState.narrative = `¡Duelo aceptado! ${room.duelState.attackerName} está eligiendo su poder...`; // Narrativa
+            // FASE 2: PREPARACIÓN
+            room.duelState.narrative = `¡${room.duelState.defenderName} aceptó! ${room.duelState.attackerName} elige arma...`; 
             updateAll(roomId); 
         }
     });
@@ -360,7 +364,8 @@ io.on('connection', (socket) => {
         if (socket.id === room.duelState.attackerId) { 
             room.duelState.attackerChoice = c; 
             room.duelState.turn = room.duelState.defenderId;
-            room.duelState.narrative = `${room.duelState.attackerName} ya eligió. Ahora ${room.duelState.defenderName} elige su poder...`; // Narrativa
+            // FASE 3: TURNO DEFENSA
+            room.duelState.narrative = `${room.duelState.attackerName} ya eligió. Ahora le toca a ${room.duelState.defenderName}...`;
         } 
         else if (socket.id === room.duelState.defenderId) { 
             room.duelState.defenderChoice = c; 
@@ -394,14 +399,14 @@ io.on('connection', (socket) => {
 // --- HELPERS ---
 
 function getDuelNarrative(attName, defName, att, def) {
-    if (att === def) return "Choque de fuerzas idénticas. Empate.";
-    if (att === 'fuego' && def === 'hielo') return `El Fuego de ${attName} derritió el Hielo de ${defName}.`;
-    if (att === 'hielo' && def === 'agua') return `El Hielo de ${attName} congeló el Agua de ${defName}.`;
-    if (att === 'agua' && def === 'fuego') return `El Agua de ${attName} apagó el Fuego de ${defName}.`;
+    if (att === def) return "⚡ Choque de fuerzas idénticas. ¡Empate!";
+    if (att === 'fuego' && def === 'hielo') return `🔥 El Fuego de ${attName} derritió el Hielo de ${defName}.`;
+    if (att === 'hielo' && def === 'agua') return `❄️ El Hielo de ${attName} congeló el Agua de ${defName}.`;
+    if (att === 'agua' && def === 'fuego') return `💧 El Agua de ${attName} apagó el Fuego de ${defName}.`;
     
-    if (def === 'fuego' && att === 'hielo') return `El Fuego de ${defName} derritió el Hielo de ${attName}.`;
-    if (def === 'hielo' && att === 'agua') return `El Hielo de ${defName} congeló el Agua de ${attName}.`;
-    if (def === 'agua' && att === 'fuego') return `El Agua de ${defName} apagó el Fuego de ${attName}.`;
+    if (def === 'fuego' && att === 'hielo') return `🔥 El Fuego de ${defName} derritió el Hielo de ${attName}.`;
+    if (def === 'hielo' && att === 'agua') return `❄️ El Hielo de ${defName} congeló el Agua de ${attName}.`;
+    if (def === 'agua' && att === 'fuego') return `💧 El Agua de ${defName} apagó el Fuego de ${attName}.`;
     return "Resultado confuso...";
 }
 
@@ -418,7 +423,7 @@ function resolveDuelRound(roomId) {
     if(winner === 'attacker') winName = room.duelState.attackerName; 
     if(winner === 'defender') winName = room.duelState.defenderName;
 
-    // Generar texto narrativo del resultado
+    // FASE 4: RESULTADO DE RONDA
     const narrativeResult = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
     room.duelState.narrative = narrativeResult;
 
@@ -426,17 +431,17 @@ function resolveDuelRound(roomId) {
     room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
 
     io.to(roomId).emit('playSound', 'soft');
-    if (room.duelState.round >= 3 || room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2000); } 
+    if (room.duelState.round >= 3 || room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2500); } 
     else { 
-        // Pequeño delay para que lean el resultado antes de la siguiente ronda
+        // Delay para leer
         setTimeout(() => {
             if(rooms[roomId]) {
                 room.duelState.round++; 
-                room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} está eligiendo...`;
+                room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} elige arma...`;
                 updateAll(roomId);
             }
         }, 3000);
-        updateAll(roomId); // Actualiza inmediato para mostrar el resultado
+        updateAll(roomId); 
     }
 }
 
@@ -518,14 +523,14 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // Aquí pasamos la narrativa al cliente
+    // PACKET CON NARRATIVA
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
         attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
         round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
         scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, 
         attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, 
         myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner,
-        narrative: room.duelState.narrative // <--- NUEVO
+        narrative: room.duelState.narrative 
     } : null;
 
     const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory };
@@ -806,7 +811,7 @@ app.get('/', (req, res) => {
             document.getElementById('login').style.display='none'; document.getElementById('join-menu').style.display='none'; 
             document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
             document.getElementById('rip-screen').style.display = 'none';
-            document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none';
+            document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none'; // FORZAR VISIBILIDAD SI ESTADO ES DUELING
             document.getElementById('revive-screen').style.display = 'none';
             
             if(s.state === 'waiting') {
@@ -857,11 +862,12 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'dueling') {
+                // ACTUALIZAR PANTALLA DE DUELO
                 document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                 document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
                 
-                // NARRATIVA: Actualizar el texto del narrador
-                if(s.duelInfo.narrative) {
+                // NARRATIVA: Actualizar el texto del narrador (Seguro contra fallos)
+                if(s.duelInfo && s.duelInfo.narrative) {
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
                 }
 

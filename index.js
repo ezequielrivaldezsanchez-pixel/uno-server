@@ -14,11 +14,12 @@ let activeColor = '';
 let pendingPenalty = 0;
 let countdownInterval = null;
 
-// DUELO
+// DUELO (RIP) - AHORA CON GESTIÓN DE TURNOS
 let duelState = {
     attackerId: null, defenderId: null, attackerName: '', defenderName: '',
     round: 1, scoreAttacker: 0, scoreDefender: 0,
-    attackerChoice: null, defenderChoice: null, history: []
+    attackerChoice: null, defenderChoice: null, history: [],
+    turn: null // Nuevo: Controla quién elige ahora
 };
 
 // CHAT
@@ -43,23 +44,24 @@ function resetGame() {
         p.hand = []; 
         p.hasDrawn = false; 
         p.isDead = false; 
-        p.isSpectator = false;
+        p.isSpectator = false; // Al reiniciar, los espectadores se unen
         p.isAdmin = (index === 0);
     });
     
-    duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
+    // Resetear duelo
+    duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: null };
 }
 
 function createDeck() {
     deck = [];
-    // Normales
+    // Normales y Acción Color
     colors.forEach(color => {
         values.forEach(val => {
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // Especiales
+    // Especiales Negras
     for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
@@ -121,7 +123,7 @@ io.on('connection', (socket) => {
                 name: name.substring(0, 15), 
                 hand: [], 
                 hasDrawn: false, 
-                isSpectator: isGameRunning, 
+                isSpectator: isGameRunning, // Entra como espectador si ya empezó
                 isDead: false,
                 isAdmin: (players.length === 0) 
             };
@@ -147,6 +149,7 @@ io.on('connection', (socket) => {
         if (pIndex === -1) return;
         const player = players[pIndex];
         
+        // CORRECCIÓN 1: Los espectadores NO pueden jugar cartas
         if (player.isDead || player.isSpectator) return;
 
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
@@ -155,21 +158,20 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
-        // --- REGLA 3: CONDICIÓN DE VICTORIA (ÚLTIMA CARTA) ---
+        // --- CORRECCIÓN 2: CONDICIÓN DE VICTORIA ESTRICTA ---
         if (player.hand.length === 1) {
-            // Es la última carta. Solo permitimos Números o Gracia.
-            const isNumber = card.type === 'normal'; // 0-9
+            // Verificar si es Número (0-9) usando Regex
+            const isStrictNumber = /^[0-9]$/.test(card.value);
             const isGracia = card.value === 'GRACIA';
             
-            if (!isNumber && !isGracia) {
-                // Si es especial (+2, +4, Color, X, R, RIP, +12), bloqueamos.
-                socket.emit('notification', '🚫 No puedes ganar con Especial (Solo Números o Gracia).');
-                return; // INTERRUPCIÓN INMEDIATA
+            if (!isStrictNumber && !isGracia) {
+                // Si es X, R, +2, +4, +12, RIP o Cambio Color -> Bloqueo
+                socket.emit('notification', '🚫 Última carta: Solo Números o Gracia.');
+                return; 
             }
         }
         // -----------------------------------------------------
 
-        // Sincronizar activeColor
         if (top.color !== 'negro') activeColor = top.color;
 
         // SAFF
@@ -188,7 +190,6 @@ io.on('connection', (socket) => {
 
         // VALIDACIÓN
         if (pIndex === currentTurn && !isSaff) {
-            // MODO COMBATE
             if (pendingPenalty > 0) {
                 let allowed = false;
                 if (card.value === '+12' || card.value === '+4' || card.value === 'GRACIA') allowed = true;
@@ -198,9 +199,7 @@ io.on('connection', (socket) => {
                     socket.emit('notification', `🚫 Debes responder al +${pendingPenalty} o robar.`);
                     return;
                 }
-            } 
-            // MODO NORMAL
-            else {
+            } else {
                 let valid = false;
                 if (card.color === 'negro') valid = true;
                 else if (card.value === 'GRACIA') valid = true;
@@ -214,15 +213,10 @@ io.on('connection', (socket) => {
             }
         }
 
-        // --- EJECUCIÓN ---
-
-        // GRACIA
+        // EJECUCIÓN
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
-            player.hand.splice(cardIndex, 1);
-            discardPile.push(card);
-            io.emit('playSound', 'divine');
-            
+            player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine');
             if (pendingPenalty > 0) {
                 io.emit('showDivine', `${player.name} anuló el castigo`);
                 pendingPenalty = 0;
@@ -232,15 +226,12 @@ io.on('connection', (socket) => {
             if (deadPlayer) {
                 deadPlayer.isDead = false; deadPlayer.isSpectator = false;
                 io.emit('showDivine', `¡MILAGRO! ${deadPlayer.name} revivió`);
-            } else {
-                io.emit('notification', `❤️ ${player.name} usó Gracia.`);
-            }
-            // Si era la última carta (Gracia está permitida), gana
+            } else { io.emit('notification', `❤️ ${player.name} usó Gracia.`); }
+            
             if (player.hand.length === 0) { finishRound(player); return; }
             advanceTurn(1); updateAll(); return;
         }
 
-        // RIP
         if (card.value === 'RIP') {
             if (getAlivePlayersCount() < 2) {
                 player.hand.splice(cardIndex, 1); discardPile.push(card);
@@ -248,18 +239,26 @@ io.on('connection', (socket) => {
                 advanceTurn(1); updateAll(); return;
             }
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'rip');
+            
             gameState = 'rip_decision';
             const attacker = player;
             const victimIdx = getNextPlayerIndex(1);
             const defender = players[victimIdx];
-            duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [] };
+            
+            // CORRECCIÓN 3: Iniciamos turno de duelo
+            duelState = { 
+                attackerId: attacker.id, defenderId: defender.id, 
+                attackerName: attacker.name, defenderName: defender.name, 
+                round: 1, scoreAttacker: 0, scoreDefender: 0, 
+                attackerChoice: null, defenderChoice: null, history: [],
+                turn: attacker.id // Empieza eligiendo el atacante
+            };
+            
             io.emit('notification', `💀 ¡${attacker.name} RIP a ${defender.name}!`);
             updateAll(); return;
         }
 
-        // CARTA ESTÁNDAR
-        player.hand.splice(cardIndex, 1);
-        discardPile.push(card);
+        player.hand.splice(cardIndex, 1); discardPile.push(card);
         io.emit('cardPlayedEffect', { color: card.color });
 
         if (card.color === 'negro' && chosenColor) activeColor = chosenColor;
@@ -267,8 +266,7 @@ io.on('connection', (socket) => {
 
         let steps = 1;
         if (card.value === 'R') {
-            if (getAlivePlayersCount() === 2) steps = 2; 
-            else direction *= -1;
+            if (getAlivePlayersCount() === 2) steps = 2; else direction *= -1;
         }
         if (card.value === 'X') steps = 2;
 
@@ -287,33 +285,22 @@ io.on('connection', (socket) => {
         else { advanceTurn(steps); updateAll(); }
     });
 
-    // --- ROBAR ---
     socket.on('draw', () => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1 || players[pIndex].isDead) return;
+        
+        // CORRECCIÓN 1: Espectador no roba
+        if (pIndex === -1 || players[pIndex].isDead || players[pIndex].isSpectator) return;
 
         if (pIndex === currentTurn) {
             if (pendingPenalty > 0) {
-                drawCards(pIndex, 1);
-                pendingPenalty--;
-                io.emit('playSound', 'soft');
-                if (pendingPenalty > 0) {
-                    io.emit('notification', `😰 Faltan: ${pendingPenalty}`);
-                    updateAll();
-                } else {
-                    io.emit('notification', `😓 Terminó castigo. Pasa turno.`);
-                    advanceTurn(1); updateAll();
-                }
+                drawCards(pIndex, 1); pendingPenalty--; io.emit('playSound', 'soft');
+                if (pendingPenalty > 0) { io.emit('notification', `😰 Faltan: ${pendingPenalty}`); updateAll(); } 
+                else { io.emit('notification', `😓 Terminó castigo.`); advanceTurn(1); updateAll(); }
             } else {
                 if (!players[pIndex].hasDrawn) {
-                    drawCards(pIndex, 1);
-                    players[pIndex].hasDrawn = true;
-                    io.emit('playSound', 'soft');
-                    updateAll();
-                } else {
-                    socket.emit('notification', 'Ya robaste.');
-                }
+                    drawCards(pIndex, 1); players[pIndex].hasDrawn = true; io.emit('playSound', 'soft'); updateAll();
+                } else { socket.emit('notification', 'Ya robaste.'); }
             }
         }
     });
@@ -322,8 +309,7 @@ io.on('connection', (socket) => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
         if (pIndex === currentTurn && players[pIndex].hasDrawn && pendingPenalty === 0) {
-            advanceTurn(1);
-            updateAll();
+            advanceTurn(1); updateAll();
         }
     });
 
@@ -332,16 +318,12 @@ io.on('connection', (socket) => {
         const defender = players.find(p => p.id === socket.id);
         const cardIndex = defender.hand.findIndex(c => c.value === 'GRACIA');
         if (cardIndex !== -1) {
-            defender.hand.splice(cardIndex, 1);
-            discardPile.push(defender.hand[cardIndex]);
+            defender.hand.splice(cardIndex, 1); discardPile.push(defender.hand[cardIndex]);
             activeColor = chosenColor || 'rojo';
-            io.emit('showDivine', `${defender.name} salvado por Gracia`);
-            io.emit('playSound', 'divine');
+            io.emit('showDivine', `${defender.name} salvado por Gracia`); io.emit('playSound', 'divine');
             const attIndex = players.findIndex(p => p.id === duelState.attackerId);
             drawCards(attIndex, 4);
-            gameState = 'playing';
-            advanceTurn(1);
-            updateAll();
+            gameState = 'playing'; advanceTurn(1); updateAll();
         }
     });
 
@@ -352,17 +334,28 @@ io.on('connection', (socket) => {
         else { io.emit('playSound', 'bell'); gameState = 'dueling'; updateAll(); }
     });
 
+    // --- CORRECCIÓN 3: DUELO POR TURNOS ---
     socket.on('duelPick', (c) => {
         if (gameState !== 'dueling') return;
-        if (socket.id === duelState.attackerId) duelState.attackerChoice = c;
-        if (socket.id === duelState.defenderId) duelState.defenderChoice = c;
-        if (duelState.attackerChoice && duelState.defenderChoice) resolveDuelRound();
-        else updateAll();
+        
+        // Solo puede elegir el que tiene el turno
+        if (socket.id !== duelState.turn) return;
+
+        if (socket.id === duelState.attackerId) {
+            duelState.attackerChoice = c;
+            duelState.turn = duelState.defenderId; // Pasa turno al defensor
+        } else if (socket.id === duelState.defenderId) {
+            duelState.defenderChoice = c;
+            // Ambos eligieron, resolver ronda
+            resolveDuelRound();
+            return; // resolveDuelRound maneja el updateAll y el siguiente turno
+        }
+        updateAll();
     });
 
     socket.on('sayUno', () => {
         const p = players.find(p => p.id === socket.id);
-        if (p && !p.isDead) { io.emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2!`); io.emit('playSound', 'uno'); }
+        if (p && !p.isDead && !p.isSpectator) { io.emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2!`); io.emit('playSound', 'uno'); }
     });
 
     socket.on('restartGame', () => { resetGame(); updateAll(); });
@@ -416,7 +409,15 @@ function startCountdown() {
     discardPile = [safeCard];
     activeColor = safeCard.color;
     currentTurn = 0; pendingPenalty = 0;
-    players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; for (let i = 0; i < 7; i++) drawCards(players.indexOf(p), 1); });
+    
+    // CORRECCIÓN 1: Espectadores se quedan sin cartas
+    players.forEach(p => { 
+        p.hand = []; p.hasDrawn = false; p.isDead = false; 
+        if (!p.isSpectator) {
+            for (let i = 0; i < 7; i++) drawCards(players.indexOf(p), 1); 
+        }
+    });
+    
     io.emit('countdownTick', 3);
     countdownInterval = setInterval(() => {
         if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
@@ -435,12 +436,15 @@ function drawCards(pid, n) {
 
 function advanceTurn(steps) {
     if (players.length === 0) return;
-    players.forEach(p => p.hasDrawn = false); // Limpieza nuclear
+    players.forEach(p => p.hasDrawn = false);
 
     let attempts = 0;
     while (steps > 0 && attempts < players.length * 2) {
         currentTurn = (currentTurn + direction + players.length) % players.length;
-        if (!players[currentTurn].isDead) { steps--; }
+        // CORRECCIÓN 1: Saltar muertos Y ESPECTADORES
+        if (!players[currentTurn].isDead && !players[currentTurn].isSpectator) { 
+            steps--; 
+        }
         attempts++;
     }
     if (players[currentTurn]) players[currentTurn].hasDrawn = false;
@@ -451,14 +455,14 @@ function getNextPlayerIndex(steps) {
     let attempts = 0;
     while (steps > 0 && attempts < players.length * 2) {
         next = (next + direction + players.length) % players.length;
-        if (!players[next].isDead) steps--;
+        // CORRECCIÓN 1: Saltar muertos Y ESPECTADORES
+        if (!players[next].isDead && !players[next].isSpectator) steps--;
         attempts++;
     }
     return next;
 }
 
 function finishRound(w) {
-    // REGLA 2: GAME OVER SCREEN
     gameState = 'waiting';
     io.emit('gameOver', { winner: w.name }); 
     io.emit('playSound', 'win');
@@ -466,7 +470,8 @@ function finishRound(w) {
 
 function checkWinCondition() {
     if (players.length > 1 && getAlivePlayersCount() <= 1) {
-        const winner = players.find(p => !p.isDead); if (winner) finishRound(winner); else resetGame(); updateAll();
+        const winner = players.find(p => !p.isDead && !p.isSpectator); 
+        if (winner) finishRound(winner); else resetGame(); updateAll();
     } else { gameState = 'playing'; advanceTurn(1); updateAll(); }
 }
 
@@ -477,10 +482,20 @@ function resolveDuelRound() {
     else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
     
     if (winner == 'attacker') duelState.scoreAttacker++; else if (winner == 'defender') duelState.scoreDefender++;
-    duelState.history.push({ round: duelState.round, att, def, winnerName: winner == 'attacker' ? duelState.attackerName : (winner == 'defender' ? duelState.defenderName : 'Empate') });
-    duelState.attackerChoice = null; duelState.defenderChoice = null; io.emit('playSound', 'soft');
     
-    if (duelState.round >= 3 || duelState.scoreAttacker >= 2 || duelState.scoreDefender >= 2) setTimeout(finalizeDuel, 2000); else { duelState.round++; updateAll(); }
+    duelState.history.push({ round: duelState.round, att, def, winnerName: winner == 'attacker' ? duelState.attackerName : (winner == 'defender' ? duelState.defenderName : 'Empate') });
+    
+    // Resetear elecciones y turno para siguiente ronda
+    duelState.attackerChoice = null; duelState.defenderChoice = null; 
+    duelState.turn = duelState.attackerId; // Vuelve a empezar el atacante en la sig ronda
+
+    io.emit('playSound', 'soft');
+    
+    if (duelState.round >= 3 || duelState.scoreAttacker >= 2 || duelState.scoreDefender >= 2) {
+        setTimeout(finalizeDuel, 2000); 
+    } else { 
+        duelState.round++; updateAll(); 
+    }
 }
 
 function finalizeDuel() {
@@ -492,16 +507,21 @@ function finalizeDuel() {
 }
 
 function eliminatePlayer(id) { const p = players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
-function getAlivePlayersCount() { return players.filter(p => !p.isDead).length; }
+function getAlivePlayersCount() { return players.filter(p => !p.isDead && !p.isSpectator).length; }
 
 function updateAll() {
     const duelInfo = (gameState === 'dueling' || gameState === 'rip_decision') ? {
-        attackerName: duelState.attackerName, defenderName: duelState.defenderName, round: duelState.round, scoreAttacker: duelState.scoreAttacker, scoreDefender: duelState.scoreDefender, history: duelState.history, attackerId: duelState.attackerId, defenderId: duelState.defenderId, myChoice: null
+        attackerName: duelState.attackerName, defenderName: duelState.defenderName, round: duelState.round, 
+        scoreAttacker: duelState.scoreAttacker, scoreDefender: duelState.scoreDefender, history: duelState.history, 
+        attackerId: duelState.attackerId, defenderId: duelState.defenderId, 
+        myChoice: null,
+        turn: duelState.turn // Enviar de quién es el turno en duelo
     } : null;
+    
     const pack = {
         state: gameState, 
         players: players.map((p, i) => ({ 
-            name: p.name + (p.isAdmin ? " 👑" : ""), 
+            name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), // Indicador visual simple
             cardCount: p.hand.length, 
             id: p.id, 
             isTurn: (gameState === 'playing' && i === currentTurn), 
@@ -579,10 +599,10 @@ app.get('/', (req, res) => {
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
         #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         
-        /* ESTILOS DE DUELO SELECCIONADO */
         .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
         .duel-btn:hover { opacity: 0.8; }
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
+        .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
 
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
     </style>
@@ -590,7 +610,7 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Definitive Master</p>
+        <p>Spectator Fix + Duel Turn Fix</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -651,6 +671,7 @@ app.get('/', (req, res) => {
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
         <h2 id="duel-names">... vs ...</h2>
         <h3 id="duel-sc">0 - 0</h3>
+        <p id="duel-turn-msg" style="color: #aaa; font-style: italic; min-height: 24px;">Esperando tu turno...</p>
         <div id="duel-opts" style="margin-top:20px;">
             <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
             <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
@@ -795,8 +816,11 @@ app.get('/', (req, res) => {
             ).join('');
 
             const me = s.players.find(p=>p.id===myId);
-            document.getElementById('btn-pass').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
-            
+            // CORRECCIÓN 1: Si soy espectador, no veo botón de pasar
+            const canPlay = me && !me.isSpectator;
+            document.getElementById('btn-pass').style.display = (canPlay && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
+            document.getElementById('uno-btn-area').style.visibility = canPlay ? 'visible' : 'hidden';
+
             const penEl = document.getElementById('penalty-display');
             if(me && me.isTurn && s.pendingPenalty>0) {
                 penEl.style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty;
@@ -812,14 +836,31 @@ app.get('/', (req, res) => {
                 document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
                 document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>\`<div>Gana: \${h.winnerName}</div>\`).join('');
                 
-                // REGLA 1: MARCAR SELECCIÓN VISUALMENTE
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
+                const isMyTurn = (s.duelInfo.turn === myId);
+                
                 document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
                 
-                // Limpiar selecciones previas
+                // CORRECCIÓN 3: GESTIÓN VISUAL DE TURNOS EN DUELO
+                const turnMsg = document.getElementById('duel-turn-msg');
+                const btns = document.querySelectorAll('.duel-btn');
+                
+                if (amIFighter) {
+                    if (isMyTurn) {
+                        turnMsg.innerText = "¡TU TURNO! Elige...";
+                        turnMsg.style.color = "#2ecc71";
+                        btns.forEach(b => b.disabled = false);
+                    } else {
+                        turnMsg.innerText = "Esperando al oponente...";
+                        turnMsg.style.color = "#aaa";
+                        btns.forEach(b => b.disabled = true);
+                    }
+                } else {
+                    turnMsg.innerText = "";
+                }
+
                 ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
                 
-                // Marcar si ya elegí
                 if(s.duelInfo.myChoice) {
                     document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected';
                 }
@@ -829,6 +870,10 @@ app.get('/', (req, res) => {
         socket.on('handUpdate', h => {
             const hz = document.getElementById('hand-zone');
             hz.innerHTML = '';
+            
+            // CORRECCIÓN 1: Si no hay mano (espectador), no mostramos nada
+            if (!h || h.length === 0) return;
+
             const hasGrace = h.some(c=>c.value==='GRACIA');
             document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
 

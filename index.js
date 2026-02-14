@@ -37,7 +37,7 @@ function initRoom(roomId) {
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
             attackerChoice: null, defenderChoice: null, history: [], turn: null,
-            narrative: '' // TEXTO DEL RELATOR
+            narrative: '' 
         },
         chatHistory: [],
         lastActivity: Date.now()
@@ -523,7 +523,7 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // PACKET CON NARRATIVA
+    // PACKET CON NARRATIVA GARANTIZADA
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
         attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
         round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
@@ -811,7 +811,7 @@ app.get('/', (req, res) => {
             document.getElementById('login').style.display='none'; document.getElementById('join-menu').style.display='none'; 
             document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
             document.getElementById('rip-screen').style.display = 'none';
-            document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none'; // FORZAR VISIBILIDAD SI ESTADO ES DUELING
+            document.getElementById('duel-screen').style.display = 'none'; // Por defecto oculto
             document.getElementById('revive-screen').style.display = 'none';
             
             if(s.state === 'waiting') {
@@ -828,7 +828,7 @@ app.get('/', (req, res) => {
             }
 
             document.getElementById('game-area').style.display='flex';
-            if (s.state === 'dueling') { document.getElementById('hand-zone').style.display = 'none'; } else { document.getElementById('hand-zone').style.display = 'flex'; }
+            if (s.state === 'dueling' || s.state === 'rip_decision') { document.getElementById('hand-zone').style.display = 'none'; } else { document.getElementById('hand-zone').style.display = 'flex'; }
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
             const top = s.topCard; const tEl = document.getElementById('top-card');
@@ -856,17 +856,30 @@ app.get('/', (req, res) => {
             const penEl = document.getElementById('penalty-display');
             if(me && me.isTurn && s.pendingPenalty>0) { penEl.style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty; } else penEl.style.display='none';
 
+            // ESTADO: DECISIÓN DE RIP (DESAFÍO)
             if(s.state === 'rip_decision') {
-                if(s.duelInfo.defenderId === myId) document.getElementById('rip-screen').style.display='flex';
-                else { const al = document.getElementById('main-alert'); al.innerText = "⏳ Esperando Duelo..."; al.style.display = 'block'; }
+                if(s.duelInfo.defenderId === myId) {
+                    // Soy el defensor: Veo botones de aceptar/rendirse
+                    document.getElementById('rip-screen').style.display='flex';
+                } else {
+                    // Soy espectador o atacante: Veo la pantalla de duelo CON narrativa (sin botones)
+                    document.getElementById('duel-screen').style.display='flex';
+                    if(s.duelInfo && s.duelInfo.narrative) {
+                        document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                    }
+                    // Ocultamos botones de pelea porque aún no es fase de pelea
+                    document.getElementById('duel-opts').style.display = 'none';
+                    document.getElementById('duel-turn-msg').innerText = "Esperando respuesta del desafiado...";
+                }
             }
 
+            // ESTADO: PELEANDO (DUELING)
             if(s.state === 'dueling') {
-                // ACTUALIZAR PANTALLA DE DUELO
+                document.getElementById('duel-screen').style.display='flex';
+                
                 document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                 document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
                 
-                // NARRATIVA: Actualizar el texto del narrador (Seguro contra fallos)
                 if(s.duelInfo && s.duelInfo.narrative) {
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
                 }
@@ -874,7 +887,6 @@ app.get('/', (req, res) => {
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 const isMyTurnDuel = (s.duelInfo.turn === myId);
                 
-                // Mostrar botones SOLO si soy luchador
                 document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
                 
                 const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
@@ -882,7 +894,7 @@ app.get('/', (req, res) => {
                     if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
                     else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
                 } else { 
-                    turnMsg.innerText = ""; // El espectador lee la narrativa de arriba
+                    turnMsg.innerText = ""; 
                 }
                 
                 ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');

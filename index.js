@@ -6,7 +6,7 @@ const io = require('socket.io')(http);
 // --- ESTRUCTURA DE DATOS GLOBAL ---
 const rooms = {}; 
 
-// GARBAGE COLLECTOR: Limpieza automática de salas abandonadas (1 hora)
+// GARBAGE COLLECTOR
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -36,7 +36,8 @@ function initRoom(roomId) {
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
-            attackerChoice: null, defenderChoice: null, history: [], turn: null 
+            attackerChoice: null, defenderChoice: null, history: [], turn: null,
+            narrative: '' // NUEVO: Para contarle a los espectadores qué pasa
         },
         chatHistory: [],
         lastActivity: Date.now()
@@ -206,40 +207,16 @@ io.on('connection', (socket) => {
             // --- LÓGICA DE JERARQUÍA DE CASTIGOS ---
             if (room.pendingPenalty > 0) {
                 let allowed = false;
-                
-                // 1. Gracia siempre salva
                 if (card.value === 'GRACIA') allowed = true;
-                
-                // 2. Jerarquía (+2, +4, +12)
                 else {
-                    const getVal = (v) => {
-                        if (v === '+2') return 2;
-                        if (v === '+4') return 4;
-                        if (v === '+12') return 12;
-                        return 0; // No es carta de castigo
-                    };
-                    
-                    const cardVal = getVal(card.value);
-                    const topVal = getVal(top.value);
-
-                    // La carta jugada debe ser de castigo (cardVal > 0)
-                    // Y su valor debe ser MAYOR O IGUAL al valor de la carta en la mesa
-                    if (cardVal > 0 && cardVal >= topVal) {
-                        allowed = true;
-                    }
+                    const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
+                    const cardVal = getVal(card.value); const topVal = getVal(top.value);
+                    if (cardVal > 0 && cardVal >= topVal) allowed = true;
                 }
-
-                if (!allowed) { 
-                    socket.emit('notification', `🚫 Debes tirar un castigo igual o mayor a la mesa, o Gracia.`); 
-                    return; 
-                }
+                if (!allowed) { socket.emit('notification', `🚫 Debes tirar un castigo igual o mayor a la mesa, o Gracia.`); return; }
             } else {
-                // JUGADA NORMAL (Sin castigo pendiente)
                 let valid = false;
-                if (card.color === 'negro') valid = true;
-                else if (card.value === 'GRACIA') valid = true;
-                else if (card.color === room.activeColor) valid = true;
-                else if (card.value === top.value) valid = true;
+                if (card.color === 'negro') valid = true; else if (card.value === 'GRACIA') valid = true; else if (card.color === room.activeColor) valid = true; else if (card.value === top.value) valid = true;
                 if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
             }
         }
@@ -247,8 +224,6 @@ io.on('connection', (socket) => {
         // --- LÓGICA GRACIA DIVINA ---
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
-
-            // PRIORIDAD 1: SALVARSE DEL CASTIGO
             if (room.pendingPenalty > 0) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
                 io.to(roomId).emit('playSound', 'divine');
@@ -258,13 +233,10 @@ io.on('connection', (socket) => {
                 if (player.hand.length === 0) { finishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
-
-            // PRIORIDAD 2: ELEGIR A QUIÉN REVIVIR
             if (deadPlayers.length > 0) {
                 if (!reviveTargetId) {
                     const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
-                    socket.emit('askReviveTarget', zombieList); 
-                    return; // PAUSA
+                    socket.emit('askReviveTarget', zombieList); return; 
                 } else {
                     const target = room.players.find(p => p.id === reviveTargetId && p.isDead);
                     if (target) {
@@ -272,21 +244,16 @@ io.on('connection', (socket) => {
                         io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
                     }
                 }
-            } else {
-                // PRIORIDAD 3: SOLO COLOR
-                io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
-            }
-
+            } else { io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); }
+            
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
             if (!deadPlayers.length > 0) io.to(roomId).emit('playSound', 'divine'); 
-            
             if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-            
             if (player.hand.length === 0) { finishRound(roomId, player); return; }
             advanceTurn(roomId, 1); updateAll(roomId); return;
         }
 
-        // --- LÓGICA RIP ---
+        // --- LÓGICA RIP (DUELO) ---
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no sirve para evitar castigos.'); return; }
             const isTopNumeric = /^[0-9]$/.test(top.value) || top.value === '1 y 1/2';
@@ -297,9 +264,20 @@ io.on('connection', (socket) => {
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
+            
+            // INICIO DE DUELO
             room.gameState = 'rip_decision';
             const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
-            room.duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: attacker.id };
+            
+            room.duelState = { 
+                attackerId: attacker.id, defenderId: defender.id, 
+                attackerName: attacker.name, defenderName: defender.name, 
+                round: 1, scoreAttacker: 0, scoreDefender: 0, 
+                attackerChoice: null, defenderChoice: null, history: [], 
+                turn: attacker.id,
+                narrative: `⚔️ ¡${attacker.name} ha retado a muerte a ${defender.name}!` // Narrativa Inicial
+            };
+            
             io.to(roomId).emit('notification', `💀 ¡${attacker.name} RIP a ${defender.name}!`);
             updateAll(roomId); return;
         }
@@ -366,15 +344,28 @@ io.on('connection', (socket) => {
         const room = rooms[roomId]; if (room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
         const def = room.players.find(p => p.id === room.duelState.defenderId);
         if (d === 'surrender') { eliminatePlayer(roomId, def.id); checkWinCondition(roomId); }
-        else { io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling'; updateAll(roomId); }
+        else { 
+            io.to(roomId).emit('playSound', 'bell'); 
+            room.gameState = 'dueling';
+            room.duelState.narrative = `¡Duelo aceptado! ${room.duelState.attackerName} está eligiendo su poder...`; // Narrativa
+            updateAll(roomId); 
+        }
     });
 
     socket.on('duelPick', (c) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'dueling') return;
         if (socket.id !== room.duelState.turn) return;
-        if (socket.id === room.duelState.attackerId) { room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId; } 
-        else if (socket.id === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId); return; }
+        
+        if (socket.id === room.duelState.attackerId) { 
+            room.duelState.attackerChoice = c; 
+            room.duelState.turn = room.duelState.defenderId;
+            room.duelState.narrative = `${room.duelState.attackerName} ya eligió. Ahora ${room.duelState.defenderName} elige su poder...`; // Narrativa
+        } 
+        else if (socket.id === room.duelState.defenderId) { 
+            room.duelState.defenderChoice = c; 
+            resolveDuelRound(roomId); return; 
+        }
         updateAll(roomId);
     });
 
@@ -401,8 +392,71 @@ io.on('connection', (socket) => {
 });
 
 // --- HELPERS ---
-function getRoomId(socket) { return Array.from(socket.rooms).find(r => r !== socket.id); }
 
+function getDuelNarrative(attName, defName, att, def) {
+    if (att === def) return "Choque de fuerzas idénticas. Empate.";
+    if (att === 'fuego' && def === 'hielo') return `El Fuego de ${attName} derritió el Hielo de ${defName}.`;
+    if (att === 'hielo' && def === 'agua') return `El Hielo de ${attName} congeló el Agua de ${defName}.`;
+    if (att === 'agua' && def === 'fuego') return `El Agua de ${attName} apagó el Fuego de ${defName}.`;
+    
+    if (def === 'fuego' && att === 'hielo') return `El Fuego de ${defName} derritió el Hielo de ${attName}.`;
+    if (def === 'hielo' && att === 'agua') return `El Hielo de ${defName} congeló el Agua de ${attName}.`;
+    if (def === 'agua' && att === 'fuego') return `El Agua de ${defName} apagó el Fuego de ${attName}.`;
+    return "Resultado confuso...";
+}
+
+function resolveDuelRound(roomId) {
+    const room = rooms[roomId];
+    const att = room.duelState.attackerChoice, def = room.duelState.defenderChoice;
+    let winner = 'tie';
+    if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
+    else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
+    
+    if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
+    
+    let winName = 'Empate'; 
+    if(winner === 'attacker') winName = room.duelState.attackerName; 
+    if(winner === 'defender') winName = room.duelState.defenderName;
+
+    // Generar texto narrativo del resultado
+    const narrativeResult = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
+    room.duelState.narrative = narrativeResult;
+
+    room.duelState.history.push({ round: room.duelState.round, att, def, winnerName: winName });
+    room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
+
+    io.to(roomId).emit('playSound', 'soft');
+    if (room.duelState.round >= 3 || room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2000); } 
+    else { 
+        // Pequeño delay para que lean el resultado antes de la siguiente ronda
+        setTimeout(() => {
+            if(rooms[roomId]) {
+                room.duelState.round++; 
+                room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} está eligiendo...`;
+                updateAll(roomId);
+            }
+        }, 3000);
+        updateAll(roomId); // Actualiza inmediato para mostrar el resultado
+    }
+}
+
+function finalizeDuel(roomId) {
+    const room = rooms[roomId];
+    const att = room.players.find(p => p.id === room.duelState.attackerId); const def = room.players.find(p => p.id === room.duelState.defenderId);
+    if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
+    
+    if (room.duelState.scoreAttacker > room.duelState.scoreDefender) { 
+        io.to(roomId).emit('notification', `💀 ${att.name} GANA.`); eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
+    }
+    else if (room.duelState.scoreDefender > room.duelState.scoreAttacker) { 
+        io.to(roomId).emit('notification', `🛡️ ${def.name} GANA. Castigo atacante.`); drawCards(roomId, room.players.findIndex(p => p.id === room.duelState.attackerId), 4); room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); 
+    }
+    else { io.to(roomId).emit('notification', `🤝 EMPATE.`); room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
+}
+
+function eliminatePlayer(roomId, id) { const room = rooms[roomId]; const p = room.players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
+function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator).length; }
+function getRoomId(socket) { return Array.from(socket.rooms).find(r => r !== socket.id); }
 function startCountdown(roomId) {
     const room = rooms[roomId]; if (room.players.length < 2) return;
     room.gameState = 'counting'; let count = 3; createDeck(roomId);
@@ -425,12 +479,10 @@ function startCountdown(roomId) {
         count--;
     }, 1000);
 }
-
 function drawCards(roomId, pid, n) { 
     const room = rooms[roomId]; if (pid < 0 || pid >= room.players.length) return; 
     for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); if (room.deck.length > 0) room.players[pid].hand.push(room.deck.pop()); } 
 }
-
 function advanceTurn(roomId, steps) {
     const room = rooms[roomId]; if (room.players.length === 0) return;
     room.players.forEach(p => p.hasDrawn = false);
@@ -442,7 +494,6 @@ function advanceTurn(roomId, steps) {
     }
     if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
 }
-
 function getNextPlayerIndex(roomId, steps) {
     const room = rooms[roomId]; let next = room.currentTurn; let attempts = 0;
     while (steps > 0 && attempts < room.players.length * 2) {
@@ -452,58 +503,31 @@ function getNextPlayerIndex(roomId, steps) {
     }
     return next;
 }
-
 function finishRound(roomId, w) {
     const room = rooms[roomId]; room.gameState = 'waiting';
     io.to(roomId).emit('gameOver', { winner: w.name }); io.to(roomId).emit('playSound', 'win');
     setTimeout(() => { delete rooms[roomId]; }, 5000);
 }
-
 function checkWinCondition(roomId) {
     const room = rooms[roomId];
     if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { const winner = room.players.find(p => !p.isDead && !p.isSpectator); if (winner) finishRound(roomId, winner); } 
     else { room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
 }
 
-function resolveDuelRound(roomId) {
-    const room = rooms[roomId];
-    const att = room.duelState.attackerChoice, def = room.duelState.defenderChoice;
-    let winner = 'tie';
-    if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
-    else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
-    
-    if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
-    let winName = 'Empate'; if(winner === 'attacker') winName = room.duelState.attackerName; if(winner === 'defender') winName = room.duelState.defenderName;
-
-    room.duelState.history.push({ round: room.duelState.round, att, def, winnerName: winName });
-    room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
-
-    io.to(roomId).emit('playSound', 'soft');
-    if (room.duelState.round >= 3 || room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2000); } 
-    else { room.duelState.round++; updateAll(roomId); }
-}
-
-function finalizeDuel(roomId) {
-    const room = rooms[roomId];
-    const att = room.players.find(p => p.id === room.duelState.attackerId); const def = room.players.find(p => p.id === room.duelState.defenderId);
-    if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
-    
-    if (room.duelState.scoreAttacker > room.duelState.scoreDefender) { 
-        io.to(roomId).emit('notification', `💀 ${att.name} GANA.`); eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
-    }
-    else if (room.duelState.scoreDefender > room.duelState.scoreAttacker) { 
-        io.to(roomId).emit('notification', `🛡️ ${def.name} GANA. Castigo atacante.`); drawCards(roomId, room.players.findIndex(p => p.id === room.duelState.attackerId), 4); room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); 
-    }
-    else { io.to(roomId).emit('notification', `🤝 EMPATE.`); room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
-}
-
-function eliminatePlayer(roomId, id) { const room = rooms[roomId]; const p = room.players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
-function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator).length; }
-
 function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
-    const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner } : null;
+    
+    // Aquí pasamos la narrativa al cliente
+    const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
+        attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
+        round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
+        scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, 
+        attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, 
+        myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner,
+        narrative: room.duelState.narrative // <--- NUEVO
+    } : null;
+
     const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory };
     room.players.forEach(p => {
         if(p.isConnected) {
@@ -558,7 +582,6 @@ app.get('/', (req, res) => {
         #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 4500; display: none; text-align: center; width: 90%; max-width: 400px; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         .zombie-btn:hover { background: #555; border-color: gold; }
-        /* OVERLAY DE RESURRECCIÓN */
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
         #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
@@ -642,16 +665,17 @@ app.get('/', (req, res) => {
 
     <div id="duel-screen" class="screen">
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
-        <h2 id="round-winner" style="color: #2ecc71; font-size: 24px; min-height: 30px;"></h2>
-        <h2 id="duel-names">... vs ...</h2>
+        <h3 id="duel-narrative" style="color: #69f0ae; font-size: 20px; text-align:center; padding:10px; border:1px solid #444; background:rgba(0,0,0,0.5); width:90%; border-radius:10px;"></h3>
+        
+        <h2 id="duel-names" style="margin-top:10px;">... vs ...</h2>
         <h3 id="duel-sc">0 - 0</h3>
         <p id="duel-turn-msg" style="color: #aaa; font-style: italic; min-height: 24px;">Esperando tu turno...</p>
+        
         <div id="duel-opts" style="margin-top:20px;">
             <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
             <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
             <button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button>
         </div>
-        <div id="duel-info" style="margin-top:20px; color:#aaa; font-size: 14px; opacity: 0.7;"></div>
     </div>
 
     <div id="color-picker">
@@ -756,7 +780,6 @@ app.get('/', (req, res) => {
             document.getElementById('revive-screen').style.display = 'block';
         });
 
-        // EVENTO DE RESURRECCIÓN
         socket.on('playerRevived', (data) => {
             play('divine'); 
             const overlay = document.getElementById('revival-overlay');
@@ -836,16 +859,26 @@ app.get('/', (req, res) => {
             if(s.state === 'dueling') {
                 document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                 document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
-                document.getElementById('round-winner').innerText = s.duelInfo.lastWinner ? "Ganador Ronda: " + s.duelInfo.lastWinner : "";
-                document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>`<div>Gana: ${h.winnerName}</div>`).join('');
+                
+                // NARRATIVA: Actualizar el texto del narrador
+                if(s.duelInfo.narrative) {
+                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                }
+
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 const isMyTurnDuel = (s.duelInfo.turn === myId);
+                
+                // Mostrar botones SOLO si soy luchador
                 document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+                
                 const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
                 if (amIFighter) {
                     if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
                     else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
-                } else { turnMsg.innerText = ""; }
+                } else { 
+                    turnMsg.innerText = ""; // El espectador lee la narrativa de arriba
+                }
+                
                 ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
                 if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
             }

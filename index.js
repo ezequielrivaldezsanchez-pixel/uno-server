@@ -6,20 +6,17 @@ const io = require('socket.io')(http);
 // --- ESTRUCTURA DE DATOS GLOBAL ---
 const rooms = {}; 
 
-/*
-    SISTEMA DE LIMPIEZA AUTOMÁTICA
-    Para evitar que el servidor se llene de salas abandonadas por siempre,
-    revisamos cada 30 minutos y borramos salas que no se hayan tocado en 1 hora.
-*/
+// GARBAGE COLLECTOR: Solo borra salas si llevan más de 1 hora TOTALMENTE abandonadas
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
-        if (now - rooms[roomId].lastActivity > 3600000) { // 1 hora de inactividad
+        // Si nadie ha tocado la sala en 1 hora, adios.
+        if (now - rooms[roomId].lastActivity > 3600000) { 
+            console.log(`🧹 Limpiando sala inactiva: ${roomId}`);
             delete rooms[roomId];
-            console.log(`Sala ${roomId} eliminada por inactividad.`);
         }
     });
-}, 1800000); // Chequeo cada 30 mins
+}, 60000 * 5); // Chequeo cada 5 minutos
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
@@ -43,7 +40,7 @@ function initRoom(roomId) {
             attackerChoice: null, defenderChoice: null, history: [], turn: null 
         },
         chatHistory: [],
-        lastActivity: Date.now() // Marca de tiempo para limpieza
+        lastActivity: Date.now()
     };
 }
 
@@ -105,17 +102,50 @@ function recycleDeck(roomId) {
 
 io.on('connection', (socket) => {
     
+    // EVENTO CLAVE: VERIFICAR SI ESTE USUARIO YA ESTABA EN UNA SALA
+    socket.on('checkSession', (uuid) => {
+        let foundRoomId = null;
+        let foundPlayer = null;
+
+        // Buscar al jugador por su UUID en todas las salas activas
+        for (const rId in rooms) {
+            const p = rooms[rId].players.find(pl => pl.uuid === uuid);
+            if (p) {
+                foundRoomId = rId;
+                foundPlayer = p;
+                break;
+            }
+        }
+
+        if (foundRoomId && foundPlayer) {
+            // ¡ENCONTRADO! Reconexión silenciosa
+            foundPlayer.id = socket.id; // Actualizamos el "enchufe"
+            foundPlayer.isConnected = true;
+            socket.join(foundRoomId);
+            touchRoom(foundRoomId);
+            
+            // Le avisamos al cliente que volvió
+            socket.emit('sessionRestored', { roomId: foundRoomId, name: foundPlayer.name });
+            console.log(`Jugador ${foundPlayer.name} reconectado a sala ${foundRoomId}`);
+            updateAll(foundRoomId);
+        } else {
+            // No estaba en ninguna sala, debe loguearse
+            socket.emit('requireLogin');
+        }
+    });
+
     // 1. CREAR SALA
     socket.on('createRoom', (data) => {
         const name = data.name.substring(0, 15);
         const uuid = data.uuid;
+        // Código simple de 4 letras para facilitar
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
         
         initRoom(roomId);
         
         const player = { 
             id: socket.id, uuid, name, hand: [], hasDrawn: false, 
-            isSpectator: false, isDead: false, isAdmin: true 
+            isSpectator: false, isDead: false, isAdmin: true, isConnected: true
         };
         
         rooms[roomId].players.push(player);
@@ -124,7 +154,7 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
 
-    // 2. UNIRSE A SALA (O RECONECTARSE)
+    // 2. UNIRSE A SALA
     socket.on('joinRoom', (data) => {
         const name = data.name.substring(0, 15);
         const roomId = data.roomId.toUpperCase();
@@ -138,25 +168,23 @@ io.on('connection', (socket) => {
         const room = rooms[roomId];
         touchRoom(roomId);
 
-        // BUSCAR SI YA EXISTE (POR UUID)
         const existingPlayer = room.players.find(p => p.uuid === uuid);
 
         if (existingPlayer) {
-            // ¡ES UNA RECONEXIÓN!
-            existingPlayer.id = socket.id; // Actualizamos el ID del socket
-            existingPlayer.name = name;    // Actualizamos nombre por si acaso
+            // Ya existía (doble tab o reconexión manual)
+            existingPlayer.id = socket.id;
+            existingPlayer.name = name;
+            existingPlayer.isConnected = true;
             socket.join(roomId);
-            
-            // No notificamos a todos para no spammear si solo fue un parpadeo de red
-            // Pero sí le enviamos el estado al que volvió
-            socket.emit('roomJoined', { roomId }); 
+            socket.emit('roomJoined', { roomId });
         } else {
-            // NUEVO JUGADOR
+            // Nuevo Jugador
             const isGameRunning = room.gameState !== 'waiting' && room.gameState !== 'counting';
             const player = { 
                 id: socket.id, uuid, name, hand: [], hasDrawn: false, 
                 isSpectator: isGameRunning, isDead: false, 
-                isAdmin: (room.players.length === 0) 
+                isAdmin: (room.players.length === 0), // Si la sala estaba vacía (por bug), se hace admin
+                isConnected: true
             };
             
             room.players.push(player);
@@ -206,6 +234,7 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = room.discardPile[room.discardPile.length - 1];
 
+        // VALIDACIÓN DE VICTORIA (Última carta)
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -218,6 +247,7 @@ io.on('connection', (socket) => {
 
         if (top.color !== 'negro') room.activeColor = top.color;
 
+        // SAFF
         let isSaff = false;
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
@@ -423,15 +453,15 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- MODIFICACIÓN CLAVE: DISCONNECT NO DESTRUCTIVO ---
+    // --- DISCONNECT ---
     socket.on('disconnect', () => {
-        // En los juegos de navegador móvil, disconnect ocurre muy seguido.
-        // YA NO borramos al jugador. Dejamos que "persista".
-        // La limpieza solo la hace el setInterval global si la sala muere.
-        // Si el usuario vuelve, el 'joinRoom' con UUID recupera la sesión.
+        // NO BORRAMOS NADA. 
+        // Solo marcamos que se desconectó (opcional, para UI futura)
         const roomId = getRoomId(socket);
         if (roomId && rooms[roomId]) {
-            console.log(`Socket desconectado en sala ${roomId}. Mantenemos datos para reconexión.`);
+            const p = rooms[roomId].players.find(pl => pl.id === socket.id);
+            if(p) p.isConnected = false; 
+            // La sala persiste. El jugador persiste.
         }
     });
 });
@@ -627,7 +657,8 @@ function updateAll(roomId) {
             hasDrawn: p.hasDrawn, 
             isDead: p.isDead, 
             isSpectator: p.isSpectator,
-            isAdmin: p.isAdmin 
+            isAdmin: p.isAdmin,
+            isConnected: p.isConnected
         })),
         topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, 
         activeColor: room.activeColor, 
@@ -636,15 +667,18 @@ function updateAll(roomId) {
     };
     
     room.players.forEach(p => {
-        const mp = JSON.parse(JSON.stringify(pack));
-        mp.iamAdmin = p.isAdmin;
-        if (mp.duelInfo) {
-            if (p.id === room.duelState.attackerId) mp.duelInfo.myChoice = room.duelState.attackerChoice;
-            if (p.id === room.duelState.defenderId) mp.duelInfo.myChoice = room.duelState.defenderChoice;
+        // Solo enviamos update si el jugador está conectado
+        if(p.isConnected) {
+            const mp = JSON.parse(JSON.stringify(pack));
+            mp.iamAdmin = p.isAdmin;
+            if (mp.duelInfo) {
+                if (p.id === room.duelState.attackerId) mp.duelInfo.myChoice = room.duelState.attackerChoice;
+                if (p.id === room.duelState.defenderId) mp.duelInfo.myChoice = room.duelState.defenderChoice;
+            }
+            io.to(p.id).emit('updateState', mp); 
+            if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand);
+            io.to(p.id).emit('chatHistory', room.chatHistory);
         }
-        io.to(p.id).emit('updateState', mp); 
-        if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand);
-        io.to(p.id).emit('chatHistory', room.chatHistory);
     });
 }
 
@@ -721,7 +755,7 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Reconnect & Fix</p>
+        <p>Stable Room System</p>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15">
         <button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button>
         <button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button>
@@ -818,14 +852,14 @@ app.get('/', (req, res) => {
         let myId = ''; let pendingCard = null; let pendingGrace = false; let amAdmin = false; let isMyTurn = false;
         let currentRoomId = '';
 
-        // --- SISTEMA DE PERSISTENCIA UUID ---
+        // --- GESTIÓN UUID ---
         let myUUID = localStorage.getItem('uno_uuid');
         if (!myUUID) {
             myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36);
             localStorage.setItem('uno_uuid', myUUID);
         }
 
-        // --- MANEJO DE LINKS DE INVITACIÓN ---
+        // --- GESTIÓN DE LINKS ---
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('room');
         if (inviteCode) {
@@ -837,17 +871,26 @@ app.get('/', (req, res) => {
             btnJoin.onclick = joinRoom;
         }
 
-        // --- SISTEMA DE RE-CONEXIÓN AUTOMÁTICA ---
-        // Si el socket se corta (WhatsApp, bloqueo pantalla) y vuelve, intentamos volver a la sala
+        // --- RECONEXIÓN AUTOMÁTICA ---
         socket.on('connect', () => {
             myId = socket.id;
-            // Solo intentamos reconectar si ya estábamos en una sala y tenemos un nombre puesto
-            if (currentRoomId && document.getElementById('my-name').value) {
-                 console.log("Reconectando a sala: " + currentRoomId);
-                 const name = document.getElementById('my-name').value;
-                 // Emitimos joinRoom de nuevo. El servidor verá el UUID y nos devolverá el control.
-                 socket.emit('joinRoom', { name, uuid: myUUID, roomId: currentRoomId });
-            }
+            // Apenas conecta, envía el UUID para ver si el servidor te recuerda
+            socket.emit('checkSession', myUUID);
+        });
+
+        // El servidor dice: "Sí, estabas en tal sala, vuelve"
+        socket.on('sessionRestored', (data) => {
+            console.log("Sesión restaurada:", data);
+            currentRoomId = data.roomId;
+            // Restauramos el nombre localmente por si se borró
+            if(data.name) document.getElementById('my-name').value = data.name;
+            enterLobby();
+        });
+
+        // El servidor dice: "No te conozco, loguéate"
+        socket.on('requireLogin', () => {
+            console.log("Nueva sesión requerida");
+            // No hacemos nada, dejamos que el usuario vea la pantalla de Login
         });
 
         function showCreate() {
@@ -880,7 +923,11 @@ app.get('/', (req, res) => {
         
         function copyLink() {
             const link = window.location.origin + '/?room=' + currentRoomId;
-            navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!'));
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!'));
+            } else {
+                prompt("Copia este enlace:", link);
+            }
         }
 
         socket.on('roomCreated', (data) => {
@@ -904,7 +951,7 @@ app.get('/', (req, res) => {
             document.getElementById('lobby-code').innerText = currentRoomId;
         }
 
-        // --- JUEGO ---
+        // --- RESTO DEL JUEGO ---
         
         const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
@@ -984,7 +1031,12 @@ app.get('/', (req, res) => {
             document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none';
             
             if(s.state === 'waiting') {
-                document.getElementById('lobby-users').innerHTML = s.players.map(p=>\`<div>\${p.name}</div>\`).join('');
+                document.getElementById('lobby-users').innerHTML = s.players.map(p => {
+                    // Indicador de conexión
+                    const status = p.isConnected ? '🟢' : '🔴';
+                    return \`<div>\${status} \${p.name}</div>\`;
+                }).join('');
+                
                 if (s.iamAdmin) {
                      document.getElementById('start-btn').style.display = 'block';
                      document.getElementById('host-msg').style.display = 'block';
@@ -1026,7 +1078,7 @@ app.get('/', (req, res) => {
             }
 
             document.getElementById('players-zone').innerHTML = s.players.map(p => 
-                \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.name} (\${p.cardCount})</div>\`
+                \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.isConnected?'':'🔴 '}\${p.name} (\${p.cardCount})</div>\`
             ).join('');
 
             const me = s.players.find(p=>p.id===myId);
@@ -1123,7 +1175,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-    `);
-});
-
-http.listen(process.env.PORT || 3000, () => console.log('SERVER LISTO'));

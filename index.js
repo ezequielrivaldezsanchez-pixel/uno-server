@@ -26,7 +26,6 @@ let duelState = {
 let chatHistory = [];
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
-// MODIFICACIÓN 3: Agregado "1 y 1/2" a los valores
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
 // --- FUNCIONES CORE ---
@@ -39,15 +38,11 @@ function resetGame() {
     direction = 1;
     activeColor = '';
     pendingPenalty = 0;
+    chatHistory = []; // Limpiamos chat también para nueva partida limpia
     if (countdownInterval) clearInterval(countdownInterval);
     
-    players.forEach((p, index) => { 
-        p.hand = []; 
-        p.hasDrawn = false; 
-        p.isDead = false; 
-        p.isSpectator = false;
-        p.isAdmin = (index === 0);
-    });
+    // REINICIO TOTAL: Vaciamos la lista de jugadores para que la sala quede libre
+    players = [];
     
     duelState = { attackerId: null, defenderId: null, attackerName: '', defenderName: '', round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: null };
 }
@@ -56,7 +51,6 @@ function createDeck() {
     deck = [];
     colors.forEach(color => {
         values.forEach(val => {
-            // El "1 y 1/2" se comporta como número normal (2 copias excepto el 0)
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
@@ -103,7 +97,7 @@ function calculateHandPoints(hand) {
         else if (card.value === '+12') points += 200;
         else if (card.type === 'wild') points += 50;
         else if (['+2', 'X', 'R'].includes(card.value)) points += 20;
-        else if (card.value === '1 y 1/2') points += 1.5; // Valor simbólico
+        else if (card.value === '1 y 1/2') points += 1.5;
         else points += parseInt(card.value) || 0;
     });
     return points;
@@ -145,7 +139,12 @@ io.on('connection', (socket) => {
 
     socket.on('requestStart', () => {
         const p = players.find(p => p.id === socket.id);
-        if (p && p.isAdmin && gameState === 'waiting' && players.length >= 1) {
+        if (p && p.isAdmin && gameState === 'waiting') {
+            // CORRECCIÓN: Mínimo 2 jugadores
+            if (players.length < 2) {
+                socket.emit('notification', '⚠️ Mínimo 2 jugadores.');
+                return;
+            }
             startCountdown();
         }
     });
@@ -165,31 +164,35 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
-        // --- VALIDACIÓN DE VICTORIA ACTUALIZADA ---
+        // VALIDACIÓN DE VICTORIA
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
-            const isUnoYMedio = card.value === '1 y 1/2'; // Aceptamos la nueva carta
+            const isUnoYMedio = card.value === '1 y 1/2';
             const isGracia = card.value === 'GRACIA';
             
-            // Si NO es número, ni 1 y 1/2, ni gracia => Bloquear
             if (!isStrictNumber && !isUnoYMedio && !isGracia) {
                 socket.emit('notification', '🚫 Última carta: Solo Números o Gracia.');
                 return; 
             }
         }
-        // ------------------------------------------
 
         if (top.color !== 'negro') activeColor = top.color;
 
+        // --- LÓGICA SAFF SERVIDOR ---
         let isSaff = false;
         if (pIndex !== currentTurn) {
-            if (card.color !== 'negro' && card.value === top.value && card.color === top.color) {
+            // REGLA: SAFF Solo con numéricas
+            const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
+            
+            if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
                 isSaff = true;
                 currentTurn = pIndex;
                 pendingPenalty = 0;
                 io.emit('notification', `⚡ ¡${player.name} hizo SAFF!`);
                 io.emit('playSound', 'saff');
-            } else { return; }
+            } else { 
+                return; // Si intenta jugar fuera de turno y no es SAFF válido, ignorar
+            }
         }
 
         if (pIndex === currentTurn && !isSaff) {
@@ -344,7 +347,7 @@ io.on('connection', (socket) => {
         if (p && !p.isDead && !p.isSpectator) { io.emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2!`); io.emit('playSound', 'uno'); }
     });
 
-    socket.on('restartGame', () => { resetGame(); updateAll(); });
+    // socket.on('restartGame') ELIMINADO: Ya no se usa reinicio manual
     
     socket.on('sendChat', (text) => { 
         const p = players.find(x => x.id === socket.id); 
@@ -365,8 +368,6 @@ io.on('connection', (socket) => {
             players = players.filter(pl => pl.id !== socket.id);
             if (wasAdmin && players.length > 0) players[0].isAdmin = true;
             updateAll();
-        } else {
-            // No hacemos nada, esperamos reconexión por UUID
         }
     });
 });
@@ -374,7 +375,7 @@ io.on('connection', (socket) => {
 // --- FUNCIONES AUXILIARES ---
 
 function startCountdown() {
-    if (players.length < 1) return;
+    if (players.length < 2) return; // Doble check
     gameState = 'counting';
     let count = 3;
     createDeck();
@@ -395,7 +396,7 @@ function startCountdown() {
     
     io.emit('countdownTick', 3);
     countdownInterval = setInterval(() => {
-        if (players.length < 1) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
+        if (players.length < 2) { clearInterval(countdownInterval); resetGame(); updateAll(); return; }
         io.emit('countdownTick', count); io.emit('playSound', 'soft');
         if (count <= 0) { clearInterval(countdownInterval); gameState = 'playing'; io.emit('playSound', 'start'); updateAll(); } count--;
     }, 1000);
@@ -436,16 +437,25 @@ function getNextPlayerIndex(steps) {
 }
 
 function finishRound(w) {
+    // CORRECCIÓN: Fin de juego total
     gameState = 'waiting';
     io.emit('gameOver', { winner: w.name }); 
     io.emit('playSound', 'win');
+    
+    // Resetear servidor después de un breve delay para que el emit llegue
+    setTimeout(() => {
+        resetGame();
+    }, 1000);
 }
 
 function checkWinCondition() {
     if (players.length > 1 && getAlivePlayersCount() <= 1) {
         const winner = players.find(p => !p.isDead && !p.isSpectator); 
-        if (winner) finishRound(winner); else resetGame(); updateAll();
-    } else { gameState = 'playing'; advanceTurn(1); updateAll(); }
+        if (winner) finishRound(winner); else resetGame(); 
+        // No llamamos updateAll aquí porque finishRound maneja el flujo final
+    } else { 
+        gameState = 'playing'; advanceTurn(1); updateAll(); 
+    }
 }
 
 function resolveDuelRound() {
@@ -562,7 +572,7 @@ app.get('/', (req, res) => {
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
         #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 99999 !important; }
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; } /* MODIFICADO: sin text-shadow */
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
         .hand-card:active { transform: scale(0.95); }
 
         body.bg-rojo { background-color: #4a1c1c !important; } 
@@ -592,7 +602,7 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>1 y 1/2 Edition</p>
+        <p>Final Edition</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -635,8 +645,7 @@ app.get('/', (req, res) => {
         <h1 style="color:gold; font-size:60px; margin-bottom:10px;">🏆 ¡VICTORIA! 🏆</h1>
         <h2 id="winner-name" style="color:white; font-size:40px;"></h2>
         <div style="font-size:50px; margin:20px;">🎉🎊🥂</div>
-        <button id="restart-btn" onclick="socket.emit('restartGame')" style="display:none; padding:20px 40px; background:#e67e22; color:white; border:none; border-radius:30px; font-size:24px; cursor:pointer; border:3px solid white;">NUEVA PARTIDA</button>
-        <p id="restart-wait" style="display:none; color:#aaa;">Esperando al anfitrión para reiniciar...</p>
+        <p style="color: #aaa;">Reiniciando en 5 segundos...</p>
     </div>
 
     <div id="rip-screen" class="screen">
@@ -745,13 +754,11 @@ app.get('/', (req, res) => {
         socket.on('gameOver', data => {
              document.getElementById('game-over-screen').style.display = 'flex';
              document.getElementById('winner-name').innerText = data.winner;
-             if(amAdmin) {
-                 document.getElementById('restart-btn').style.display = 'inline-block';
-                 document.getElementById('restart-wait').style.display = 'none';
-             } else {
-                 document.getElementById('restart-btn').style.display = 'none';
-                 document.getElementById('restart-wait').style.display = 'block';
-             }
+             // REINICIO AUTOMÁTICO
+             setTimeout(() => {
+                 localStorage.removeItem('uno_uuid'); // Borrar sesión para pedir nombre de nuevo
+                 window.location.reload(); // Recargar página
+             }, 5000);
         });
 
         socket.on('countdownTick', n => {
@@ -813,7 +820,7 @@ app.get('/', (req, res) => {
 
             const me = s.players.find(p=>p.id===myId);
             const canPlay = me && !me.isSpectator;
-            isMyTurn = me && me.isTurn; // VARIABLE GLOBAL PARA CONTROLAR CLICKS
+            isMyTurn = me && me.isTurn; 
 
             document.getElementById('btn-pass').style.display = (canPlay && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
             document.getElementById('uno-btn-area').style.visibility = canPlay ? 'visible' : 'hidden';
@@ -886,12 +893,14 @@ app.get('/', (req, res) => {
                 d.style.backgroundColor = bg; d.style.color = txt; d.style.border = border;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 
-                // AJUSTE VISUAL PARA "1 y 1/2"
                 if(c.value === '1 y 1/2') { d.style.fontSize = '18px'; }
 
                 d.onclick = () => {
-                     // MODIFICACIÓN 1: BLOQUEO DE CLICK SI NO ES TURNO
-                     if (!isMyTurn) return;
+                     // CORRECCIÓN SAFF: Si NO es mi turno, solo permitir si es numérica o 1.5
+                     if (!isMyTurn) {
+                        const isNumeric = /^[0-9]$/.test(c.value) || c.value === '1 y 1/2';
+                        if (!isNumeric) return; // Bloquear todo lo demás
+                     }
 
                      if(c.color==='negro' && c.value!=='GRACIA') {
                         if(c.value==='RIP') socket.emit('playCard', c.id, null);

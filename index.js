@@ -196,6 +196,30 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
 
+    // 3. EXPULSAR JUGADOR (NUEVA FUNCIÓN)
+    socket.on('kickPlayer', (targetId) => {
+        const roomId = getRoomId(socket);
+        if(!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+
+        // Solo funciona si el juego no ha empezado
+        if (room.gameState !== 'waiting') return;
+
+        const requestor = room.players.find(p => p.id === socket.id);
+        if (!requestor || !requestor.isAdmin) return; // Solo admin expulsa
+
+        if (requestor.id === targetId) return; // No auto-kick
+
+        const targetIndex = room.players.findIndex(p => p.id === targetId);
+        if (targetIndex !== -1) {
+            const targetName = room.players[targetIndex].name;
+            io.to(targetId).emit('kicked'); // Avisar al jugador
+            room.players.splice(targetIndex, 1); // Borrarlo
+            io.to(roomId).emit('notification', `🚫 ${targetName} fue expulsado.`);
+            updateAll(roomId);
+        }
+    });
+
     // --- LÓGICA DE JUEGO ---
 
     socket.on('requestStart', () => {
@@ -293,7 +317,22 @@ io.on('connection', (socket) => {
             advanceTurn(roomId, 1); updateAll(roomId); return;
         }
 
+        // --- LÓGICA RIP ACTUALIZADA ---
         if (card.value === 'RIP') {
+            // CONDICIÓN 1: No se puede usar si hay castigo pendiente (+2, +4, etc)
+            if (room.pendingPenalty > 0) {
+                socket.emit('notification', '🚫 RIP no sirve para evitar castigos.');
+                return;
+            }
+
+            // CONDICIÓN 2: Solo se puede usar sobre cartas numéricas (0-9 o 1 y 1/2)
+            const isTopNumeric = /^[0-9]$/.test(top.value) || top.value === '1 y 1/2';
+            if (!isTopNumeric) {
+                socket.emit('notification', '🚫 RIP solo se puede jugar sobre Números.');
+                return;
+            }
+
+            // Si pasa las validaciones, ejecutamos el RIP
             if (getAlivePlayersCount(roomId) < 2) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
                 io.to(roomId).emit('notification', '💀 RIP fallido.');
@@ -893,6 +932,13 @@ app.get('/', (req, res) => {
             // No hacemos nada, dejamos que el usuario vea la pantalla de Login
         });
 
+        // NUEVO: Manejo de expulsión
+        socket.on('kicked', () => {
+            alert('🚫 Has sido expulsado de la sala.');
+            localStorage.removeItem('uno_uuid'); // Resetear para evitar reconexión automática
+            window.location = window.location.origin; // Recargar a home
+        });
+
         function showCreate() {
             const name = document.getElementById('my-name').value.trim();
             if(!name) return alert('Ingresa tu nombre');
@@ -927,6 +973,13 @@ app.get('/', (req, res) => {
                 navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!'));
             } else {
                 prompt("Copia este enlace:", link);
+            }
+        }
+
+        // NUEVO: Función para pedir expulsión
+        function kick(id) {
+            if(confirm('¿Seguro que quieres expulsar a este jugador?')) {
+                socket.emit('kickPlayer', id);
             }
         }
 
@@ -991,14 +1044,14 @@ app.get('/', (req, res) => {
 
         socket.on('chatMessage', m => {
             const b = document.getElementById('chat-msgs');
-            b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`;
+            b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`;
             b.scrollTop = b.scrollHeight;
         });
 
         socket.on('chatHistory', h => {
              const b = document.getElementById('chat-msgs');
              b.innerHTML = '';
-             h.forEach(m => b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`);
+             h.forEach(m => b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`);
              b.scrollTop = b.scrollHeight;
         });
 
@@ -1031,10 +1084,15 @@ app.get('/', (req, res) => {
             document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none';
             
             if(s.state === 'waiting') {
+                // NUEVO: Renderizado de usuarios con botón de expulsión (Kick)
                 document.getElementById('lobby-users').innerHTML = s.players.map(p => {
-                    // Indicador de conexión
                     const status = p.isConnected ? '🟢' : '🔴';
-                    return \`<div>\${status} \${p.name}</div>\`;
+                    let kickBtn = '';
+                    // Solo muestro el botón si SOY admin y NO ES mi propio usuario
+                    if (s.iamAdmin && p.id !== myId) {
+                        kickBtn = `<button onclick="kick('${p.id}')" style="background:red; border:none; color:white; border-radius:5px; margin-left:10px; cursor:pointer; font-weight:bold;">❌</button>`;
+                    }
+                    return `<div style="margin:5px 0;">${status} ${p.name} ${kickBtn}</div>`;
                 }).join('');
                 
                 if (s.iamAdmin) {
@@ -1078,7 +1136,7 @@ app.get('/', (req, res) => {
             }
 
             document.getElementById('players-zone').innerHTML = s.players.map(p => 
-                \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.isConnected?'':'🔴 '}\${p.name} (\${p.cardCount})</div>\`
+                `<div class="player-badge ${p.isTurn?'is-turn':''} ${p.isDead?'is-dead':''}">${p.isConnected?'':'🔴 '}${p.name} (${p.cardCount})</div>`
             ).join('');
 
             const me = s.players.find(p=>p.id===myId);
@@ -1099,11 +1157,11 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'dueling') {
-                document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
-                document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
+                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
                 document.getElementById('round-winner').innerText = s.duelInfo.lastWinner ? "Ganador Ronda: " + s.duelInfo.lastWinner : "";
                 
-                document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>\`<div>Gana: \${h.winnerName}</div>\`).join('');
+                document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>`<div>Gana: ${h.winnerName}</div>`).join('');
                 
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 const isMyTurnDuel = (s.duelInfo.turn === myId);

@@ -203,12 +203,38 @@ io.on('connection', (socket) => {
         }
 
         if (pIndex === room.currentTurn && !isSaff) {
+            // --- LÓGICA DE JERARQUÍA DE CASTIGOS ---
             if (room.pendingPenalty > 0) {
                 let allowed = false;
-                if (card.value === '+12' || card.value === '+4' || card.value === 'GRACIA') allowed = true;
-                else if (top.value === '+2' && card.value === '+2') allowed = true;
-                if (!allowed) { socket.emit('notification', `🚫 Debes responder al +${room.pendingPenalty} o robar.`); return; }
+                
+                // 1. Gracia siempre salva
+                if (card.value === 'GRACIA') allowed = true;
+                
+                // 2. Jerarquía (+2, +4, +12)
+                else {
+                    const getVal = (v) => {
+                        if (v === '+2') return 2;
+                        if (v === '+4') return 4;
+                        if (v === '+12') return 12;
+                        return 0; // No es carta de castigo
+                    };
+                    
+                    const cardVal = getVal(card.value);
+                    const topVal = getVal(top.value);
+
+                    // La carta jugada debe ser de castigo (cardVal > 0)
+                    // Y su valor debe ser MAYOR O IGUAL al valor de la carta en la mesa
+                    if (cardVal > 0 && cardVal >= topVal) {
+                        allowed = true;
+                    }
+                }
+
+                if (!allowed) { 
+                    socket.emit('notification', `🚫 Debes tirar un castigo igual o mayor a la mesa, o Gracia.`); 
+                    return; 
+                }
             } else {
+                // JUGADA NORMAL (Sin castigo pendiente)
                 let valid = false;
                 if (card.color === 'negro') valid = true;
                 else if (card.value === 'GRACIA') valid = true;
@@ -235,17 +261,14 @@ io.on('connection', (socket) => {
 
             // PRIORIDAD 2: ELEGIR A QUIÉN REVIVIR
             if (deadPlayers.length > 0) {
-                // Si NO mandaron targetID, pedimos al cliente que elija
                 if (!reviveTargetId) {
                     const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
                     socket.emit('askReviveTarget', zombieList); 
                     return; // PAUSA
                 } else {
-                    // Si ya mandaron targetID, ejecutamos
                     const target = room.players.find(p => p.id === reviveTargetId && p.isDead);
                     if (target) {
                         target.isDead = false; target.isSpectator = false;
-                        // AQUÍ CAMBIAMOS EL EVENTO PARA DISPARAR EL CARTEL GIGANTE
                         io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
                     }
                 }
@@ -254,9 +277,8 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
             }
 
-            // Ejecución común
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
-            if (!deadPlayers.length > 0) io.to(roomId).emit('playSound', 'divine'); // Sonido normal si no revive (si revive el sonido va en playerRevived)
+            if (!deadPlayers.length > 0) io.to(roomId).emit('playSound', 'divine'); 
             
             if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
             
@@ -533,15 +555,12 @@ app.get('/', (req, res) => {
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 4000; display: none; text-align: center; border: 5px solid gold; box-sizing: border-box; }
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
-        
         #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 4500; display: none; text-align: center; width: 90%; max-width: 400px; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         .zombie-btn:hover { background: #555; border-color: gold; }
-
-        /* NUEVO: OVERLAY DE RESURRECCIÓN (BLOQUEANTE) */
+        /* OVERLAY DE RESURRECCIÓN */
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
         #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
-
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
         #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
@@ -555,7 +574,7 @@ app.get('/', (req, res) => {
 </head>
 <body>
     <div id="login" class="screen" style="display:flex;">
-        <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
+        <h1 style="font-size:60px; margin:0;">UNO y 1/2</h1>
         <p>Stable Room System</p>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15">
         <button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button>
@@ -737,18 +756,14 @@ app.get('/', (req, res) => {
             document.getElementById('revive-screen').style.display = 'block';
         });
 
-        // NUEVO: ESCUCHAR EL EVENTO DE RESURRECCIÓN PARA MOSTRAR LA PANTALLA
+        // EVENTO DE RESURRECCIÓN
         socket.on('playerRevived', (data) => {
-            play('divine'); // Sonido Angelical
+            play('divine'); 
             const overlay = document.getElementById('revival-overlay');
             const txt = document.getElementById('revival-text');
             txt.innerHTML = `✨<br>${data.savior} revivió a ${data.revived}<br>con Gracia Divina<br>✨`;
             overlay.style.display = 'flex';
-            
-            // Bloqueo de 4 segundos, luego se va
-            setTimeout(() => {
-                overlay.style.display = 'none';
-            }, 4000);
+            setTimeout(() => { overlay.style.display = 'none'; }, 4000);
         });
 
         socket.on('playSound', k => play(k));

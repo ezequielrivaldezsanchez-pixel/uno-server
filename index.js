@@ -81,20 +81,6 @@ function recycleDeck(roomId) {
     io.to(roomId).emit('notification', '♻️ Barajando descartes...');
 }
 
-function calculateHandPoints(hand) {
-    let points = 0;
-    hand.forEach(card => {
-        if (card.value === 'RIP') points += 100;
-        else if (card.value === 'GRACIA') points += 150;
-        else if (card.value === '+12') points += 200;
-        else if (card.type === 'wild') points += 50;
-        else if (['+2', 'X', 'R'].includes(card.value)) points += 20;
-        else if (card.value === '1 y 1/2') points += 1.5;
-        else points += parseInt(card.value) || 0;
-    });
-    return points;
-}
-
 // --- SOCKETS ---
 
 io.on('connection', (socket) => {
@@ -718,10 +704,10 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Clean Duel View</p>
+        <p>Invite Fix</p>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15">
-        <button class="btn-main" onclick="showCreate()">Crear Sala</button>
-        <button class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button>
+        <button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button>
+        <button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button>
     </div>
 
     <div id="join-menu" class="screen">
@@ -821,11 +807,24 @@ app.get('/', (req, res) => {
             localStorage.setItem('uno_uuid', myUUID);
         }
 
+        // --- LÓGICA DE SALAS Y NAVEGACIÓN ---
+        
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('room');
+        
+        // MODIFICACIÓN CRÍTICA: SI HAY LINK, QUEDARSE EN LOGIN Y CONFIGURAR BOTÓN
         if (inviteCode) {
+            // Pre-llenar el código oculto
             document.getElementById('room-code').value = inviteCode;
-            showJoin();
+            
+            // Ocultar botón de Crear
+            document.getElementById('btn-create').style.display = 'none';
+            
+            // Transformar botón de Unirse
+            const btnJoin = document.getElementById('btn-join-menu');
+            btnJoin.innerText = "ENTRAR A SALA " + inviteCode;
+            btnJoin.style.background = "#e67e22"; // Naranja para resaltar
+            btnJoin.onclick = joinRoom; // Ir directo a la lógica de unirse
         }
 
         function showCreate() {
@@ -846,9 +845,13 @@ app.get('/', (req, res) => {
         }
 
         function joinRoom() {
+            // Nota: Lee 'my-name' (de la pantalla Login) y 'room-code' (del hidden o pantalla Join)
             const name = document.getElementById('my-name').value.trim();
             const code = document.getElementById('room-code').value.trim();
-            if(!name || !code) return alert('Faltan datos');
+            
+            if(!name) return alert('¡Falta tu nombre!');
+            if(!code) return alert('Falta el código de sala');
+            
             socket.emit('joinRoom', { name, uuid: myUUID, roomId: code });
             play('soft');
         }
@@ -858,6 +861,7 @@ app.get('/', (req, res) => {
             navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!'));
         }
 
+        // --- SOCKETS DE SALA ---
         socket.on('roomCreated', (data) => {
             currentRoomId = data.roomId;
             enterLobby();
@@ -870,7 +874,8 @@ app.get('/', (req, res) => {
         
         socket.on('error', (msg) => {
             alert(msg);
-            backToLogin();
+            // Si falla y veníamos de un link, quizás el link expiró. 
+            // Podríamos resetear la UI, pero mejor dejar al usuario en Login.
         });
 
         function enterLobby() {
@@ -880,7 +885,7 @@ app.get('/', (req, res) => {
             document.getElementById('lobby-code').innerText = currentRoomId;
         }
 
-        // --- RESTO DEL JUEGO ---
+        // --- RESTO DEL JUEGO (LÓGICA EXISTENTE) ---
         
         const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
@@ -977,7 +982,6 @@ app.get('/', (req, res) => {
 
             document.getElementById('game-area').style.display='flex';
             
-            // MODIFICACIÓN: OCULTAR MANO EN DUELO
             if (s.state === 'dueling') {
                 document.getElementById('hand-zone').style.display = 'none';
             } else {

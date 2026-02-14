@@ -6,6 +6,21 @@ const io = require('socket.io')(http);
 // --- ESTRUCTURA DE DATOS GLOBAL ---
 const rooms = {}; 
 
+/*
+    SISTEMA DE LIMPIEZA AUTOMÁTICA
+    Para evitar que el servidor se llene de salas abandonadas por siempre,
+    revisamos cada 30 minutos y borramos salas que no se hayan tocado en 1 hora.
+*/
+setInterval(() => {
+    const now = Date.now();
+    Object.keys(rooms).forEach(roomId => {
+        if (now - rooms[roomId].lastActivity > 3600000) { // 1 hora de inactividad
+            delete rooms[roomId];
+            console.log(`Sala ${roomId} eliminada por inactividad.`);
+        }
+    });
+}, 1800000); // Chequeo cada 30 mins
+
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
@@ -27,8 +42,13 @@ function initRoom(roomId) {
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
             attackerChoice: null, defenderChoice: null, history: [], turn: null 
         },
-        chatHistory: []
+        chatHistory: [],
+        lastActivity: Date.now() // Marca de tiempo para limpieza
     };
+}
+
+function touchRoom(roomId) {
+    if (rooms[roomId]) rooms[roomId].lastActivity = Date.now();
 }
 
 function createDeck(roomId) {
@@ -104,32 +124,34 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
 
-    // 2. UNIRSE A SALA
+    // 2. UNIRSE A SALA (O RECONECTARSE)
     socket.on('joinRoom', (data) => {
         const name = data.name.substring(0, 15);
         const roomId = data.roomId.toUpperCase();
         const uuid = data.uuid;
         
         if (!rooms[roomId]) {
-            socket.emit('error', 'Sala no encontrada');
+            socket.emit('error', 'Sala no encontrada o expirada.');
             return;
         }
 
         const room = rooms[roomId];
+        touchRoom(roomId);
+
+        // BUSCAR SI YA EXISTE (POR UUID)
         const existingPlayer = room.players.find(p => p.uuid === uuid);
 
         if (existingPlayer) {
-            existingPlayer.id = socket.id;
-            existingPlayer.name = name;
+            // ¡ES UNA RECONEXIÓN!
+            existingPlayer.id = socket.id; // Actualizamos el ID del socket
+            existingPlayer.name = name;    // Actualizamos nombre por si acaso
             socket.join(roomId);
-            io.to(roomId).emit('notification', `🔄 ${name} regresó.`);
             
-            if(room.gameState === 'waiting') {
-                socket.emit('roomJoined', { roomId }); 
-            } else {
-                socket.emit('roomJoined', { roomId });
-            }
+            // No notificamos a todos para no spammear si solo fue un parpadeo de red
+            // Pero sí le enviamos el estado al que volvió
+            socket.emit('roomJoined', { roomId }); 
         } else {
+            // NUEVO JUGADOR
             const isGameRunning = room.gameState !== 'waiting' && room.gameState !== 'counting';
             const player = { 
                 id: socket.id, uuid, name, hand: [], hasDrawn: false, 
@@ -151,6 +173,7 @@ io.on('connection', (socket) => {
     socket.on('requestStart', () => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
         const p = room.players.find(p => p.id === socket.id);
 
@@ -166,6 +189,7 @@ io.on('connection', (socket) => {
     socket.on('playCard', (cardId, chosenColor) => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
 
         if (room.gameState !== 'playing') return;
@@ -182,7 +206,6 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // VALIDACIÓN VICTORIA
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -195,7 +218,6 @@ io.on('connection', (socket) => {
 
         if (top.color !== 'negro') room.activeColor = top.color;
 
-        // SAFF
         let isSaff = false;
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
@@ -224,7 +246,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // GRACIA
         if (card.value === 'GRACIA') {
             const deadPlayer = room.players.find(p => p.isDead);
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'divine');
@@ -242,7 +263,6 @@ io.on('connection', (socket) => {
             advanceTurn(roomId, 1); updateAll(roomId); return;
         }
 
-        // RIP
         if (card.value === 'RIP') {
             if (getAlivePlayersCount(roomId) < 2) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
@@ -297,6 +317,7 @@ io.on('connection', (socket) => {
     socket.on('draw', () => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
         
         if (room.gameState !== 'playing') return;
@@ -320,6 +341,7 @@ io.on('connection', (socket) => {
     socket.on('passTurn', () => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
 
         if (room.gameState !== 'playing') return;
@@ -332,6 +354,7 @@ io.on('connection', (socket) => {
     socket.on('playGraceDefense', (chosenColor) => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
 
         if (room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
@@ -350,6 +373,7 @@ io.on('connection', (socket) => {
     socket.on('ripDecision', (d) => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
 
         if (room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
@@ -361,6 +385,7 @@ io.on('connection', (socket) => {
     socket.on('duelPick', (c) => {
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
         const room = rooms[roomId];
 
         if (room.gameState !== 'dueling') return;
@@ -398,23 +423,15 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- MODIFICACIÓN CLAVE: DISCONNECT NO DESTRUCTIVO ---
     socket.on('disconnect', () => {
+        // En los juegos de navegador móvil, disconnect ocurre muy seguido.
+        // YA NO borramos al jugador. Dejamos que "persista".
+        // La limpieza solo la hace el setInterval global si la sala muere.
+        // Si el usuario vuelve, el 'joinRoom' con UUID recupera la sesión.
         const roomId = getRoomId(socket);
-        if(!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId];
-        
-        const p = room.players.find(p => p.id === socket.id);
-        if (!p) return;
-        
-        if (room.gameState === 'waiting') {
-            const wasAdmin = p.isAdmin;
-            room.players = room.players.filter(pl => pl.id !== socket.id);
-            if (room.players.length === 0) {
-                delete rooms[roomId];
-            } else {
-                if (wasAdmin) room.players[0].isAdmin = true;
-                updateAll(roomId);
-            }
+        if (roomId && rooms[roomId]) {
+            console.log(`Socket desconectado en sala ${roomId}. Mantenemos datos para reconexión.`);
         }
     });
 });
@@ -704,7 +721,7 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Invite Fix</p>
+        <p>Reconnect & Fix</p>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15">
         <button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button>
         <button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button>
@@ -801,31 +818,37 @@ app.get('/', (req, res) => {
         let myId = ''; let pendingCard = null; let pendingGrace = false; let amAdmin = false; let isMyTurn = false;
         let currentRoomId = '';
 
+        // --- SISTEMA DE PERSISTENCIA UUID ---
         let myUUID = localStorage.getItem('uno_uuid');
         if (!myUUID) {
             myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36);
             localStorage.setItem('uno_uuid', myUUID);
         }
 
-        // --- LÓGICA DE SALAS Y NAVEGACIÓN ---
-        
+        // --- MANEJO DE LINKS DE INVITACIÓN ---
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('room');
-        
-        // MODIFICACIÓN CRÍTICA: SI HAY LINK, QUEDARSE EN LOGIN Y CONFIGURAR BOTÓN
         if (inviteCode) {
-            // Pre-llenar el código oculto
             document.getElementById('room-code').value = inviteCode;
-            
-            // Ocultar botón de Crear
             document.getElementById('btn-create').style.display = 'none';
-            
-            // Transformar botón de Unirse
             const btnJoin = document.getElementById('btn-join-menu');
             btnJoin.innerText = "ENTRAR A SALA " + inviteCode;
-            btnJoin.style.background = "#e67e22"; // Naranja para resaltar
-            btnJoin.onclick = joinRoom; // Ir directo a la lógica de unirse
+            btnJoin.style.background = "#e67e22";
+            btnJoin.onclick = joinRoom;
         }
+
+        // --- SISTEMA DE RE-CONEXIÓN AUTOMÁTICA ---
+        // Si el socket se corta (WhatsApp, bloqueo pantalla) y vuelve, intentamos volver a la sala
+        socket.on('connect', () => {
+            myId = socket.id;
+            // Solo intentamos reconectar si ya estábamos en una sala y tenemos un nombre puesto
+            if (currentRoomId && document.getElementById('my-name').value) {
+                 console.log("Reconectando a sala: " + currentRoomId);
+                 const name = document.getElementById('my-name').value;
+                 // Emitimos joinRoom de nuevo. El servidor verá el UUID y nos devolverá el control.
+                 socket.emit('joinRoom', { name, uuid: myUUID, roomId: currentRoomId });
+            }
+        });
 
         function showCreate() {
             const name = document.getElementById('my-name').value.trim();
@@ -845,7 +868,6 @@ app.get('/', (req, res) => {
         }
 
         function joinRoom() {
-            // Nota: Lee 'my-name' (de la pantalla Login) y 'room-code' (del hidden o pantalla Join)
             const name = document.getElementById('my-name').value.trim();
             const code = document.getElementById('room-code').value.trim();
             
@@ -861,7 +883,6 @@ app.get('/', (req, res) => {
             navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!'));
         }
 
-        // --- SOCKETS DE SALA ---
         socket.on('roomCreated', (data) => {
             currentRoomId = data.roomId;
             enterLobby();
@@ -874,8 +895,6 @@ app.get('/', (req, res) => {
         
         socket.on('error', (msg) => {
             alert(msg);
-            // Si falla y veníamos de un link, quizás el link expiró. 
-            // Podríamos resetear la UI, pero mejor dejar al usuario en Login.
         });
 
         function enterLobby() {
@@ -885,7 +904,7 @@ app.get('/', (req, res) => {
             document.getElementById('lobby-code').innerText = currentRoomId;
         }
 
-        // --- RESTO DEL JUEGO (LÓGICA EXISTENTE) ---
+        // --- JUEGO ---
         
         const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
@@ -910,7 +929,6 @@ app.get('/', (req, res) => {
         function pick(c) { socket.emit('duelPick', c); }
         function graceDef() { pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
 
-        socket.on('connect', () => myId = socket.id);
         socket.on('playSound', k => play(k));
         socket.on('notification', m => {
             const el = document.getElementById('main-alert');

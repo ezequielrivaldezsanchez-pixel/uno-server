@@ -6,7 +6,7 @@ const io = require('socket.io')(http);
 // --- ESTRUCTURA DE DATOS GLOBAL ---
 const rooms = {}; 
 
-// GARBAGE COLLECTOR: Limpieza de salas (1 hora)
+// GARBAGE COLLECTOR: Limpieza automática de salas abandonadas (1 hora)
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -169,7 +169,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // MODIFICADO: Acepta un tercer argumento 'reviveTargetId'
     socket.on('playCard', (cardId, chosenColor, reviveTargetId) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId];
@@ -219,7 +218,7 @@ io.on('connection', (socket) => {
             }
         }
 
-        // --- LÓGICA GRACIA DIVINA CON SELECTOR ---
+        // --- LÓGICA GRACIA DIVINA ---
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
 
@@ -238,16 +237,16 @@ io.on('connection', (socket) => {
             if (deadPlayers.length > 0) {
                 // Si NO mandaron targetID, pedimos al cliente que elija
                 if (!reviveTargetId) {
-                    // Enviamos lista de zombies (Nombre y Cantidad de cartas)
                     const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
                     socket.emit('askReviveTarget', zombieList); 
-                    return; // PAUSA: Esperamos que el cliente responda con la elección
+                    return; // PAUSA
                 } else {
                     // Si ya mandaron targetID, ejecutamos
                     const target = room.players.find(p => p.id === reviveTargetId && p.isDead);
                     if (target) {
                         target.isDead = false; target.isSpectator = false;
-                        io.to(roomId).emit('showDivine', `¡MILAGRO! ${target.name} fue revivido por ${player.name}`);
+                        // AQUÍ CAMBIAMOS EL EVENTO PARA DISPARAR EL CARTEL GIGANTE
+                        io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
                     }
                 }
             } else {
@@ -255,9 +254,10 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
             }
 
-            // Ejecución común (si no hubo return antes)
+            // Ejecución común
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
-            io.to(roomId).emit('playSound', 'divine');
+            if (!deadPlayers.length > 0) io.to(roomId).emit('playSound', 'divine'); // Sonido normal si no revive (si revive el sonido va en playerRevived)
+            
             if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
             
             if (player.hand.length === 0) { finishRound(roomId, player); return; }
@@ -510,4 +510,357 @@ app.get('/', (req, res) => {
         #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
         .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
-        .is-dead { text-decoration: line-
+        .is-dead { text-decoration: line-through; opacity: 0.6; }
+        #alert-zone { flex: 0 1 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 50px; pointer-events: none; margin-top: 10px; }
+        .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
+        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
+        #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
+        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
+        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; }
+        #deck-pile { background: #e74c3c; cursor: pointer; }
+        #top-card { background: #333; }
+        #uno-btn-area { display: flex; gap: 15px; margin-top: 20px; z-index: 30; }
+        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
+        .btn-uno:active { transform: translateY(4px); box-shadow: none; }
+        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
+        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 99999 !important; }
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
+        .hand-card:active { transform: scale(0.95); }
+        body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
+        #login { background: #2c3e50; z-index: 2000; } #join-menu { background: #34495e; z-index: 2000; display:none; } #lobby { background: #2c3e50; z-index: 1500; }
+        #rip-screen { background: rgba(50,0,0,0.98); z-index: 3000; }
+        #duel-screen { background: rgba(0,0,0,0.98); z-index: 3000; }
+        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 4000; display: none; text-align: center; border: 5px solid gold; box-sizing: border-box; }
+        #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
+        .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
+        
+        #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 4500; display: none; text-align: center; width: 90%; max-width: 400px; }
+        .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
+        .zombie-btn:hover { background: #555; border-color: gold; }
+
+        /* NUEVO: OVERLAY DE RESURRECCIÓN (BLOQUEANTE) */
+        #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
+        #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
+
+        #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; }
+        #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
+        .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
+        .duel-btn:hover { opacity: 0.8; }
+        .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
+        .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
+        input { padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:10px 0; }
+        .btn-main { padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer; margin: 10px; }
+        @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
+    </style>
+</head>
+<body>
+    <div id="login" class="screen" style="display:flex;">
+        <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
+        <p>Stable Room System</p>
+        <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15">
+        <button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button>
+        <button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button>
+    </div>
+
+    <div id="join-menu" class="screen">
+        <h1>Unirse</h1>
+        <input id="room-code" type="text" placeholder="Código de Sala" style="text-transform:uppercase;">
+        <button class="btn-main" onclick="joinRoom()">Entrar</button>
+        <button class="btn-main" onclick="backToLogin()" style="background:#7f8c8d">Volver</button>
+    </div>
+
+    <div id="lobby" class="screen">
+        <h1>Sala: <span id="lobby-code" style="color:gold; font-family:monospace;"></span></h1>
+        <button onclick="copyLink()" style="background:none; border:1px solid #aaa; color:#aaa; padding:5px 10px; border-radius:5px; cursor:pointer; margin-bottom:20px;">🔗 Copiar Link Invitación</button>
+        <p id="host-msg" style="color:gold; font-size:18px; display:none;">👑 Eres el Anfitrión.</p>
+        <div id="lobby-users" style="font-size:20px; margin-bottom:20px;"></div>
+        <button id="start-btn" onclick="start()" class="btn-main" style="display:none; background:#e67e22;">EMPEZAR</button>
+        <p id="wait-msg" style="display:none; color:#aaa;">Esperando al anfitrión...</p>
+    </div>
+
+    <div id="game-area">
+        <div id="players-zone"></div>
+        <div id="alert-zone">
+            <div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div>
+            <div id="main-alert" class="alert-box"></div>
+        </div>
+        <div id="table-zone">
+            <div id="decks-container">
+                <div id="deck-pile" class="card-pile" onclick="draw()">📦</div>
+                <div id="top-card" class="card-pile"></div>
+            </div>
+            <div id="uno-btn-area">
+                <button id="btn-pass" class="btn-pass" onclick="pass()">PASAR</button>
+                <button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="hand-zone"></div>
+
+    <div id="chat-btn" onclick="toggleChat()">💬</div>
+    <div id="chat-win">
+        <div id="chat-msgs" style="flex:1; overflow-y:auto; padding:10px; font-size:12px; color:#ddd;"></div>
+        <input id="chat-in" style="width:100%; padding:10px; border:none; background:#333; color:white;" placeholder="Mensaje..." onkeypress="if(event.key==='Enter') sendChat()">
+    </div>
+
+    <div id="game-over-screen" class="screen">
+        <h1 style="color:gold; font-size:60px; margin-bottom:10px;">🏆 ¡VICTORIA! 🏆</h1>
+        <h2 id="winner-name" style="color:white; font-size:40px;"></h2>
+        <div style="font-size:50px; margin:20px;">🎉🎊🥂</div>
+        <p style="color: #aaa;">Reiniciando...</p>
+    </div>
+
+    <div id="rip-screen" class="screen">
+        <h1 style="color:red; font-size:50px;">💀 RIP 💀</h1>
+        <p>Defiéndete o muere</p>
+        <button onclick="ripResp('duel')" style="padding:20px; background:red; border:3px solid gold; color:white; font-size:18px; margin:10px; border-radius:10px;">⚔️ ACEPTAR DUELO</button>
+        <button onclick="ripResp('surrender')" style="padding:15px; background:#444; border:1px solid white; color:white; margin:10px; border-radius:10px;">🏳️ Rendirse</button>
+        <div id="grace-btn" style="display:none; margin-top:20px;">
+            <button onclick="graceDef()" style="padding:20px; background:white; color:red; border:3px solid gold; font-weight:bold; border-radius:10px;">❤️ USAR MILAGRO</button>
+        </div>
+    </div>
+
+    <div id="duel-screen" class="screen">
+        <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
+        <h2 id="round-winner" style="color: #2ecc71; font-size: 24px; min-height: 30px;"></h2>
+        <h2 id="duel-names">... vs ...</h2>
+        <h3 id="duel-sc">0 - 0</h3>
+        <p id="duel-turn-msg" style="color: #aaa; font-style: italic; min-height: 24px;">Esperando tu turno...</p>
+        <div id="duel-opts" style="margin-top:20px;">
+            <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
+            <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
+            <button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button>
+        </div>
+        <div id="duel-info" style="margin-top:20px; color:#aaa; font-size: 14px; opacity: 0.7;"></div>
+    </div>
+
+    <div id="color-picker">
+        <h3>Elige Color</h3>
+        <div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div>
+        <div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div>
+        <div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div>
+        <div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div>
+    </div>
+
+    <div id="revive-screen">
+        <h2 style="color:gold;">¿A QUIÉN REVIVES?</h2>
+        <div id="zombie-list"></div>
+    </div>
+
+    <div id="revival-overlay">
+        <div id="revival-text"></div>
+    </div>
+
+    <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:6000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let myId = ''; let pendingCard = null; let pendingGrace = false; let amAdmin = false; let isMyTurn = false;
+        let currentRoomId = '';
+        let pendingColorForRevive = '';
+
+        let myUUID = localStorage.getItem('uno_uuid');
+        if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteCode = urlParams.get('room');
+        if (inviteCode) {
+            document.getElementById('room-code').value = inviteCode;
+            document.getElementById('btn-create').style.display = 'none';
+            const btnJoin = document.getElementById('btn-join-menu');
+            btnJoin.innerText = "ENTRAR A SALA " + inviteCode;
+            btnJoin.style.background = "#e67e22";
+            btnJoin.onclick = joinRoom;
+        }
+
+        socket.on('connect', () => { myId = socket.id; socket.emit('checkSession', myUUID); });
+        socket.on('sessionRestored', (data) => { console.log("Sesión restaurada:", data); currentRoomId = data.roomId; if(data.name) document.getElementById('my-name').value = data.name; enterLobby(); });
+        socket.on('requireLogin', () => { console.log("Nueva sesión requerida"); });
+        socket.on('kicked', () => { alert('🚫 Has sido expulsado de la sala.'); localStorage.removeItem('uno_uuid'); window.location = window.location.origin; });
+
+        function showCreate() { const name = document.getElementById('my-name').value.trim(); if(!name) return alert('Ingresa tu nombre'); socket.emit('createRoom', { name, uuid: myUUID }); play('soft'); }
+        function showJoin() { document.getElementById('login').style.display = 'none'; document.getElementById('join-menu').style.display = 'flex'; }
+        function backToLogin() { document.getElementById('join-menu').style.display = 'none'; document.getElementById('login').style.display = 'flex'; }
+        function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(!name) return alert('¡Falta tu nombre!'); if(!code) return alert('Falta el código de sala'); socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); play('soft'); }
+        function copyLink() { const link = window.location.origin + '/?room=' + currentRoomId; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!')); } else { prompt("Copia este enlace:", link); } }
+        function kick(id) { if(confirm('¿Seguro que quieres expulsar a este jugador?')) { socket.emit('kickPlayer', id); } }
+
+        socket.on('roomCreated', (data) => { currentRoomId = data.roomId; enterLobby(); });
+        socket.on('roomJoined', (data) => { currentRoomId = data.roomId; enterLobby(); });
+        socket.on('error', (msg) => { alert(msg); });
+
+        function enterLobby() { document.getElementById('login').style.display = 'none'; document.getElementById('join-menu').style.display = 'none'; document.getElementById('lobby').style.display = 'flex'; document.getElementById('lobby-code').innerText = currentRoomId; }
+
+        const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
+        const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
+        const audio = {}; Object.keys(sounds).forEach(k => { audio[k] = new Audio(sounds[k]); audio[k].volume = 0.3; });
+        function play(k) { if(audio[k]) { audio[k].currentTime=0; audio[k].play().catch(()=>{}); } }
+
+        function start() { socket.emit('requestStart'); }
+        function draw() { socket.emit('draw'); }
+        function pass() { socket.emit('passTurn'); }
+        function uno() { socket.emit('sayUno'); }
+        function sendChat() { const i=document.getElementById('chat-in'); if(i.value){socket.emit('sendChat',i.value);i.value='';} }
+        function toggleChat() { const w=document.getElementById('chat-win'); w.style.display=w.style.display==='flex'?'none':'flex'; }
+        
+        document.getElementById('hand-zone').addEventListener('wheel', e => { e.preventDefault(); document.getElementById('hand-zone').scrollLeft += e.deltaY; });
+
+        function pickCol(c) { 
+            document.getElementById('color-picker').style.display='none'; 
+            if(pendingGrace) { 
+                socket.emit('playGraceDefense', c); pendingGrace=false; 
+            } else { 
+                pendingColorForRevive = c; 
+                socket.emit('playCard', pendingCard, c, null);
+            }
+        }
+        function ripResp(d) { socket.emit('ripDecision', d); }
+        function pick(c) { socket.emit('duelPick', c); }
+        function graceDef() { pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
+
+        socket.on('askReviveTarget', (zombies) => {
+            const list = document.getElementById('zombie-list');
+            list.innerHTML = '';
+            zombies.forEach(z => {
+                const btn = document.createElement('button');
+                btn.className = 'zombie-btn';
+                btn.innerHTML = `${z.name} <br><small>(${z.count} cartas)</small>`;
+                btn.onclick = () => {
+                    document.getElementById('revive-screen').style.display = 'none';
+                    socket.emit('playCard', pendingCard, pendingColorForRevive, z.id);
+                    pendingCard = null;
+                };
+                list.appendChild(btn);
+            });
+            document.getElementById('revive-screen').style.display = 'block';
+        });
+
+        // NUEVO: ESCUCHAR EL EVENTO DE RESURRECCIÓN PARA MOSTRAR LA PANTALLA
+        socket.on('playerRevived', (data) => {
+            play('divine'); // Sonido Angelical
+            const overlay = document.getElementById('revival-overlay');
+            const txt = document.getElementById('revival-text');
+            txt.innerHTML = `✨<br>${data.savior} revivió a ${data.revived}<br>con Gracia Divina<br>✨`;
+            overlay.style.display = 'flex';
+            
+            // Bloqueo de 4 segundos, luego se va
+            setTimeout(() => {
+                overlay.style.display = 'none';
+            }, 4000);
+        });
+
+        socket.on('playSound', k => play(k));
+        socket.on('notification', m => { const el = document.getElementById('main-alert'); el.innerText = m; el.style.display = 'block'; setTimeout(() => el.style.display='none', 3000); });
+        socket.on('showDivine', m => { const el = document.getElementById('main-alert'); el.innerText = m; el.style.display='block'; el.style.background='white'; el.style.color='gold'; setTimeout(() => { el.style.display='none'; el.style.background='rgba(0,0,0,0.95)'; el.style.color='white'; }, 4000); });
+        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; b.scrollTop = b.scrollHeight; });
+        socket.on('chatHistory', h => { const b = document.getElementById('chat-msgs'); b.innerHTML = ''; h.forEach(m => b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`); b.scrollTop = b.scrollHeight; });
+        socket.on('gameOver', data => { document.getElementById('game-over-screen').style.display = 'flex'; document.getElementById('winner-name').innerText = data.winner; setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 5000); });
+
+        socket.on('countdownTick', n => {
+            document.getElementById('lobby').style.display='none'; document.getElementById('game-over-screen').style.display='none'; document.getElementById('game-area').style.display='flex'; document.getElementById('hand-zone').style.display='flex';
+            const c = document.getElementById('countdown'); c.style.display='flex'; c.innerText=n; if(n<=0) c.style.display='none';
+        });
+
+        socket.on('updateState', s => {
+            amAdmin = s.iamAdmin;
+            document.getElementById('login').style.display='none'; document.getElementById('join-menu').style.display='none'; 
+            document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
+            document.getElementById('rip-screen').style.display = 'none';
+            document.getElementById('duel-screen').style.display = s.state==='dueling' ? 'flex' : 'none';
+            document.getElementById('revive-screen').style.display = 'none';
+            
+            if(s.state === 'waiting') {
+                document.getElementById('lobby-users').innerHTML = s.players.map(p => {
+                    const status = p.isConnected ? '🟢' : '🔴';
+                    let kickBtn = '';
+                    if (s.iamAdmin && p.id !== myId) { kickBtn = `<button onclick="kick('${p.id}')" style="background:red; border:none; color:white; border-radius:5px; margin-left:10px; cursor:pointer; font-weight:bold;">❌</button>`; }
+                    return `<div style="margin:5px 0;">${status} ${p.name} ${kickBtn}</div>`;
+                }).join('');
+                if (s.iamAdmin) { document.getElementById('start-btn').style.display = 'block'; document.getElementById('host-msg').style.display = 'block'; document.getElementById('wait-msg').style.display = 'none'; } 
+                else { document.getElementById('start-btn').style.display = 'none'; document.getElementById('host-msg').style.display = 'none'; document.getElementById('wait-msg').style.display = 'block'; }
+                document.getElementById('hand-zone').style.display='none';
+                return;
+            }
+
+            document.getElementById('game-area').style.display='flex';
+            if (s.state === 'dueling') { document.getElementById('hand-zone').style.display = 'none'; } else { document.getElementById('hand-zone').style.display = 'flex'; }
+            document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
+
+            const top = s.topCard; const tEl = document.getElementById('top-card');
+            if(top) {
+                tEl.className = 'card-pile';
+                let bg = colorMap[top.color] || '#444'; let txt = 'white'; let border = '3px solid white';
+                if(s.activeColor && top.color !== 'negro') bg = colorMap[top.color];
+                else if(s.activeColor && top.color === 'negro') bg = colorMap[s.activeColor];
+                if(top.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
+                else if(top.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
+                else if(top.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
+                else if(top.color === 'amarillo' || top.color === 'verde') txt = 'black';
+                tEl.style.backgroundColor = bg; tEl.style.color = txt; tEl.style.border = border;
+                tEl.innerText = (top.value==='RIP'?'🪦':(top.value==='GRACIA'?'❤️':top.value));
+            }
+
+            document.getElementById('players-zone').innerHTML = s.players.map(p => `<div class="player-badge ${p.isTurn?'is-turn':''} ${p.isDead?'is-dead':''}">${p.isConnected?'':'🔴 '}${p.name} (${p.cardCount})</div>`).join('');
+
+            const me = s.players.find(p=>p.id===myId);
+            const canPlay = me && !me.isSpectator;
+            isMyTurn = me && me.isTurn; 
+            document.getElementById('btn-pass').style.display = (canPlay && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
+            document.getElementById('uno-btn-area').style.visibility = canPlay ? 'visible' : 'hidden';
+
+            const penEl = document.getElementById('penalty-display');
+            if(me && me.isTurn && s.pendingPenalty>0) { penEl.style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty; } else penEl.style.display='none';
+
+            if(s.state === 'rip_decision') {
+                if(s.duelInfo.defenderId === myId) document.getElementById('rip-screen').style.display='flex';
+                else { const al = document.getElementById('main-alert'); al.innerText = "⏳ Esperando Duelo..."; al.style.display = 'block'; }
+            }
+
+            if(s.state === 'dueling') {
+                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
+                document.getElementById('round-winner').innerText = s.duelInfo.lastWinner ? "Ganador Ronda: " + s.duelInfo.lastWinner : "";
+                document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>`<div>Gana: ${h.winnerName}</div>`).join('');
+                const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
+                const isMyTurnDuel = (s.duelInfo.turn === myId);
+                document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+                const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
+                if (amIFighter) {
+                    if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
+                    else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
+                } else { turnMsg.innerText = ""; }
+                ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
+                if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
+            }
+        });
+
+        socket.on('handUpdate', h => {
+            const hz = document.getElementById('hand-zone'); hz.innerHTML = '';
+            if (!h || h.length === 0) return;
+            const hasGrace = h.some(c=>c.value==='GRACIA');
+            document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
+            h.forEach(c => {
+                const d = document.createElement('div'); d.className = 'hand-card';
+                let bg = colorMap[c.color] || '#444'; let txt = 'white'; let border = '2px solid white';
+                if(c.value==='RIP') { bg = 'black'; txt = 'red'; border = '3px solid #666'; }
+                else if(c.value==='GRACIA') { bg = 'white'; txt = 'red'; border = '3px solid gold'; }
+                else if(c.value==='+12') { bg = '#4a148c'; border = '3px solid #ea80fc'; }
+                else if(c.color === 'amarillo' || c.color === 'verde') { txt = 'black'; }
+                d.style.backgroundColor = bg; d.style.color = txt; d.style.border = border;
+                d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
+                if(c.value === '1 y 1/2') { d.style.fontSize = '18px'; }
+                d.onclick = () => {
+                     if (!isMyTurn) { const isNumeric = /^[0-9]$/.test(c.value) || c.value === '1 y 1/2'; if (!isNumeric) return; }
+                     if(c.color==='negro' && c.value!=='GRACIA') {
+                        if(c.value==='RIP') socket.emit('playCard', c.id, null, null);
+                        else { pendingCard=c.id; document.getElementById('color-picker').style.display='block'; }
+                     } else socket.emit('playCard', c.id, null, null);
+                };
+                hz.appendChild(d);
+            });
+        });
+    </script>
+</body>
+</html>

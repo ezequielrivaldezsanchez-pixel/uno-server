@@ -5,7 +5,7 @@ const io = require('socket.io')(http);
 
 // --- VARIABLES DE JUEGO ---
 let gameState = 'waiting';
-let players = []; // Estructura: { id: socketId, uuid: string, name: string, ... }
+let players = []; 
 let deck = [];
 let discardPile = [];
 let currentTurn = 0;
@@ -26,7 +26,8 @@ let duelState = {
 let chatHistory = [];
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
-const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+2', 'X', 'R'];
+// MODIFICACIÓN 3: Agregado "1 y 1/2" a los valores
+const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
 // --- FUNCIONES CORE ---
 
@@ -40,8 +41,6 @@ function resetGame() {
     pendingPenalty = 0;
     if (countdownInterval) clearInterval(countdownInterval);
     
-    // Al reiniciar, mantenemos los jugadores pero reseteamos su estado de juego
-    // NO borramos UUIDs para mantener la sesión
     players.forEach((p, index) => { 
         p.hand = []; 
         p.hasDrawn = false; 
@@ -57,10 +56,12 @@ function createDeck() {
     deck = [];
     colors.forEach(color => {
         values.forEach(val => {
+            // El "1 y 1/2" se comporta como número normal (2 copias excepto el 0)
             deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             if (val !== '0') deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
+    // Especiales
     for (let i = 0; i < 4; i++) {
         deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
@@ -102,6 +103,7 @@ function calculateHandPoints(hand) {
         else if (card.value === '+12') points += 200;
         else if (card.type === 'wild') points += 50;
         else if (['+2', 'X', 'R'].includes(card.value)) points += 20;
+        else if (card.value === '1 y 1/2') points += 1.5; // Valor simbólico
         else points += parseInt(card.value) || 0;
     });
     return points;
@@ -112,34 +114,21 @@ function calculateHandPoints(hand) {
 io.on('connection', (socket) => {
     socket.emit('chatHistory', chatHistory);
 
-    // MEJORA 1: JOIN con UUID (Persistencia)
     socket.on('join', (data) => {
         const name = data.name.substring(0, 15);
-        const uuid = data.uuid; // Identificador único del navegador
-
-        // Buscar si este jugador ya existe por su UUID
+        const uuid = data.uuid;
         const existingPlayer = players.find(p => p.uuid === uuid);
 
         if (existingPlayer) {
-            // ¡RECONEXIÓN!
-            // Actualizamos su ID de socket al nuevo
             existingPlayer.id = socket.id;
-            existingPlayer.name = name; // Actualizar nombre por si lo cambió
-            
-            // Log para debug
-            console.log(`Jugador reconectado: ${name} (${uuid})`);
-            
+            existingPlayer.name = name;
             io.emit('notification', `🔄 ${name} regresó.`);
-            
-            // Le enviamos estado inmediato
             updateAll(); 
         } else {
-            // NUEVO JUGADOR
             const isGameRunning = gameState !== 'waiting' && gameState !== 'counting';
-            
             const player = { 
                 id: socket.id, 
-                uuid: uuid, // Guardamos la cédula
+                uuid: uuid, 
                 name: name, 
                 hand: [], 
                 hasDrawn: false, 
@@ -147,7 +136,6 @@ io.on('connection', (socket) => {
                 isDead: false,
                 isAdmin: (players.length === 0) 
             };
-            
             players.push(player);
             io.emit('notification', `👋 ${player.name} entró.`);
             if(isGameRunning) socket.emit('notification', 'Partida en curso. Eres espectador.');
@@ -177,19 +165,22 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = discardPile[discardPile.length - 1];
 
-        // REGLA VICTORIA ESTRICTA
+        // --- VALIDACIÓN DE VICTORIA ACTUALIZADA ---
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
+            const isUnoYMedio = card.value === '1 y 1/2'; // Aceptamos la nueva carta
             const isGracia = card.value === 'GRACIA';
-            if (!isStrictNumber && !isGracia) {
+            
+            // Si NO es número, ni 1 y 1/2, ni gracia => Bloquear
+            if (!isStrictNumber && !isUnoYMedio && !isGracia) {
                 socket.emit('notification', '🚫 Última carta: Solo Números o Gracia.');
                 return; 
             }
         }
+        // ------------------------------------------
 
         if (top.color !== 'negro') activeColor = top.color;
 
-        // SAFF
         let isSaff = false;
         if (pIndex !== currentTurn) {
             if (card.color !== 'negro' && card.value === top.value && card.color === top.color) {
@@ -201,7 +192,6 @@ io.on('connection', (socket) => {
             } else { return; }
         }
 
-        // VALIDACIÓN
         if (pIndex === currentTurn && !isSaff) {
             if (pendingPenalty > 0) {
                 let allowed = false;
@@ -218,7 +208,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // EJECUCIÓN
         if (card.value === 'GRACIA') {
             const deadPlayer = players.find(p => p.isDead);
             player.hand.splice(cardIndex, 1); discardPile.push(card); io.emit('playSound', 'divine');
@@ -290,6 +279,7 @@ io.on('connection', (socket) => {
     socket.on('draw', () => {
         if (gameState !== 'playing') return;
         const pIndex = players.findIndex(p => p.id === socket.id);
+        
         if (pIndex === -1 || players[pIndex].isDead || players[pIndex].isSpectator) return;
 
         if (pIndex === currentTurn) {
@@ -366,22 +356,17 @@ io.on('connection', (socket) => {
         }
     });
 
-    // MEJORA: GESTIÓN DE DESCONEXIÓN "SOFT"
     socket.on('disconnect', () => {
         const p = players.find(p => p.id === socket.id);
         if (!p) return;
         
-        // Si el juego NO ha empezado (waiting), borramos al jugador
         if (gameState === 'waiting') {
             const wasAdmin = p.isAdmin;
             players = players.filter(pl => pl.id !== socket.id);
             if (wasAdmin && players.length > 0) players[0].isAdmin = true;
             updateAll();
-        } 
-        // Si el juego YA empezó, NO lo borramos. Se queda como "zombie" esperando reconexión.
-        else {
-            console.log(`Jugador desconectado temporalmente: ${p.name}`);
-            // No hacemos nada más, esperamos a que el UUID vuelva a hacer 'join'
+        } else {
+            // No hacemos nada, esperamos reconexión por UUID
         }
     });
 });
@@ -471,7 +456,6 @@ function resolveDuelRound() {
     
     if (winner == 'attacker') duelState.scoreAttacker++; else if (winner == 'defender') duelState.scoreDefender++;
     
-    // MEJORA: Nombre del ganador de ronda
     let winName = 'Empate';
     if(winner === 'attacker') winName = duelState.attackerName;
     if(winner === 'defender') winName = duelState.defenderName;
@@ -502,7 +486,6 @@ function eliminatePlayer(id) { const p = players.find(p => p.id === id); if (p) 
 function getAlivePlayersCount() { return players.filter(p => !p.isDead && !p.isSpectator).length; }
 
 function updateAll() {
-    // INFO DE DUELO: Ahora enviamos el "lastWinner" para mostrarlo arriba
     let lastRoundWinner = "";
     if (duelState.history.length > 0) {
         lastRoundWinner = duelState.history[duelState.history.length - 1].winnerName;
@@ -514,7 +497,7 @@ function updateAll() {
         attackerId: duelState.attackerId, defenderId: duelState.defenderId, 
         myChoice: null,
         turn: duelState.turn,
-        lastWinner: lastRoundWinner // DATO NUEVO PARA LA UI
+        lastWinner: lastRoundWinner 
     } : null;
     
     const pack = {
@@ -579,7 +562,7 @@ app.get('/', (req, res) => {
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
 
         #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 99999 !important; }
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; text-shadow: 2px 2px 0 #000; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; } /* MODIFICADO: sin text-shadow */
         .hand-card:active { transform: scale(0.95); }
 
         body.bg-rojo { background-color: #4a1c1c !important; } 
@@ -609,7 +592,7 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Mobile & Duel Fix</p>
+        <p>1 y 1/2 Edition</p>
         <input id="user-in" type="text" placeholder="Tu Nombre" style="padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:20px 0;">
         <button onclick="join()" style="padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer;">Jugar</button>
     </div>
@@ -694,9 +677,8 @@ app.get('/', (req, res) => {
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myId = ''; let pendingCard = null; let pendingGrace = false; let amAdmin = false;
+        let myId = ''; let pendingCard = null; let pendingGrace = false; let amAdmin = false; let isMyTurn = false;
         
-        // SISTEMA DE UUID PARA RECONEXIÓN
         let myUUID = localStorage.getItem('uno_uuid');
         if (!myUUID) {
             myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -711,7 +693,6 @@ app.get('/', (req, res) => {
         function join() { 
             const name = document.getElementById('user-in').value;
             if(name) {
-                // Enviar UUID junto con el nombre
                 socket.emit('join', { name: name, uuid: myUUID }); 
                 play('soft'); 
             }
@@ -831,8 +812,9 @@ app.get('/', (req, res) => {
             ).join('');
 
             const me = s.players.find(p=>p.id===myId);
-            const canPlay = me && !me.isSpectator; // Verificar espectador
-            
+            const canPlay = me && !me.isSpectator;
+            isMyTurn = me && me.isTurn; // VARIABLE GLOBAL PARA CONTROLAR CLICKS
+
             document.getElementById('btn-pass').style.display = (canPlay && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
             document.getElementById('uno-btn-area').style.visibility = canPlay ? 'visible' : 'hidden';
 
@@ -849,13 +831,12 @@ app.get('/', (req, res) => {
             if(s.state === 'dueling') {
                 document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
                 document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
-                // MEJORA 2: RESULTADO ARRIBA
                 document.getElementById('round-winner').innerText = s.duelInfo.lastWinner ? "Ganador Ronda: " + s.duelInfo.lastWinner : "";
                 
                 document.getElementById('duel-info').innerHTML = s.duelInfo.history.map(h=>\`<div>Gana: \${h.winnerName}</div>\`).join('');
                 
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
-                const isMyTurn = (s.duelInfo.turn === myId);
+                const isMyTurnDuel = (s.duelInfo.turn === myId);
                 
                 document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
                 
@@ -863,7 +844,7 @@ app.get('/', (req, res) => {
                 const btns = document.querySelectorAll('.duel-btn');
                 
                 if (amIFighter) {
-                    if (isMyTurn) {
+                    if (isMyTurnDuel) {
                         turnMsg.innerText = "¡TU TURNO! Elige...";
                         turnMsg.style.color = "#2ecc71";
                         btns.forEach(b => b.disabled = false);
@@ -904,7 +885,14 @@ app.get('/', (req, res) => {
 
                 d.style.backgroundColor = bg; d.style.color = txt; d.style.border = border;
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
+                
+                // AJUSTE VISUAL PARA "1 y 1/2"
+                if(c.value === '1 y 1/2') { d.style.fontSize = '18px'; }
+
                 d.onclick = () => {
+                     // MODIFICACIÓN 1: BLOQUEO DE CLICK SI NO ES TURNO
+                     if (!isMyTurn) return;
+
                      if(c.color==='negro' && c.value!=='GRACIA') {
                         if(c.value==='RIP') socket.emit('playCard', c.id, null);
                         else { pendingCard=c.id; document.getElementById('color-picker').style.display='block'; }

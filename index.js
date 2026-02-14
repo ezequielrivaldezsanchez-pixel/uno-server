@@ -4,29 +4,12 @@ const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
 // --- ESTRUCTURA DE DATOS GLOBAL ---
-// Ahora 'rooms' almacena el estado de cada sala por separado
 const rooms = {}; 
-
-/* Estructura de una Room:
-rooms[roomId] = {
-    gameState: 'waiting',
-    players: [],
-    deck: [],
-    discardPile: [],
-    currentTurn: 0,
-    direction: 1,
-    activeColor: '',
-    pendingPenalty: 0,
-    countdownInterval: null,
-    duelState: { ... },
-    chatHistory: []
-}
-*/
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// --- FUNCIONES CORE (ADAPTADAS A SALAS) ---
+// --- FUNCIONES CORE ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -120,20 +103,17 @@ io.on('connection', (socket) => {
     socket.on('createRoom', (data) => {
         const name = data.name.substring(0, 15);
         const uuid = data.uuid;
-        // Generar ID de sala corto (4 caracteres)
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
         
         initRoom(roomId);
         
         const player = { 
             id: socket.id, uuid, name, hand: [], hasDrawn: false, 
-            isSpectator: false, isDead: false, isAdmin: true // El creador es Admin
+            isSpectator: false, isDead: false, isAdmin: true 
         };
         
         rooms[roomId].players.push(player);
         socket.join(roomId);
-        
-        // Enviamos al cliente su roomId para que lo comparta
         socket.emit('roomCreated', { roomId, name });
         updateAll(roomId);
     });
@@ -153,21 +133,17 @@ io.on('connection', (socket) => {
         const existingPlayer = room.players.find(p => p.uuid === uuid);
 
         if (existingPlayer) {
-            // RECONEXIÓN
             existingPlayer.id = socket.id;
             existingPlayer.name = name;
             socket.join(roomId);
             io.to(roomId).emit('notification', `🔄 ${name} regresó.`);
             
-            // Si el juego ya terminó, limpiar el estado local del cliente
             if(room.gameState === 'waiting') {
                 socket.emit('roomJoined', { roomId }); 
             } else {
-                // Si está en juego, entra directo
                 socket.emit('roomJoined', { roomId });
             }
         } else {
-            // NUEVO JUGADOR
             const isGameRunning = room.gameState !== 'waiting' && room.gameState !== 'counting';
             const player = { 
                 id: socket.id, uuid, name, hand: [], hasDrawn: false, 
@@ -178,13 +154,13 @@ io.on('connection', (socket) => {
             room.players.push(player);
             socket.join(roomId);
             
-            socket.emit('roomJoined', { roomId }); // Confirmación al cliente
+            socket.emit('roomJoined', { roomId });
             io.to(roomId).emit('notification', `👋 ${player.name} entró.`);
         }
         updateAll(roomId);
     });
 
-    // --- LÓGICA DE JUEGO (TODO AHORA USA 'roomId') ---
+    // --- LÓGICA DE JUEGO ---
 
     socket.on('requestStart', () => {
         const roomId = getRoomId(socket);
@@ -437,7 +413,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        // Encontrar la sala donde está el socket
         const roomId = getRoomId(socket);
         if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId];
@@ -449,7 +424,7 @@ io.on('connection', (socket) => {
             const wasAdmin = p.isAdmin;
             room.players = room.players.filter(pl => pl.id !== socket.id);
             if (room.players.length === 0) {
-                delete rooms[roomId]; // Borrar sala si vacía
+                delete rooms[roomId];
             } else {
                 if (wasAdmin) room.players[0].isAdmin = true;
                 updateAll(roomId);
@@ -461,8 +436,6 @@ io.on('connection', (socket) => {
 // --- HELPERS ---
 
 function getRoomId(socket) {
-    // Socket.IO guarda las salas en socket.rooms
-    // La primera es su propio ID, la segunda (si existe) es la sala de juego
     return Array.from(socket.rooms).find(r => r !== socket.id);
 }
 
@@ -476,7 +449,6 @@ function startCountdown(roomId) {
     let safeCard = room.deck.pop();
     while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
         room.deck.unshift(safeCard); 
-        // shuffle rápido
         for (let i = room.deck.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -552,7 +524,6 @@ function finishRound(roomId, w) {
     io.to(roomId).emit('gameOver', { winner: w.name }); 
     io.to(roomId).emit('playSound', 'win');
     
-    // Eliminar sala después de 5s
     setTimeout(() => {
         delete rooms[roomId];
     }, 5000);
@@ -644,7 +615,7 @@ function updateAll(roomId) {
     
     const pack = {
         state: room.gameState, 
-        roomId: roomId, // Enviamos el ID de sala
+        roomId: roomId, 
         players: room.players.map((p, i) => ({ 
             name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""),
             cardCount: p.hand.length, 
@@ -747,7 +718,7 @@ app.get('/', (req, res) => {
 <body>
     <div id="login" class="screen" style="display:flex;">
         <h1 style="font-size:60px; margin:0;">UNO 1/2</h1>
-        <p>Rooms Edition</p>
+        <p>Clean Duel View</p>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15">
         <button class="btn-main" onclick="showCreate()">Crear Sala</button>
         <button class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button>
@@ -850,9 +821,6 @@ app.get('/', (req, res) => {
             localStorage.setItem('uno_uuid', myUUID);
         }
 
-        // --- LÓGICA DE SALAS Y NAVEGACIÓN ---
-        
-        // Detectar si venimos de un link ?room=XXXX
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('room');
         if (inviteCode) {
@@ -890,7 +858,6 @@ app.get('/', (req, res) => {
             navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!'));
         }
 
-        // --- SOCKETS DE SALA ---
         socket.on('roomCreated', (data) => {
             currentRoomId = data.roomId;
             enterLobby();
@@ -913,7 +880,7 @@ app.get('/', (req, res) => {
             document.getElementById('lobby-code').innerText = currentRoomId;
         }
 
-        // --- RESTO DEL JUEGO (LÓGICA EXISTENTE) ---
+        // --- RESTO DEL JUEGO ---
         
         const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
@@ -970,7 +937,7 @@ app.get('/', (req, res) => {
              document.getElementById('winner-name').innerText = data.winner;
              setTimeout(() => {
                  localStorage.removeItem('uno_uuid'); 
-                 window.location = window.location.origin; // Reiniciar URL limpia
+                 window.location = window.location.origin; 
              }, 5000);
         });
 
@@ -987,7 +954,7 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             amAdmin = s.iamAdmin;
             document.getElementById('login').style.display='none';
-            document.getElementById('join-menu').style.display='none'; // Asegurar que el menú se vaya
+            document.getElementById('join-menu').style.display='none'; 
             
             document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
             document.getElementById('rip-screen').style.display = 'none';
@@ -1009,7 +976,14 @@ app.get('/', (req, res) => {
             }
 
             document.getElementById('game-area').style.display='flex';
-            document.getElementById('hand-zone').style.display='flex';
+            
+            // MODIFICACIÓN: OCULTAR MANO EN DUELO
+            if (s.state === 'dueling') {
+                document.getElementById('hand-zone').style.display = 'none';
+            } else {
+                document.getElementById('hand-zone').style.display = 'flex';
+            }
+
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
             const top = s.topCard;
@@ -1111,7 +1085,6 @@ app.get('/', (req, res) => {
                 if(c.value === '1 y 1/2') { d.style.fontSize = '18px'; }
 
                 d.onclick = () => {
-                     // LÓGICA SAFF CLIENTE
                      if (!isMyTurn) {
                         const isNumeric = /^[0-9]$/.test(c.value) || c.value === '1 y 1/2';
                         if (!isNumeric) return; 

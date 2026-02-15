@@ -11,6 +11,7 @@ setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
         if (now - rooms[roomId].lastActivity > 3600000) { 
+            console.log(`🧹 Limpiando sala inactiva: ${roomId}`);
             delete rooms[roomId];
         }
     });
@@ -203,6 +204,7 @@ io.on('connection', (socket) => {
         }
 
         if (pIndex === room.currentTurn && !isSaff) {
+            // --- LÓGICA DE JERARQUÍA DE CASTIGOS ---
             if (room.pendingPenalty > 0) {
                 let allowed = false;
                 if (card.value === 'GRACIA') allowed = true;
@@ -267,7 +269,7 @@ io.on('connection', (socket) => {
             room.gameState = 'rip_decision';
             const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
             
-            // NARRATIVA INICIAL INMEDIATA
+            // NARRATIVA INICIAL
             const startNarrative = `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!`;
 
             room.duelState = { 
@@ -517,7 +519,7 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // PACKET CON NARRATIVA GARANTIZADA
+    // NARRATIVA GARANTIZADA
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
         attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
         round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
@@ -551,7 +553,19 @@ app.get('/', (req, res) => {
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        
+        /* PANTALLAS PRINCIPALES */
+        #login { background: #2c3e50; z-index: 2000; } 
+        #join-menu { background: #34495e; z-index: 2000; } 
+        #lobby { background: #2c3e50; z-index: 1500; }
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(200px + var(--safe-bottom)); }
+        
+        /* PANTALLAS DE DUELO Y EVENTOS */
+        #rip-screen { background: rgba(50,0,0,0.98); z-index: 9000; }
+        #duel-screen { background: rgba(0,0,0,0.98); z-index: 9000; display: none; }
+        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 9500; text-align: center; border: 5px solid gold; box-sizing: border-box; }
+        #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 4500; display: none; text-align: center; width: 90%; max-width: 400px; }
+        
         #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
         .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
@@ -572,13 +586,9 @@ app.get('/', (req, res) => {
         .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
         .hand-card:active { transform: scale(0.95); }
         body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
-        #login { background: #2c3e50; z-index: 2000; } #join-menu { background: #34495e; z-index: 2000; display:none; } #lobby { background: #2c3e50; z-index: 1500; }
-        #rip-screen { background: rgba(50,0,0,0.98); z-index: 3000; }
-        #duel-screen { background: rgba(0,0,0,0.98); z-index: 3000; }
-        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 4000; display: none; text-align: center; border: 5px solid gold; box-sizing: border-box; }
+        
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
-        #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 4500; display: none; text-align: center; width: 90%; max-width: 400px; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         .zombie-btn:hover { background: #555; border-color: gold; }
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
@@ -718,22 +728,41 @@ app.get('/', (req, res) => {
         }
 
         socket.on('connect', () => { myId = socket.id; socket.emit('checkSession', myUUID); });
-        socket.on('sessionRestored', (data) => { console.log("Sesión restaurada:", data); currentRoomId = data.roomId; if(data.name) document.getElementById('my-name').value = data.name; enterLobby(); });
-        socket.on('requireLogin', () => { console.log("Nueva sesión requerida"); });
+        socket.on('sessionRestored', (data) => { console.log("Sesión restaurada:", data); currentRoomId = data.roomId; if(data.name) document.getElementById('my-name').value = data.name; changeScreen('lobby'); });
+        socket.on('requireLogin', () => { console.log("Nueva sesión requerida"); changeScreen('login'); });
         socket.on('kicked', () => { alert('🚫 Has sido expulsado de la sala.'); localStorage.removeItem('uno_uuid'); window.location = window.location.origin; });
 
         function showCreate() { const name = document.getElementById('my-name').value.trim(); if(!name) return alert('Ingresa tu nombre'); socket.emit('createRoom', { name, uuid: myUUID }); play('soft'); }
-        function showJoin() { document.getElementById('login').style.display = 'none'; document.getElementById('join-menu').style.display = 'flex'; }
-        function backToLogin() { document.getElementById('join-menu').style.display = 'none'; document.getElementById('login').style.display = 'flex'; }
+        function showJoin() { changeScreen('join-menu'); }
+        function backToLogin() { changeScreen('login'); }
         function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(!name) return alert('¡Falta tu nombre!'); if(!code) return alert('Falta el código de sala'); socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); play('soft'); }
         function copyLink() { const link = window.location.origin + '/?room=' + currentRoomId; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(link).then(() => alert('Enlace copiado!')); } else { prompt("Copia este enlace:", link); } }
         function kick(id) { if(confirm('¿Seguro que quieres expulsar a este jugador?')) { socket.emit('kickPlayer', id); } }
 
-        socket.on('roomCreated', (data) => { currentRoomId = data.roomId; enterLobby(); });
-        socket.on('roomJoined', (data) => { currentRoomId = data.roomId; enterLobby(); });
+        socket.on('roomCreated', (data) => { currentRoomId = data.roomId; changeScreen('lobby'); document.getElementById('lobby-code').innerText = currentRoomId; });
+        socket.on('roomJoined', (data) => { currentRoomId = data.roomId; changeScreen('lobby'); document.getElementById('lobby-code').innerText = currentRoomId; });
         socket.on('error', (msg) => { alert(msg); });
 
-        function enterLobby() { document.getElementById('login').style.display = 'none'; document.getElementById('join-menu').style.display = 'none'; document.getElementById('lobby').style.display = 'flex'; document.getElementById('lobby-code').innerText = currentRoomId; }
+        // --- GESTOR DE PANTALLAS (CRÍTICO PARA ESTABILIDAD) ---
+        function changeScreen(screenId) {
+            // Ocultar todas
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('join-menu').style.display = 'none';
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('game-area').style.display = 'none';
+            document.getElementById('game-over-screen').style.display = 'none';
+            document.getElementById('rip-screen').style.display = 'none';
+            document.getElementById('duel-screen').style.display = 'none';
+            document.getElementById('revive-screen').style.display = 'none';
+            
+            // Mostrar la solicitada
+            const el = document.getElementById(screenId);
+            if(el) {
+                if(screenId === 'game-area') el.style.display = 'flex';
+                else if(screenId === 'duel-screen' || screenId === 'rip-screen') el.style.display = 'flex';
+                else el.style.display = 'flex';
+            }
+        }
 
         const colorMap = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121', 'death-card': '#000000', 'divine-card': '#ffffff', 'mega-wild': '#4a148c' };
         const sounds = { soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3', attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3', rip: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3', divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3', uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3', start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3', win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3', bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3', saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3', wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3', thunder: 'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3' };
@@ -796,24 +825,21 @@ app.get('/', (req, res) => {
         socket.on('gameOver', data => { document.getElementById('game-over-screen').style.display = 'flex'; document.getElementById('winner-name').innerText = data.winner; setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 5000); });
 
         socket.on('countdownTick', n => {
-            document.getElementById('lobby').style.display='none'; document.getElementById('game-over-screen').style.display='none'; document.getElementById('game-area').style.display='flex'; document.getElementById('hand-zone').style.display='flex';
+            changeScreen('game-area');
             const c = document.getElementById('countdown'); c.style.display='flex'; c.innerText=n; if(n<=0) c.style.display='none';
+            document.getElementById('hand-zone').style.display='flex';
         });
 
         socket.on('updateState', s => {
             amAdmin = s.iamAdmin;
-            
-            // --- GESTIÓN DE PANTALLAS (SEMÁFORO EXCLUSIVO) ---
-            document.getElementById('login').style.display='none'; 
-            document.getElementById('join-menu').style.display='none'; 
-            document.getElementById('lobby').style.display = 'none';
-            document.getElementById('rip-screen').style.display = 'none';
-            document.getElementById('duel-screen').style.display = 'none';
-            document.getElementById('revive-screen').style.display = 'none';
-            
+
+            // 1. MANEJO DE LOBBY (ACCESO)
             if(s.state === 'waiting') {
-                document.getElementById('lobby').style.display = 'flex';
-                // (Código de Lobby...)
+                // Solo si no estamos ya en el lobby para evitar parpadeos innecesarios, 
+                // PERO si venimos de otro estado forzamos el cambio.
+                const lobby = document.getElementById('lobby');
+                if(lobby.style.display === 'none') changeScreen('lobby');
+                
                 document.getElementById('lobby-users').innerHTML = s.players.map(p => {
                     const status = p.isConnected ? '🟢' : '🔴';
                     let kickBtn = '';
@@ -822,43 +848,49 @@ app.get('/', (req, res) => {
                 }).join('');
                 if (s.iamAdmin) { document.getElementById('start-btn').style.display = 'block'; document.getElementById('host-msg').style.display = 'block'; document.getElementById('wait-msg').style.display = 'none'; } 
                 else { document.getElementById('start-btn').style.display = 'none'; document.getElementById('host-msg').style.display = 'none'; document.getElementById('wait-msg').style.display = 'block'; }
-                document.getElementById('hand-zone').style.display='none';
                 return;
             }
 
-            // ESTADO DE JUEGO ACTIVO
-            document.getElementById('game-area').style.display='flex';
+            // 2. JUEGO ACTIVO
+            // Asegurar que el área de juego base está visible
+            if(document.getElementById('game-area').style.display === 'none') {
+                changeScreen('game-area');
+            }
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
-            // --- LÓGICA DE DUELO (PRIORIDAD ALTA) ---
+            // 3. ESTADOS DE DUELO (SUPERPOSICIONES)
+            const duelScreen = document.getElementById('duel-screen');
+            const ripScreen = document.getElementById('rip-screen');
+            const handZone = document.getElementById('hand-zone');
+            
+            // Ocultar overlays por defecto
+            duelScreen.style.display = 'none';
+            ripScreen.style.display = 'none';
+            handZone.style.display = 'flex';
+
             if(s.state === 'rip_decision') {
+                handZone.style.display = 'none';
                 if(s.duelInfo.defenderId === myId) {
-                    // Soy Defensor: Veo RIP Screen
-                    document.getElementById('rip-screen').style.display='flex';
+                    ripScreen.style.display = 'flex'; // Defensor ve decisión
                 } else {
-                    // Soy Atacante o Espectador: Veo Duel Screen (Narrativa)
-                    document.getElementById('duel-screen').style.display='flex';
-                    if(s.duelInfo && s.duelInfo.narrative) {
-                        document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
-                    }
+                    duelScreen.style.display = 'flex'; // Todos los demás ven narrativa
+                    // Configurar vista espectador
+                    if(s.duelInfo && s.duelInfo.narrative) document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                    document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                     document.getElementById('duel-opts').style.display = 'none';
-                    document.getElementById('duel-turn-msg').innerText = "Esperando respuesta del desafiado...";
+                    document.getElementById('duel-turn-msg').innerText = "Esperando respuesta...";
                 }
-                document.getElementById('hand-zone').style.display = 'none'; // Ocultar mano
             } 
             else if (s.state === 'dueling') {
-                // Todos ven Duel Screen
-                document.getElementById('duel-screen').style.display='flex';
-                document.getElementById('hand-zone').style.display = 'none'; // Ocultar mano
+                handZone.style.display = 'none';
+                duelScreen.style.display = 'flex'; // Todos ven duelo
                 
-                // Actualizar Info Duelo
+                // Actualizar Info
                 document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                 document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
-                if(s.duelInfo && s.duelInfo.narrative) {
-                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
-                }
+                if(s.duelInfo && s.duelInfo.narrative) document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
 
-                // Controles de Pelea
+                // Lógica Jugador vs Espectador
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 const isMyTurnDuel = (s.duelInfo.turn === myId);
                 
@@ -874,13 +906,9 @@ app.get('/', (req, res) => {
                 
                 ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
                 if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
-            } 
-            else {
-                // JUEGO NORMAL
-                document.getElementById('hand-zone').style.display = 'flex';
             }
 
-            // --- RENDERIZADO DE CARTAS Y TABLERO (Común) ---
+            // --- RENDER CARTAS ---
             const top = s.topCard; const tEl = document.getElementById('top-card');
             if(top) {
                 tEl.className = 'card-pile';

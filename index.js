@@ -3,10 +3,10 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- CONFIGURACIÓN DE SALAS ---
+// --- CONFIGURACIÓN ---
 const rooms = {}; 
 
-// Garbage Collector
+// Limpieza de salas
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -19,7 +19,7 @@ setInterval(() => {
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// --- LÓGICA SERVER ---
+// --- SERVER ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -58,11 +58,12 @@ function createDeck(roomId) {
             if (val !== '0') room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
+    // Especiales
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // Cartas Mod 1.5
+    // Mod 1.5
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -70,7 +71,7 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // Barajar
+    // Shuffle
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -182,6 +183,7 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = room.discardPile[room.discardPile.length - 1];
 
+        // Regla última carta
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -191,6 +193,7 @@ io.on('connection', (socket) => {
 
         if (top.color !== 'negro') room.activeColor = top.color;
 
+        // SAFF
         let isSaff = false;
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
@@ -525,7 +528,6 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // NUNCA FILTRAMOS ESTO. Todos reciben toda la data del duelo.
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
         attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
         round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
@@ -608,15 +610,6 @@ app.get('/', (req, res) => {
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
         
-        /* BOTÓN CANCELAR NUEVO */
-        .close-btn { 
-            display: block; width: 100%; 
-            margin-top: 15px; padding: 10px; 
-            background: #e74c3c; color: white; 
-            border: 2px solid #c0392b; border-radius: 5px; 
-            font-weight: bold; cursor: pointer; font-size: 16px; 
-        }
-
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         .zombie-btn:hover { background: #555; border-color: gold; }
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
@@ -721,7 +714,6 @@ app.get('/', (req, res) => {
         <div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div>
         <div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div>
         <div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div>
-        <button class="close-btn" onclick="closePicker()">CANCELAR X</button>
     </div>
 
     <div id="revive-screen">
@@ -810,14 +802,6 @@ app.get('/', (req, res) => {
             }
         }
 
-        // --- FUNCIÓN CANCELAR SELECTOR DE COLOR ---
-        // ESTA ES LA FUNCIÓN CLAVE PARA CERRAR Y LIMPIAR LA VARIABLE
-        function closePicker() {
-            document.getElementById('color-picker').style.display = 'none';
-            pendingCard = null; // Reseteamos la carta pendiente
-            pendingGrace = false;
-        }
-
         function ripResp(d) { socket.emit('ripDecision', d); }
         function pick(c) { socket.emit('duelPick', c); }
         function graceDef() { pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
@@ -864,7 +848,7 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             amAdmin = s.iamAdmin;
 
-            // 1. MANEJO DE LOBBY (ACCESO)
+            // 1. LOBBY
             if(s.state === 'waiting') {
                 const lobby = document.getElementById('lobby');
                 if(lobby.style.display === 'none') changeScreen('lobby');
@@ -880,37 +864,28 @@ app.get('/', (req, res) => {
                 return;
             }
 
-            // 2. JUEGO ACTIVO
-            // Si el estado es jugando normal, mostramos la mesa
-            if(s.state === 'playing') {
-                if(document.getElementById('game-area').style.display === 'none') {
-                    changeScreen('game-area');
-                }
-                document.getElementById('hand-zone').style.display = 'flex';
-                document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
-            }
-
-            // 3. GESTIÓN DE DUELOS (FIX DEFINITIVO)
+            // 2. GESTIÓN CRÍTICA DE VISIBILIDAD DE DUELOS VS MESA
             const duelScreen = document.getElementById('duel-screen');
             const ripScreen = document.getElementById('rip-screen');
             const gameArea = document.getElementById('game-area');
             const handZone = document.getElementById('hand-zone');
 
+            // --- LÓGICA DE INTERRUPTOR MILITAR ---
+            // Si el estado es de Duelo (decisión o pelea), LA MESA Y LA MANO SE APAGAN. NO HAY EXCEPCIONES.
             if(s.state === 'rip_decision' || s.state === 'dueling') {
-                // AQUÍ ESTÁ LA SOLUCIÓN: Ocultamos violentamente la mesa y la mano
-                // Esto garantiza que NADIE (incluido espectadores) vea la mesa
+                
                 gameArea.style.display = 'none';
                 handZone.style.display = 'none';
                 
-                // Limpiamos pantallas de duelo antes de decidir cual mostrar
+                // Limpiar pantallas de duelo
                 duelScreen.style.display = 'none';
                 ripScreen.style.display = 'none';
 
                 if(s.state === 'rip_decision') {
                     if(s.duelInfo.defenderId === myId) {
-                        ripScreen.style.display = 'flex'; 
+                        ripScreen.style.display = 'flex'; // Defensor
                     } else {
-                        // Atacante y TODOS los espectadores entran aquí
+                        // Atacante + ESPECTADORES
                         duelScreen.style.display = 'flex'; 
                         document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                         document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta...";
@@ -919,7 +894,7 @@ app.get('/', (req, res) => {
                     }
                 } 
                 else if (s.state === 'dueling') {
-                    // TODOS (Atacante, Defensor, Espectadores) ven la misma pantalla
+                    // TODOS (Atacante, Defensor, Espectadores)
                     duelScreen.style.display = 'flex'; 
                     
                     document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
@@ -941,6 +916,18 @@ app.get('/', (req, res) => {
                     
                     ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
                     if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
+                }
+
+            } else {
+                // MODO NORMAL (JUGANDO)
+                // Apagamos pantallas de duelo
+                duelScreen.style.display = 'none';
+                ripScreen.style.display = 'none';
+                
+                if(s.state === 'playing') {
+                    gameArea.style.display = 'flex';
+                    handZone.style.display = 'flex';
+                    document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
                 }
             }
 

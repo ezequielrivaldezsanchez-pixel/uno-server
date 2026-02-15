@@ -3,10 +3,10 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- CONFIGURACIÓN Y LIMPIEZA ---
+// --- CONFIGURACIÓN ---
 const rooms = {}; 
 
-// Garbage Collector: Limpia salas inactivas cada 5 min si llevan 1 hora vacías
+// Limpieza de salas inactivas
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -19,7 +19,7 @@ setInterval(() => {
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// --- LÓGICA DEL SERVIDOR ---
+// --- SERVER LOGIC ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -58,12 +58,11 @@ function createDeck(roomId) {
             if (val !== '0') room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // Cartas Especiales (Wildcards & Action)
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // Cartas Únicas del Mod 1.5
+    // Cartas Mod
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -71,7 +70,7 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // Barajar Fisher-Yates
+    // Barajar
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -98,11 +97,10 @@ function recycleDeck(roomId) {
     io.to(roomId).emit('notification', '♻️ Barajando descartes...');
 }
 
-// --- GESTIÓN DE SOCKETS ---
+// --- SOCKETS ---
 
 io.on('connection', (socket) => {
     
-    // 1. RECONEXIÓN
     socket.on('checkSession', (uuid) => {
         let foundRoomId = null;
         let foundPlayer = null;
@@ -118,7 +116,6 @@ io.on('connection', (socket) => {
         } else { socket.emit('requireLogin'); }
     });
 
-    // 2. CREAR SALA
     socket.on('createRoom', (data) => {
         const name = data.name.substring(0, 15); const uuid = data.uuid;
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -129,7 +126,6 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
 
-    // 3. UNIRSE A SALA
     socket.on('joinRoom', (data) => {
         const name = data.name.substring(0, 15); const roomId = data.roomId.toUpperCase(); const uuid = data.uuid;
         if (!rooms[roomId]) { socket.emit('error', 'Sala no encontrada o expirada.'); return; }
@@ -148,7 +144,6 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
 
-    // 4. EXPULSAR JUGADOR
     socket.on('kickPlayer', (targetId) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; const room = rooms[roomId];
         if (room.gameState !== 'waiting') return;
@@ -165,7 +160,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. INICIAR JUEGO
     socket.on('requestStart', () => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; const p = room.players.find(p => p.id === socket.id);
@@ -175,7 +169,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 6. JUGAR CARTA (Lógica Central)
     socket.on('playCard', (cardId, chosenColor, reviveTargetId) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId];
@@ -189,7 +182,6 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // Regla: Última carta no puede ser comodín
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -197,10 +189,8 @@ io.on('connection', (socket) => {
             if (!isStrictNumber && !isUnoYMedio && !isGracia) { socket.emit('notification', '🚫 Última carta: Solo Números o Gracia.'); return; }
         }
 
-        // Definir color activo si la mesa tiene carta negra
         if (top.color !== 'negro') room.activeColor = top.color;
 
-        // LÓGICA SAFF (Interrupción fuera de turno)
         let isSaff = false;
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
@@ -210,9 +200,7 @@ io.on('connection', (socket) => {
             } else { return; }
         }
 
-        // Validación Normal (En turno)
         if (pIndex === room.currentTurn && !isSaff) {
-            // Jerarquía de Castigos
             if (room.pendingPenalty > 0) {
                 let allowed = false;
                 if (card.value === 'GRACIA') allowed = true;
@@ -223,17 +211,14 @@ io.on('connection', (socket) => {
                 }
                 if (!allowed) { socket.emit('notification', `🚫 Debes tirar un castigo igual o mayor a la mesa, o Gracia.`); return; }
             } else {
-                // Jugada Normal
                 let valid = false;
                 if (card.color === 'negro') valid = true; else if (card.value === 'GRACIA') valid = true; else if (card.color === room.activeColor) valid = true; else if (card.value === top.value) valid = true;
                 if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
             }
         }
 
-        // --- MANEJO DE GRACIA DIVINA ---
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
-            // Defensa contra castigos
             if (room.pendingPenalty > 0) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
                 io.to(roomId).emit('playSound', 'divine');
@@ -243,7 +228,6 @@ io.on('connection', (socket) => {
                 if (player.hand.length === 0) { finishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
-            // Revivir jugadores
             if (deadPlayers.length > 0) {
                 if (!reviveTargetId) {
                     const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
@@ -264,7 +248,6 @@ io.on('connection', (socket) => {
             advanceTurn(roomId, 1); updateAll(roomId); return;
         }
 
-        // --- MANEJO DE RIP (DUELO) ---
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no sirve para evitar castigos.'); return; }
             const isTopNumeric = /^[0-9]$/.test(top.value) || top.value === '1 y 1/2';
@@ -276,7 +259,6 @@ io.on('connection', (socket) => {
             }
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
             
-            // CONFIGURAR DUELO
             room.gameState = 'rip_decision';
             const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
             
@@ -295,7 +277,6 @@ io.on('connection', (socket) => {
             updateAll(roomId); return;
         }
 
-        // --- CARTAS NORMALES Y WILD ---
         player.hand.splice(cardIndex, 1); room.discardPile.push(card);
         io.to(roomId).emit('cardPlayedEffect', { color: card.color });
         if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; else if (card.color !== 'negro') room.activeColor = card.color;
@@ -315,7 +296,6 @@ io.on('connection', (socket) => {
         else { advanceTurn(roomId, steps); updateAll(roomId); }
     });
 
-    // 7. ROBAR CARTA
     socket.on('draw', () => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'playing') return;
@@ -333,7 +313,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 8. PASAR TURNO
     socket.on('passTurn', () => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'playing') return;
@@ -341,7 +320,6 @@ io.on('connection', (socket) => {
         if (pIndex === room.currentTurn && room.players[pIndex].hasDrawn && room.pendingPenalty === 0) { advanceTurn(roomId, 1); updateAll(roomId); }
     });
 
-    // 9. EVENTOS DE DUELO
     socket.on('playGraceDefense', (chosenColor) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
@@ -386,7 +364,6 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
 
-    // 10. EXTRAS (Chat y Sonido)
     socket.on('sayUno', () => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId]; const p = room.players.find(p => p.id === socket.id);
@@ -403,7 +380,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 11. DESCONEXIÓN (Protección anti-limbo)
     socket.on('disconnect', () => {
         const roomId = getRoomId(socket);
         if (roomId && rooms[roomId]) { 
@@ -411,11 +387,8 @@ io.on('connection', (socket) => {
             const p = room.players.find(pl => pl.id === socket.id); 
             if(p) {
                 p.isConnected = false;
-                // Si alguien se desconecta en medio de un duelo, termina el duelo
                 if ((room.gameState === 'dueling' || room.gameState === 'rip_decision') && (socket.id === room.duelState.attackerId || socket.id === room.duelState.defenderId)) {
                     io.to(roomId).emit('notification', '🔌 Jugador desconectado. Duelo cancelado.');
-                    // Eliminar al desconectado si es duelo a muerte, o simplemente resetear si se prefiere. 
-                    // En RIP, desconectarse es rendirse.
                     if (socket.id === room.duelState.attackerId) { eliminatePlayer(roomId, room.duelState.attackerId); }
                     if (socket.id === room.duelState.defenderId) { eliminatePlayer(roomId, room.duelState.defenderId); }
                     checkWinCondition(roomId);
@@ -427,7 +400,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- FUNCIONES AUXILIARES ---
+// --- HELPERS ---
 
 function getDuelNarrative(attName, defName, att, def) {
     if (att === def) return "⚡ Choque de fuerzas idénticas. ¡Empate!";
@@ -585,7 +558,6 @@ app.get('/', (req, res) => {
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
-        /* PANTALLAS PRINCIPALES */
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
         #login { background: #2c3e50; z-index: 2000; } 
@@ -593,7 +565,6 @@ app.get('/', (req, res) => {
         #lobby { background: #2c3e50; z-index: 1500; }
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(200px + var(--safe-bottom)); }
         
-        /* PANTALLAS DE DUELO Y EVENTOS */
         #rip-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
         #duel-screen { background: rgba(0,0,0,0.98); z-index: 10000; }
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 11000; text-align: center; border: 5px solid gold; box-sizing: border-box; }
@@ -635,7 +606,16 @@ app.get('/', (req, res) => {
         
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
-        .close-btn { position: absolute; top: -15px; right: -15px; background: red; color: white; border: 2px solid white; border-radius: 50%; width: 40px; height: 40px; font-weight: bold; cursor: pointer; font-size: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+        
+        /* BOTÓN CANCELAR MEJORADO */
+        .close-btn { 
+            display: block; width: 100%; 
+            margin-top: 15px; padding: 10px; 
+            background: #e74c3c; color: white; 
+            border: 2px solid #c0392b; border-radius: 5px; 
+            font-weight: bold; cursor: pointer; font-size: 16px; 
+        }
+
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         .zombie-btn:hover { background: #555; border-color: gold; }
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
@@ -735,12 +715,12 @@ app.get('/', (req, res) => {
     </div>
 
     <div id="color-picker">
-        <button class="close-btn" onclick="closePicker()">X</button>
         <h3>Elige Color</h3>
         <div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div>
         <div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div>
         <div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div>
         <div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div>
+        <button class="close-btn" onclick="closePicker()">CANCELAR X</button>
     </div>
 
     <div id="revive-screen">
@@ -791,7 +771,7 @@ app.get('/', (req, res) => {
         socket.on('roomJoined', (data) => { currentRoomId = data.roomId; changeScreen('lobby'); document.getElementById('lobby-code').innerText = currentRoomId; });
         socket.on('error', (msg) => { alert(msg); });
 
-        // --- GESTOR DE PANTALLAS (CRÍTICO) ---
+        // --- GESTOR DE PANTALLAS ---
         function changeScreen(screenId) {
             document.getElementById('login').style.display = 'none';
             document.getElementById('join-menu').style.display = 'none';
@@ -904,22 +884,25 @@ app.get('/', (req, res) => {
             }
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
-            // 3. GESTIÓN DE DUELOS (Corrección Espectador)
+            // 3. GESTIÓN DE DUELOS (FIX ESPECTADOR)
             const duelScreen = document.getElementById('duel-screen');
             const ripScreen = document.getElementById('rip-screen');
             const handZone = document.getElementById('hand-zone');
             
+            // Estado base: Limpio
             duelScreen.style.display = 'none';
             ripScreen.style.display = 'none';
-            handZone.style.display = 'flex';
+            handZone.style.display = 'flex'; // La mano se muestra por defecto
 
             if(s.state === 'rip_decision') {
-                handZone.style.display = 'none';
+                // Durante decisión, NADIE ve la mano
+                handZone.style.display = 'none'; 
+                
                 if(s.duelInfo.defenderId === myId) {
                     // Defensor decide
                     ripScreen.style.display = 'flex'; 
                 } else {
-                    // ATACANTE Y ESPECTADORES ven esto
+                    // ATACANTE Y ESPECTADORES ven pantalla de duelo
                     duelScreen.style.display = 'flex'; 
                     document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta...";
@@ -928,8 +911,11 @@ app.get('/', (req, res) => {
                 }
             } 
             else if (s.state === 'dueling') {
+                // Durante pelea, NADIE ve la mano
                 handZone.style.display = 'none';
-                duelScreen.style.display = 'flex'; // TODOS ven esto
+                
+                // TODOS ven pantalla de duelo
+                duelScreen.style.display = 'flex'; 
                 
                 document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                 document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
@@ -995,7 +981,7 @@ app.get('/', (req, res) => {
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 if(c.value === '1 y 1/2') { d.style.fontSize = '18px'; }
                 d.onclick = () => {
-                     // Bloquear uso de cartas si el selector está abierto
+                     // FIX: Si el selector de color está abierto, no dejar tocar nada más
                      if(document.getElementById('color-picker').style.display === 'block') return;
 
                      if (!isMyTurn) { const isNumeric = /^[0-9]$/.test(c.value) || c.value === '1 y 1/2'; if (!isNumeric) return; }

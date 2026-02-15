@@ -11,7 +11,6 @@ setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
         if (now - rooms[roomId].lastActivity > 3600000) { 
-            console.log(`🧹 Limpiando sala inactiva: ${roomId}`);
             delete rooms[roomId];
         }
     });
@@ -204,7 +203,6 @@ io.on('connection', (socket) => {
         }
 
         if (pIndex === room.currentTurn && !isSaff) {
-            // --- LÓGICA DE JERARQUÍA DE CASTIGOS ---
             if (room.pendingPenalty > 0) {
                 let allowed = false;
                 if (card.value === 'GRACIA') allowed = true;
@@ -269,7 +267,7 @@ io.on('connection', (socket) => {
             room.gameState = 'rip_decision';
             const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
             
-            // Inicializar Narrativa
+            // NARRATIVA INICIAL INMEDIATA
             const startNarrative = `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!`;
 
             room.duelState = { 
@@ -350,7 +348,6 @@ io.on('connection', (socket) => {
         else { 
             io.to(roomId).emit('playSound', 'bell'); 
             room.gameState = 'dueling';
-            // FASE 2: PREPARACIÓN
             room.duelState.narrative = `¡${room.duelState.defenderName} aceptó! ${room.duelState.attackerName} elige arma...`; 
             updateAll(roomId); 
         }
@@ -364,7 +361,6 @@ io.on('connection', (socket) => {
         if (socket.id === room.duelState.attackerId) { 
             room.duelState.attackerChoice = c; 
             room.duelState.turn = room.duelState.defenderId;
-            // FASE 3: TURNO DEFENSA
             room.duelState.narrative = `${room.duelState.attackerName} ya eligió. Ahora le toca a ${room.duelState.defenderName}...`;
         } 
         else if (socket.id === room.duelState.defenderId) { 
@@ -423,7 +419,6 @@ function resolveDuelRound(roomId) {
     if(winner === 'attacker') winName = room.duelState.attackerName; 
     if(winner === 'defender') winName = room.duelState.defenderName;
 
-    // FASE 4: RESULTADO DE RONDA
     const narrativeResult = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
     room.duelState.narrative = narrativeResult;
 
@@ -433,7 +428,6 @@ function resolveDuelRound(roomId) {
     io.to(roomId).emit('playSound', 'soft');
     if (room.duelState.round >= 3 || room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2500); } 
     else { 
-        // Delay para leer
         setTimeout(() => {
             if(rooms[roomId]) {
                 room.duelState.round++; 
@@ -808,13 +802,18 @@ app.get('/', (req, res) => {
 
         socket.on('updateState', s => {
             amAdmin = s.iamAdmin;
-            document.getElementById('login').style.display='none'; document.getElementById('join-menu').style.display='none'; 
-            document.getElementById('lobby').style.display = s.state==='waiting' ? 'flex' : 'none';
+            
+            // --- GESTIÓN DE PANTALLAS (SEMÁFORO EXCLUSIVO) ---
+            document.getElementById('login').style.display='none'; 
+            document.getElementById('join-menu').style.display='none'; 
+            document.getElementById('lobby').style.display = 'none';
             document.getElementById('rip-screen').style.display = 'none';
-            document.getElementById('duel-screen').style.display = 'none'; // Por defecto oculto
+            document.getElementById('duel-screen').style.display = 'none';
             document.getElementById('revive-screen').style.display = 'none';
             
             if(s.state === 'waiting') {
+                document.getElementById('lobby').style.display = 'flex';
+                // (Código de Lobby...)
                 document.getElementById('lobby-users').innerHTML = s.players.map(p => {
                     const status = p.isConnected ? '🟢' : '🔴';
                     let kickBtn = '';
@@ -827,10 +826,61 @@ app.get('/', (req, res) => {
                 return;
             }
 
+            // ESTADO DE JUEGO ACTIVO
             document.getElementById('game-area').style.display='flex';
-            if (s.state === 'dueling' || s.state === 'rip_decision') { document.getElementById('hand-zone').style.display = 'none'; } else { document.getElementById('hand-zone').style.display = 'flex'; }
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
+            // --- LÓGICA DE DUELO (PRIORIDAD ALTA) ---
+            if(s.state === 'rip_decision') {
+                if(s.duelInfo.defenderId === myId) {
+                    // Soy Defensor: Veo RIP Screen
+                    document.getElementById('rip-screen').style.display='flex';
+                } else {
+                    // Soy Atacante o Espectador: Veo Duel Screen (Narrativa)
+                    document.getElementById('duel-screen').style.display='flex';
+                    if(s.duelInfo && s.duelInfo.narrative) {
+                        document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                    }
+                    document.getElementById('duel-opts').style.display = 'none';
+                    document.getElementById('duel-turn-msg').innerText = "Esperando respuesta del desafiado...";
+                }
+                document.getElementById('hand-zone').style.display = 'none'; // Ocultar mano
+            } 
+            else if (s.state === 'dueling') {
+                // Todos ven Duel Screen
+                document.getElementById('duel-screen').style.display='flex';
+                document.getElementById('hand-zone').style.display = 'none'; // Ocultar mano
+                
+                // Actualizar Info Duelo
+                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
+                if(s.duelInfo && s.duelInfo.narrative) {
+                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                }
+
+                // Controles de Pelea
+                const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
+                const isMyTurnDuel = (s.duelInfo.turn === myId);
+                
+                document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+                
+                const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
+                if (amIFighter) {
+                    if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
+                    else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
+                } else { 
+                    turnMsg.innerText = ""; 
+                }
+                
+                ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
+                if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
+            } 
+            else {
+                // JUEGO NORMAL
+                document.getElementById('hand-zone').style.display = 'flex';
+            }
+
+            // --- RENDERIZADO DE CARTAS Y TABLERO (Común) ---
             const top = s.topCard; const tEl = document.getElementById('top-card');
             if(top) {
                 tEl.className = 'card-pile';
@@ -855,51 +905,6 @@ app.get('/', (req, res) => {
 
             const penEl = document.getElementById('penalty-display');
             if(me && me.isTurn && s.pendingPenalty>0) { penEl.style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty; } else penEl.style.display='none';
-
-            // ESTADO: DECISIÓN DE RIP (DESAFÍO)
-            if(s.state === 'rip_decision') {
-                if(s.duelInfo.defenderId === myId) {
-                    // Soy el defensor: Veo botones de aceptar/rendirse
-                    document.getElementById('rip-screen').style.display='flex';
-                } else {
-                    // Soy espectador o atacante: Veo la pantalla de duelo CON narrativa (sin botones)
-                    document.getElementById('duel-screen').style.display='flex';
-                    if(s.duelInfo && s.duelInfo.narrative) {
-                        document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
-                    }
-                    // Ocultamos botones de pelea porque aún no es fase de pelea
-                    document.getElementById('duel-opts').style.display = 'none';
-                    document.getElementById('duel-turn-msg').innerText = "Esperando respuesta del desafiado...";
-                }
-            }
-
-            // ESTADO: PELEANDO (DUELING)
-            if(s.state === 'dueling') {
-                document.getElementById('duel-screen').style.display='flex';
-                
-                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
-                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
-                
-                if(s.duelInfo && s.duelInfo.narrative) {
-                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
-                }
-
-                const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
-                const isMyTurnDuel = (s.duelInfo.turn === myId);
-                
-                document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
-                
-                const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
-                if (amIFighter) {
-                    if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
-                    else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
-                } else { 
-                    turnMsg.innerText = ""; 
-                }
-                
-                ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
-                if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
-            }
         });
 
         socket.on('handUpdate', h => {

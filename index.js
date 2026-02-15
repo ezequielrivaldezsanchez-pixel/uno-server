@@ -3,10 +3,10 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- CONFIGURACIÓN ---
+// --- CONFIGURACIÓN DE SALAS ---
 const rooms = {}; 
 
-// Limpieza de salas inactivas
+// Garbage Collector
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -19,7 +19,7 @@ setInterval(() => {
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// --- SERVER LOGIC ---
+// --- LÓGICA SERVER ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -62,7 +62,7 @@ function createDeck(roomId) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // Cartas Mod
+    // Cartas Mod 1.5
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -525,6 +525,7 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
+    // NUNCA FILTRAMOS ESTO. Todos reciben toda la data del duelo.
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
         attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
         round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
@@ -607,7 +608,7 @@ app.get('/', (req, res) => {
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
         
-        /* BOTÓN CANCELAR MEJORADO */
+        /* BOTÓN CANCELAR NUEVO */
         .close-btn { 
             display: block; width: 100%; 
             margin-top: 15px; padding: 10px; 
@@ -810,9 +811,10 @@ app.get('/', (req, res) => {
         }
 
         // --- FUNCIÓN CANCELAR SELECTOR DE COLOR ---
+        // ESTA ES LA FUNCIÓN CLAVE PARA CERRAR Y LIMPIAR LA VARIABLE
         function closePicker() {
             document.getElementById('color-picker').style.display = 'none';
-            pendingCard = null;
+            pendingCard = null; // Reseteamos la carta pendiente
             pendingGrace = false;
         }
 
@@ -879,63 +881,67 @@ app.get('/', (req, res) => {
             }
 
             // 2. JUEGO ACTIVO
-            if(document.getElementById('game-area').style.display === 'none') {
-                changeScreen('game-area');
+            // Si el estado es jugando normal, mostramos la mesa
+            if(s.state === 'playing') {
+                if(document.getElementById('game-area').style.display === 'none') {
+                    changeScreen('game-area');
+                }
+                document.getElementById('hand-zone').style.display = 'flex';
+                document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
             }
-            document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
-            // 3. GESTIÓN DE DUELOS (FIX ESPECTADOR)
+            // 3. GESTIÓN DE DUELOS (FIX DEFINITIVO)
             const duelScreen = document.getElementById('duel-screen');
             const ripScreen = document.getElementById('rip-screen');
+            const gameArea = document.getElementById('game-area');
             const handZone = document.getElementById('hand-zone');
-            
-            // Estado base: Limpio
-            duelScreen.style.display = 'none';
-            ripScreen.style.display = 'none';
-            handZone.style.display = 'flex'; // La mano se muestra por defecto
 
-            if(s.state === 'rip_decision') {
-                // Durante decisión, NADIE ve la mano
-                handZone.style.display = 'none'; 
-                
-                if(s.duelInfo.defenderId === myId) {
-                    // Defensor decide
-                    ripScreen.style.display = 'flex'; 
-                } else {
-                    // ATACANTE Y ESPECTADORES ven pantalla de duelo
-                    duelScreen.style.display = 'flex'; 
-                    document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
-                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta...";
-                    document.getElementById('duel-opts').style.display = 'none';
-                    document.getElementById('duel-turn-msg').innerText = "Desafío en progreso...";
-                }
-            } 
-            else if (s.state === 'dueling') {
-                // Durante pelea, NADIE ve la mano
+            if(s.state === 'rip_decision' || s.state === 'dueling') {
+                // AQUÍ ESTÁ LA SOLUCIÓN: Ocultamos violentamente la mesa y la mano
+                // Esto garantiza que NADIE (incluido espectadores) vea la mesa
+                gameArea.style.display = 'none';
                 handZone.style.display = 'none';
                 
-                // TODOS ven pantalla de duelo
-                duelScreen.style.display = 'flex'; 
-                
-                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
-                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
-                document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "...";
+                // Limpiamos pantallas de duelo antes de decidir cual mostrar
+                duelScreen.style.display = 'none';
+                ripScreen.style.display = 'none';
 
-                const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
-                const isMyTurnDuel = (s.duelInfo.turn === myId);
-                
-                document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
-                
-                const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
-                if (amIFighter) {
-                    if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
-                    else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
-                } else { 
-                    turnMsg.innerText = ""; 
+                if(s.state === 'rip_decision') {
+                    if(s.duelInfo.defenderId === myId) {
+                        ripScreen.style.display = 'flex'; 
+                    } else {
+                        // Atacante y TODOS los espectadores entran aquí
+                        duelScreen.style.display = 'flex'; 
+                        document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                        document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta...";
+                        document.getElementById('duel-opts').style.display = 'none';
+                        document.getElementById('duel-turn-msg').innerText = "Desafío en progreso...";
+                    }
+                } 
+                else if (s.state === 'dueling') {
+                    // TODOS (Atacante, Defensor, Espectadores) ven la misma pantalla
+                    duelScreen.style.display = 'flex'; 
+                    
+                    document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                    document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
+                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "...";
+
+                    const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
+                    const isMyTurnDuel = (s.duelInfo.turn === myId);
+                    
+                    document.getElementById('duel-opts').style.display = amIFighter ? 'block' : 'none';
+                    
+                    const turnMsg = document.getElementById('duel-turn-msg'); const btns = document.querySelectorAll('.duel-btn');
+                    if (amIFighter) {
+                        if (isMyTurnDuel) { turnMsg.innerText = "¡TU TURNO! Elige..."; turnMsg.style.color = "#2ecc71"; btns.forEach(b => b.disabled = false); } 
+                        else { turnMsg.innerText = "Esperando al oponente..."; turnMsg.style.color = "#aaa"; btns.forEach(b => b.disabled = true); }
+                    } else { 
+                        turnMsg.innerText = ""; 
+                    }
+                    
+                    ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
+                    if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
                 }
-                
-                ['fuego','hielo','agua'].forEach(t => document.getElementById('btn-'+t).className = 'duel-btn');
-                if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
             }
 
             // --- RENDERIZADO CARTAS ---
@@ -981,7 +987,7 @@ app.get('/', (req, res) => {
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':c.value));
                 if(c.value === '1 y 1/2') { d.style.fontSize = '18px'; }
                 d.onclick = () => {
-                     // FIX: Si el selector de color está abierto, no dejar tocar nada más
+                     // Bloquear uso de cartas si el selector está abierto
                      if(document.getElementById('color-picker').style.display === 'block') return;
 
                      if (!isMyTurn) { const isNumeric = /^[0-9]$/.test(c.value) || c.value === '1 y 1/2'; if (!isNumeric) return; }

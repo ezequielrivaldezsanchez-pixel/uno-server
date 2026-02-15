@@ -3,15 +3,14 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
-// --- ESTRUCTURA DE DATOS GLOBAL ---
+// --- CONFIGURACIÓN DE SALAS ---
 const rooms = {}; 
 
-// GARBAGE COLLECTOR
+// LIMPIEZA AUTOMÁTICA
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
         if (now - rooms[roomId].lastActivity > 3600000) { 
-            console.log(`🧹 Limpiando sala inactiva: ${roomId}`);
             delete rooms[roomId];
         }
     });
@@ -20,7 +19,7 @@ setInterval(() => {
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// --- FUNCIONES CORE ---
+// --- LÓGICA DEL JUEGO (SERVER) ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -70,7 +69,7 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // Shuffle
+    // Mezclar
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -90,7 +89,6 @@ function recycleDeck(roomId) {
     room.deck = [...room.discardPile];
     room.discardPile = [topCard];
     
-    // Shuffle
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -183,7 +181,7 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // CHECK VICTORIA
+        // VICTORIA
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -193,7 +191,7 @@ io.on('connection', (socket) => {
 
         if (top.color !== 'negro') room.activeColor = top.color;
 
-        // SAFF logic
+        // SAFF
         let isSaff = false;
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
@@ -204,7 +202,6 @@ io.on('connection', (socket) => {
         }
 
         if (pIndex === room.currentTurn && !isSaff) {
-            // --- LÓGICA DE JERARQUÍA DE CASTIGOS ---
             if (room.pendingPenalty > 0) {
                 let allowed = false;
                 if (card.value === 'GRACIA') allowed = true;
@@ -221,7 +218,7 @@ io.on('connection', (socket) => {
             }
         }
 
-        // --- LÓGICA GRACIA DIVINA ---
+        // GRACIA
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
             if (room.pendingPenalty > 0) {
@@ -269,7 +266,7 @@ io.on('connection', (socket) => {
             room.gameState = 'rip_decision';
             const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
             
-            // NARRATIVA INICIAL
+            // **NARRATIVA INICIAL INMEDIATA**
             const startNarrative = `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!`;
 
             room.duelState = { 
@@ -519,7 +516,6 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // NARRATIVA GARANTIZADA
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { 
         attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, 
         round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, 
@@ -552,20 +548,34 @@ app.get('/', (req, res) => {
         * { box-sizing: border-box; }
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
-        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
         /* PANTALLAS PRINCIPALES */
+        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        
         #login { background: #2c3e50; z-index: 2000; } 
         #join-menu { background: #34495e; z-index: 2000; } 
         #lobby { background: #2c3e50; z-index: 1500; }
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(200px + var(--safe-bottom)); }
         
         /* PANTALLAS DE DUELO Y EVENTOS */
-        #rip-screen { background: rgba(50,0,0,0.98); z-index: 9000; }
-        #duel-screen { background: rgba(0,0,0,0.98); z-index: 9000; display: none; }
-        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 9500; text-align: center; border: 5px solid gold; box-sizing: border-box; }
-        #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 4500; display: none; text-align: center; width: 90%; max-width: 400px; }
+        #rip-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
+        #duel-screen { background: rgba(0,0,0,0.98); z-index: 10000; }
+        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 11000; text-align: center; border: 5px solid gold; box-sizing: border-box; }
+        #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 10500; display: none; text-align: center; width: 90%; max-width: 400px; }
         
+        #duel-narrative {
+            font-size: 24px; 
+            text-align:center; 
+            padding:20px; 
+            border:2px solid #69f0ae; 
+            background:rgba(0,0,0,0.8); 
+            color: #69f0ae;
+            width:90%; 
+            border-radius:15px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(105, 240, 174, 0.3);
+        }
+
         #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
         .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
@@ -674,7 +684,7 @@ app.get('/', (req, res) => {
 
     <div id="duel-screen" class="screen">
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
-        <h3 id="duel-narrative" style="color: #69f0ae; font-size: 20px; text-align:center; padding:10px; border:1px solid #444; background:rgba(0,0,0,0.5); width:90%; border-radius:10px;"></h3>
+        <h3 id="duel-narrative"></h3>
         
         <h2 id="duel-names" style="margin-top:10px;">... vs ...</h2>
         <h3 id="duel-sc">0 - 0</h3>
@@ -743,23 +753,18 @@ app.get('/', (req, res) => {
         socket.on('roomJoined', (data) => { currentRoomId = data.roomId; changeScreen('lobby'); document.getElementById('lobby-code').innerText = currentRoomId; });
         socket.on('error', (msg) => { alert(msg); });
 
-        // --- GESTOR DE PANTALLAS (CRÍTICO PARA ESTABILIDAD) ---
+        // --- GESTOR DE PANTALLAS (CRÍTICO) ---
         function changeScreen(screenId) {
-            // Ocultar todas
+            // Ocultar todas las de Acceso
             document.getElementById('login').style.display = 'none';
             document.getElementById('join-menu').style.display = 'none';
             document.getElementById('lobby').style.display = 'none';
             document.getElementById('game-area').style.display = 'none';
-            document.getElementById('game-over-screen').style.display = 'none';
-            document.getElementById('rip-screen').style.display = 'none';
-            document.getElementById('duel-screen').style.display = 'none';
-            document.getElementById('revive-screen').style.display = 'none';
             
             // Mostrar la solicitada
             const el = document.getElementById(screenId);
             if(el) {
                 if(screenId === 'game-area') el.style.display = 'flex';
-                else if(screenId === 'duel-screen' || screenId === 'rip-screen') el.style.display = 'flex';
                 else el.style.display = 'flex';
             }
         }
@@ -835,8 +840,6 @@ app.get('/', (req, res) => {
 
             // 1. MANEJO DE LOBBY (ACCESO)
             if(s.state === 'waiting') {
-                // Solo si no estamos ya en el lobby para evitar parpadeos innecesarios, 
-                // PERO si venimos de otro estado forzamos el cambio.
                 const lobby = document.getElementById('lobby');
                 if(lobby.style.display === 'none') changeScreen('lobby');
                 
@@ -851,19 +854,18 @@ app.get('/', (req, res) => {
                 return;
             }
 
-            // 2. JUEGO ACTIVO
-            // Asegurar que el área de juego base está visible
+            // 2. JUEGO ACTIVO (Asegurar que el fondo del juego esté)
             if(document.getElementById('game-area').style.display === 'none') {
                 changeScreen('game-area');
             }
             document.body.className = s.activeColor ? 'bg-'+s.activeColor : '';
 
-            // 3. ESTADOS DE DUELO (SUPERPOSICIONES)
+            // 3. GESTIÓN DE SUPERPOSICIONES (DUELOS)
             const duelScreen = document.getElementById('duel-screen');
             const ripScreen = document.getElementById('rip-screen');
             const handZone = document.getElementById('hand-zone');
             
-            // Ocultar overlays por defecto
+            // Estado por defecto: Limpio
             duelScreen.style.display = 'none';
             ripScreen.style.display = 'none';
             handZone.style.display = 'flex';
@@ -871,26 +873,25 @@ app.get('/', (req, res) => {
             if(s.state === 'rip_decision') {
                 handZone.style.display = 'none';
                 if(s.duelInfo.defenderId === myId) {
-                    ripScreen.style.display = 'flex'; // Defensor ve decisión
+                    ripScreen.style.display = 'flex'; // Defensor ve RIP Screen
                 } else {
-                    duelScreen.style.display = 'flex'; // Todos los demás ven narrativa
-                    // Configurar vista espectador
-                    if(s.duelInfo && s.duelInfo.narrative) document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                    // *** CORRECCIÓN CRÍTICA ESPECTADOR ***
+                    duelScreen.style.display = 'flex'; // Atacante y Espectadores ven Duelo
                     document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando inicio...";
+                    
                     document.getElementById('duel-opts').style.display = 'none';
                     document.getElementById('duel-turn-msg').innerText = "Esperando respuesta...";
                 }
             } 
             else if (s.state === 'dueling') {
                 handZone.style.display = 'none';
-                duelScreen.style.display = 'flex'; // Todos ven duelo
+                duelScreen.style.display = 'flex'; // TODOS ven Duelo
                 
-                // Actualizar Info
                 document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
                 document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
-                if(s.duelInfo && s.duelInfo.narrative) document.getElementById('duel-narrative').innerText = s.duelInfo.narrative;
+                document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "...";
 
-                // Lógica Jugador vs Espectador
                 const amIFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 const isMyTurnDuel = (s.duelInfo.turn === myId);
                 

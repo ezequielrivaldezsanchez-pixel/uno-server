@@ -6,7 +6,7 @@ const io = require('socket.io')(http);
 // --- CONFIGURACIÓN ---
 const rooms = {}; 
 
-// Limpieza automática
+// Limpieza automática (5 minutos)
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -59,7 +59,7 @@ function createDeck(roomId) {
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
     
-    // 3. Mod 1.5 + LIBRE ALBEDRIO
+    // 3. Mod 1.5 + LIBRE ALBEDRIO (Aumentado a 4 para asegurar aparición)
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -67,9 +67,10 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // 2 Cartas Libre Albedrío aseguradas
-    room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
-    room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
+    // AHORA HAY 4 LIBRE ALBEDRÍO (antes eran 2)
+    for(let k=0; k<4; k++) {
+        room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
+    }
     
     // Barajar
     for (let i = room.deck.length - 1; i > 0; i--) {
@@ -241,9 +242,15 @@ io.on('connection', (socket) => {
         if (top.color !== 'negro') room.activeColor = top.color;
 
         let isSaff = false;
+        // LÓGICA DE SAFF (Intercepción)
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
             if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
+                // CORRECCIÓN: PROHIBIR SAFF SI ES ÚLTIMA CARTA
+                if (player.hand.length === 1) {
+                    socket.emit('notification', '🚫 Prohibido ganar con SAFF.');
+                    return;
+                }
                 isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
                 io.to(roomId).emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.to(roomId).emit('playSound', 'saff');
             } else { return; }
@@ -584,7 +591,7 @@ app.get('/', (req, res) => {
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
         .mini-card.selected { border-color: gold; transform: scale(1.1); background: #666; }
 
-        /* EL CUADRO DE TEXTO DEL DUELO: Alta Visibilidad */
+        /* EL CUADRO DE TEXTO DEL DUELO */
         #duel-narrative { 
             position: relative; 
             z-index: 999999; 
@@ -630,16 +637,16 @@ app.get('/', (req, res) => {
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
         #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         
-        /* NOTIFICACIÓN DE CHAT */
+        /* NOTIFICACIÓN DE CHAT - Clases de prioridad alta */
         @keyframes pulse-gold {
             0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
             70% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(255, 215, 0, 0); }
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
         }
         .chat-unread {
-            animation: pulse-gold 1.5s infinite;
+            animation: pulse-gold 1s infinite !important;
             background-color: #f1c40f !important; /* Gold */
-            border-color: white !important;
+            border: 3px solid white !important;
         }
 
         .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
@@ -934,6 +941,7 @@ app.get('/', (req, res) => {
         function pass(){ socket.emit('passTurn'); }
         function uno(){ socket.emit('sayUno'); }
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
+        
         function toggleChat(){ 
             const w=document.getElementById('chat-win'); 
             const b=document.getElementById('chat-btn');
@@ -944,6 +952,7 @@ app.get('/', (req, res) => {
                 b.classList.remove('chat-unread'); // REMOVER NOTIFICACIÓN AL ABRIR
             }
         }
+        
         function pickCol(c){ document.getElementById('color-picker').style.display='none'; if(pendingGrace) socket.emit('playGraceDefense',c); else socket.emit('playCard',pendingCard,c,null); }
         function ripResp(d){ socket.emit('ripDecision',d); }
         function pick(c){ socket.emit('duelPick',c); }
@@ -960,7 +969,7 @@ app.get('/', (req, res) => {
             b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; 
             b.scrollTop = b.scrollHeight;
             
-            // Si el chat está CERRADO, activar notificación
+            // Si el chat está CERRADO (no flex), activar notificación
             const w = document.getElementById('chat-win');
             if(w.style.display !== 'flex') {
                 document.getElementById('chat-btn').classList.add('chat-unread');
@@ -970,7 +979,13 @@ app.get('/', (req, res) => {
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+=`<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`); b.scrollTop=b.scrollHeight;});
         socket.on('gameOver',d=>{document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText=d.winner; setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);});
         socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=`${x.name}<br><small>(${x.count})</small>`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
-        socket.on('playerRevived',d=>{const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML=`✨<br>${d.savior} revivió a ${d.revived}<br>✨`; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
+        
+        // RESURRECCIÓN CORREGIDA
+        socket.on('playerRevived',d=>{
+            const o=document.getElementById('revival-overlay'); 
+            document.getElementById('revival-text').innerHTML=`✨<br>${d.revived} fue resucitado por gracia divina de ${d.savior}<br>✨`; 
+            o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);
+        });
     </script>
 </body>
 </html>

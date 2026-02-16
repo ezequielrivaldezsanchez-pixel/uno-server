@@ -6,7 +6,7 @@ const io = require('socket.io')(http);
 // --- CONFIGURACIÓN ---
 const rooms = {}; 
 
-// Limpieza automática (5 minutos)
+// Garbage Collector (5 min)
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -59,7 +59,7 @@ function createDeck(roomId) {
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
     
-    // 3. Mod 1.5 + LIBRE ALBEDRIO (Aumentado a 4 para asegurar aparición)
+    // 3. Mod 1.5 + LIBRE ALBEDRIO (Asegurados)
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -67,7 +67,7 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // AHORA HAY 4 LIBRE ALBEDRÍO (antes eran 2)
+    // 4 CARTAS LIBRE ALBEDRÍO (Probabilidad alta)
     for(let k=0; k<4; k++) {
         room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
     }
@@ -134,7 +134,6 @@ io.on('connection', (socket) => {
         const pIndex = room.players.findIndex(p => p.id === socket.id);
         const player = room.players[pIndex];
 
-        // Validaciones
         if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
         if (player.hand.length < 3) return; 
 
@@ -206,7 +205,6 @@ io.on('connection', (socket) => {
              updateAll(roomId); return;
         }
 
-        // Penalty / Action Check
         if (['+2', '+4', '+12'].includes(lastDiscard.value)) {
             const val = parseInt(lastDiscard.value.replace('+','')); 
             room.pendingPenalty += val;
@@ -246,9 +244,9 @@ io.on('connection', (socket) => {
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
             if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                // CORRECCIÓN: PROHIBIR SAFF SI ES ÚLTIMA CARTA
+                // CORRECCIÓN SAFF: Prohibido si es la carta del gane
                 if (player.hand.length === 1) {
-                    socket.emit('notification', '🚫 Prohibido ganar con SAFF.');
+                    socket.emit('notification', '🚫 No puedes ganar haciendo SAFF.');
                     return;
                 }
                 isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
@@ -409,7 +407,6 @@ io.on('connection', (socket) => {
         if (socket.id === room.duelState.attackerId) { 
             room.duelState.attackerChoice = c; 
             room.duelState.turn = room.duelState.defenderId;
-            // NARRATIVA: Actualizamos para todos
             room.duelState.narrative = `⚔️ ${room.duelState.attackerName} eligió arma oculta. Esperando a ${room.duelState.defenderName}...`;
         } 
         else if (socket.id === room.duelState.defenderId) { 
@@ -591,7 +588,7 @@ app.get('/', (req, res) => {
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
         .mini-card.selected { border-color: gold; transform: scale(1.1); background: #666; }
 
-        /* EL CUADRO DE TEXTO DEL DUELO */
+        /* EL CUADRO DE TEXTO DEL DUELO: Alta Visibilidad */
         #duel-narrative { 
             position: relative; 
             z-index: 999999; 
@@ -717,6 +714,8 @@ app.get('/', (req, res) => {
     <script>
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
+        let chatAbierto = false; // VARIABLE DE ESTADO DEL CHAT
+        
         let myUUID = localStorage.getItem('uno_uuid');
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
@@ -942,14 +941,18 @@ app.get('/', (req, res) => {
         function uno(){ socket.emit('sayUno'); }
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
         
+        // --- CHAT TOGGLE (FIXED) ---
         function toggleChat(){ 
-            const w=document.getElementById('chat-win'); 
-            const b=document.getElementById('chat-btn');
-            if(w.style.display==='flex'){
-                w.style.display='none';
+            const w = document.getElementById('chat-win'); 
+            const b = document.getElementById('chat-btn');
+            
+            chatAbierto = !chatAbierto; // Toggle State
+
+            if(chatAbierto){
+                w.style.display = 'flex';
+                b.classList.remove('chat-unread'); // Stop blinking
             } else {
-                w.style.display='flex';
-                b.classList.remove('chat-unread'); // REMOVER NOTIFICACIÓN AL ABRIR
+                w.style.display = 'none';
             }
         }
         
@@ -963,15 +966,14 @@ app.get('/', (req, res) => {
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',3000);});
         socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
         
-        // --- CHAT LOGIC IMPROVED ---
+        // --- CHAT LOGIC IMPROVED V2 ---
         socket.on('chatMessage', m => {
             const b = document.getElementById('chat-msgs'); 
             b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; 
             b.scrollTop = b.scrollHeight;
             
-            // Si el chat está CERRADO (no flex), activar notificación
-            const w = document.getElementById('chat-win');
-            if(w.style.display !== 'flex') {
+            // Si el chat está cerrado (variable de estado), activar notificación
+            if(!chatAbierto) {
                 document.getElementById('chat-btn').classList.add('chat-unread');
             }
         });
@@ -980,7 +982,7 @@ app.get('/', (req, res) => {
         socket.on('gameOver',d=>{document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText=d.winner; setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);});
         socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=`${x.name}<br><small>(${x.count})</small>`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
         
-        // RESURRECCIÓN CORREGIDA
+        // RESURRECCIÓN TEXTO EXACTO
         socket.on('playerRevived',d=>{
             const o=document.getElementById('revival-overlay'); 
             document.getElementById('revival-text').innerHTML=`✨<br>${d.revived} fue resucitado por gracia divina de ${d.savior}<br>✨`; 

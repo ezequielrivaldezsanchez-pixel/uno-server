@@ -5,6 +5,7 @@ const io = require('socket.io')(http);
 
 // --- CONFIGURACIÓN ---
 const rooms = {}; 
+const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 // Garbage Collector (5 min)
 setInterval(() => {
@@ -67,7 +68,7 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // 5 CARTAS LIBRE ALBEDRÍO (Probabilidad aumentada)
+    // 5 CARTAS LIBRE ALBEDRÍO (Cantidad aumentada)
     for(let k=0; k<5; k++) {
         room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
     }
@@ -127,7 +128,84 @@ io.on('connection', (socket) => {
         const room = rooms[roomId]; if (room.gameState === 'waiting' && room.players.length >= 2) startCountdown(roomId);
     });
 
-    // --- LIBRE ALBEDRIO HANDLER ---
+    // --- LÓGICA DE ESCALERA ---
+    socket.on('playLadder', (cardIds) => {
+        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
+        const room = rooms[roomId];
+        const pIndex = room.players.findIndex(p => p.id === socket.id);
+        const player = room.players[pIndex];
+        
+        // 1. Validaciones Básicas
+        if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
+        if (!cardIds || cardIds.length < 3) return; // Mínimo 3 cartas
+
+        // 2. Obtener objetos de cartas
+        let playCards = [];
+        for(let id of cardIds) {
+            const c = player.hand.find(x => x.id === id);
+            if(!c) return; // Hack check
+            playCards.push(c);
+        }
+
+        // 3. Validar Color Único (y que no sean negras)
+        const firstColor = playCards[0].color;
+        if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con cartas de color.'); return; }
+        if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Todas las cartas deben ser del mismo color.'); return; }
+
+        // 4. Validar Secuencia (usando ladderOrder global)
+        const indices = playCards.map(c => ladderOrder.indexOf(c.value));
+        if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo cartas numéricas (0-9 y 1y1/2).'); return; }
+
+        let isAscending = true;
+        let isDescending = true;
+        
+        for(let i = 0; i < indices.length - 1; i++) {
+            if(indices[i+1] !== indices[i] + 1) isAscending = false;
+            if(indices[i+1] !== indices[i] - 1) isDescending = false;
+        }
+
+        if(!isAscending && !isDescending) {
+            socket.emit('notification', '🚫 Secuencia inválida (Revisá el orden o falta el 1 y 1/2).');
+            return;
+        }
+
+        // 5. Validar Coincidencia con Mesa
+        const top = room.discardPile[room.discardPile.length - 1];
+        const firstCard = playCards[0];
+        // Reglas standard de UNO para la primera carta
+        let match = false;
+        if(firstCard.color === room.activeColor) match = true;
+        else if(firstCard.value === top.value) match = true;
+        
+        if(!match) { socket.emit('notification', '🚫 La primera carta debe coincidir con la mesa.'); return; }
+
+        // --- EJECUCIÓN DE ESCALERA ---
+        
+        // Remover cartas de la mano
+        cardIds.forEach(id => {
+            const idx = player.hand.findIndex(c => c.id === id);
+            if(idx !== -1) player.hand.splice(idx, 1);
+        });
+
+        // Agregar al descarte (en orden)
+        room.discardPile.push(...playCards);
+        
+        // Efectos
+        const lastCard = playCards[playCards.length - 1];
+        room.activeColor = lastCard.color; // El color es el mismo para todas
+        
+        io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}! (${playCards.length} cartas)`);
+        io.to(roomId).emit('playSound', 'soft');
+
+        // Verificar victoria
+        if(player.hand.length === 0) {
+            finishRound(roomId, player);
+        } else {
+            advanceTurn(roomId, 1);
+            updateAll(roomId);
+        }
+    });
+
     socket.on('playLibreAlbedrio', (data) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId];
@@ -246,7 +324,7 @@ io.on('connection', (socket) => {
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
             if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                // CANDADO DE SEGURIDAD: Prohibido si es la carta del gane
+                // CANDADO DE SEGURIDAD SAFF
                 if (player.hand.length === 1) {
                     socket.emit('notification', '🚫 Prohibido ganar haciendo SAFF. Espera tu turno.');
                     return;
@@ -622,9 +700,18 @@ app.get('/', (req, res) => {
         #uno-btn-area { display: flex; gap: 15px; margin-top: 20px; z-index: 30; }
         .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 0 #c0392b; }
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 25px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
+        
+        #hand-controls { position: fixed; bottom: 190px; right: 20px; z-index: 6000; display:flex; flex-direction:column; gap:10px; align-items:flex-end; }
+        #btn-ladder-toggle { background: #8e44ad; color: white; border: 2px solid white; padding: 8px 15px; border-radius: 20px; font-size: 14px; cursor: pointer; box-shadow: 0 4px 5px rgba(0,0,0,0.3); }
+        #btn-ladder-play { background: #27ae60; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-size: 16px; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px gold; font-weight:bold; }
+
         #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 99999 !important; }
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; }
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: all 0.2s; }
         .hand-card:active { transform: scale(0.95); }
+        
+        /* ESTILO SELECCIÓN ESCALERA */
+        .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
+
         body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
         #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
         .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
@@ -636,7 +723,7 @@ app.get('/', (req, res) => {
         #chat-btn { position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 5000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
         #chat-win { position: fixed; bottom: 260px; right: 20px; width: 280px; height: 200px; background: rgba(0,0,0,0.9); border: 1px solid #666; display: none; flex-direction: column; z-index: 5000; border-radius: 10px; }
         
-        /* NOTIFICACIÓN DE CHAT - Clases de prioridad alta */
+        /* NOTIFICACIÓN DE CHAT - PRIORIDAD ABSOLUTA */
         @keyframes pulse-gold {
             0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
             50% { transform: scale(1.1); box-shadow: 0 0 15px 5px rgba(255, 215, 0, 0.5); }
@@ -671,6 +758,11 @@ app.get('/', (req, res) => {
     <div id="join-menu" class="screen"><h1>Unirse</h1><input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;"><button class="btn-main" onclick="joinRoom()">Entrar</button><button class="btn-main" onclick="backToLogin()">Volver</button></div>
     <div id="lobby" class="screen"><h1>Sala: <span id="lobby-code" style="color:gold;"></span></h1><button onclick="copyLink()">🔗 Link</button><div id="lobby-users"></div><button id="start-btn" onclick="start()" class="btn-main" style="display:none;">EMPEZAR</button><p id="wait-msg" style="display:none;">Esperando...</p></div>
     <div id="game-area"><div id="players-zone"></div><div id="alert-zone"><div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div><div id="main-alert" class="alert-box"></div></div><div id="table-zone"><div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">📦</div><div id="top-card" class="card-pile"></div></div><div id="uno-btn-area"><button id="btn-pass" class="btn-pass" onclick="pass()">PASAR</button><button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button></div></div></div>
+    
+    <div id="hand-controls" style="display:none;">
+        <button id="btn-ladder-play" onclick="submitLadder()">JUGAR ESCALERA</button>
+        <button id="btn-ladder-toggle" onclick="toggleLadderMode()">Activar Escalera</button>
+    </div>
     <div id="hand-zone"></div>
     
     <div id="chat-btn" onclick="toggleChat()">💬</div>
@@ -717,6 +809,10 @@ app.get('/', (req, res) => {
     <script>
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
+        let isChatOpen = false; // VARIABLE ESTRICTA PARA EL CHAT
+        let ladderMode = false; // MODO ESCALERA
+        let ladderSelected = []; // IDs seleccionados
+        
         let myUUID = localStorage.getItem('uno_uuid');
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
@@ -847,9 +943,12 @@ app.get('/', (req, res) => {
                  document.getElementById('hand-zone').style.display = 'flex';
                  document.getElementById('duel-screen').style.display = 'none';
                  document.getElementById('rip-screen').style.display = 'none';
+                 // Mostrar controles de escalera
+                 document.getElementById('hand-controls').style.display = 'flex';
             } 
             else if (s.state === 'rip_decision') {
                 document.body.classList.add('state-rip');
+                document.getElementById('hand-controls').style.display = 'none';
                 // Defensor ve RIP, otros ven DUEL (Narrativa)
                 if(s.duelInfo.defenderId === myId) {
                      document.getElementById('rip-screen').style.display = 'flex';
@@ -865,6 +964,7 @@ app.get('/', (req, res) => {
             }
             else if (s.state === 'dueling') {
                 document.body.classList.add('state-dueling');
+                document.getElementById('hand-controls').style.display = 'none';
                 document.getElementById('rip-screen').style.display = 'none';
                 const ds = document.getElementById('duel-screen');
                 ds.style.display = 'flex';
@@ -915,12 +1015,30 @@ app.get('/', (req, res) => {
             
             h.forEach(c => {
                 const d = document.createElement('div'); d.className = 'hand-card';
+                // Chequear si está seleccionada para escalera
+                if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
+                
                 d.style.backgroundColor = getBgColor(c); 
                 d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white';
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':(c.value==='LIBRE'?'🕊️':c.value)));
                 if(c.value === '1 y 1/2') d.style.fontSize = '18px';
                 
                 d.onclick = () => {
+                    // MODO ESCALERA ACTIVO
+                    if(ladderMode) {
+                        if(ladderSelected.includes(c.id)) {
+                             ladderSelected = ladderSelected.filter(id => id !== c.id);
+                             d.classList.remove('selected-ladder');
+                        } else {
+                             ladderSelected.push(c.id);
+                             d.classList.add('selected-ladder');
+                        }
+                        // Actualizar botón de Jugar Escalera
+                        document.getElementById('btn-ladder-play').style.display = (ladderSelected.length >= 3) ? 'block' : 'none';
+                        return;
+                    }
+
+                    // MODO NORMAL
                     if(document.getElementById('color-picker').style.display === 'block') return;
                     if(c.value === 'LIBRE') { startLibreAlbedrio(c.id); return; }
                     
@@ -933,6 +1051,31 @@ app.get('/', (req, res) => {
                 hz.appendChild(d);
             });
         });
+
+        // --- FUNCIONES ESCALERA CLIENTE ---
+        function toggleLadderMode() {
+            ladderMode = !ladderMode;
+            ladderSelected = []; // Reset selections
+            const btn = document.getElementById('btn-ladder-toggle');
+            if(ladderMode) {
+                btn.innerText = "Cancelar Escalera";
+                btn.style.background = "#e74c3c";
+            } else {
+                btn.innerText = "Activar Escalera";
+                btn.style.background = "#8e44ad";
+                document.getElementById('btn-ladder-play').style.display = 'none';
+                // Redibujar mano para quitar highlights
+                socket.emit('checkSession', myUUID); 
+            }
+        }
+
+        function submitLadder() {
+            if(ladderSelected.length < 3) return;
+            // Ordenar selección para enviarla prolija (aunque el server valida)
+            // No podemos ordenar aquí fácil por valor, mandamos IDs y que server valide
+            socket.emit('playLadder', ladderSelected);
+            toggleLadderMode(); // Desactivar modo
+        }
 
         // Basic funcs
         function changeScreen(id) { document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById(id).style.display='flex'; }
@@ -947,14 +1090,13 @@ app.get('/', (req, res) => {
             const w = document.getElementById('chat-win'); 
             const b = document.getElementById('chat-btn');
             
-            // Leemos el estado REAL del elemento, sin variables intermedias
-            const isVisible = window.getComputedStyle(w).display !== 'none';
-
-            if(isVisible){
+            if(isChatOpen) {
                 w.style.display = 'none';
+                isChatOpen = false;
             } else {
                 w.style.display = 'flex';
-                b.classList.remove('chat-unread'); // Limpiamos la alerta al abrir
+                isChatOpen = true;
+                b.classList.remove('chat-unread'); 
             }
         }
         
@@ -968,17 +1110,14 @@ app.get('/', (req, res) => {
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',3000);});
         socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
         
-        // --- CHAT LOGIC IMPROVED V2 (SOLUCIÓN DEFINITIVA) ---
+        // --- CHAT LOGIC IMPROVED V3 (SOLUCIÓN DEFINITIVA) ---
         socket.on('chatMessage', m => {
             const b = document.getElementById('chat-msgs'); 
             b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; 
             b.scrollTop = b.scrollHeight;
             
-            // Verificación infalible: ¿Está el chat visible en pantalla?
-            const w = document.getElementById('chat-win');
-            const isHidden = window.getComputedStyle(w).display === 'none';
-
-            if(isHidden) {
+            // Verificación infalible basada en VARIABLE
+            if(!isChatOpen) {
                 document.getElementById('chat-btn').classList.add('chat-unread');
             }
         });
@@ -987,7 +1126,6 @@ app.get('/', (req, res) => {
         socket.on('gameOver',d=>{document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText=d.winner; setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);});
         socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=`${x.name}<br><small>(${x.count})</small>`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
         
-        // RESURRECCIÓN TEXTO EXACTO
         socket.on('playerRevived',d=>{
             const o=document.getElementById('revival-overlay'); 
             document.getElementById('revival-text').innerHTML=`✨<br>${d.revived} fue resucitado por gracia divina de ${d.savior}<br>✨`; 

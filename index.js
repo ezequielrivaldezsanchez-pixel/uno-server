@@ -816,7 +816,7 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             if(s.state === 'waiting') {
-                document.getElementById('lobby-users').innerHTML = s.players.map(p => `<div>${p.isConnected?'🟢':'🔴'} ${p.name} ${s.iamAdmin&&p.id!==myId?`<button onclick="kick('${p.id}')">❌</button>`:''}</div>`).join('');
+                document.getElementById('lobby-users').innerHTML = s.players.map(p => \`<div>\${p.isConnected?'🟢':'🔴'} \${p.name} \${s.iamAdmin&&p.id!==myId?\`<button onclick="kick('\${p.id}')">❌</button>\`:''}</div>\`).join('');
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
                 return;
             }
@@ -832,15 +832,15 @@ app.get('/', (req, res) => {
             else if (s.state === 'rip_decision') {
                 document.body.classList.add('state-rip');
                 if(s.duelInfo.defenderId === myId) { document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; } 
-                else { document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta del desafiado..."; document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`; document.getElementById('duel-opts').style.display = 'none'; }
+                else { document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta del desafiado..."; document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`; document.getElementById('duel-opts').style.display = 'none'; }
             }
             else if (s.state === 'dueling') {
                 document.body.classList.add('state-dueling');
                 document.getElementById('rip-screen').style.display = 'none';
                 document.getElementById('duel-screen').style.display = 'flex';
                 document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "...";
-                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
-                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
+                document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
+                document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
                 const amFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 document.getElementById('duel-opts').style.display = amFighter ? 'block' : 'none';
                 if(amFighter) {
@@ -853,7 +853,7 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'playing') {
-                document.getElementById('players-zone').innerHTML = s.players.map(p => `<div class="player-badge ${p.isTurn?'is-turn':''} ${p.isDead?'is-dead':''}">${p.isConnected?'':'🔴'} ${p.name} (${p.cardCount})</div>`).join('');
+                document.getElementById('players-zone').innerHTML = s.players.map(p => \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.isConnected?'':'🔴'} \${p.name} (\${p.cardCount})</div>\`).join('');
                 if(s.topCard) {
                     const tc = s.topCard; const el = document.getElementById('top-card');
                     el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white'));
@@ -922,14 +922,17 @@ app.get('/', (req, res) => {
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',3000);});
         socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
-        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
-        socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+=`<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`); b.scrollTop=b.scrollHeight;});
+        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
+        socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+=\`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`); b.scrollTop=b.scrollHeight;});
         socket.on('gameOver',d=>{document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText=d.winner; setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);});
-        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=`${x.name}<br><small>(${x.count})</small>`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
-        socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML=`✨<br>${d.revived} fue resucitado por gracia divina de ${d.savior}<br>✨`; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
+        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=\`\${x.name}<br><small>(\${x.count})</small>\`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
+        socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML=\`✨<br>\${d.revived} fue resucitado por gracia divina de \${d.savior}<br>✨\`; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
     </script>
 </body>
 </html>
+`);
+});
+
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

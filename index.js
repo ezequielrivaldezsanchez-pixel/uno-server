@@ -59,7 +59,7 @@ function createDeck(roomId) {
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
     
-    // 3. Mod 1.5 + LIBRE ALBEDRIO (Asegurados)
+    // 3. Mod 1.5 + LIBRE ALBEDRIO
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -67,8 +67,8 @@ function createDeck(roomId) {
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
     
-    // 4 CARTAS LIBRE ALBEDRÍO (Probabilidad alta)
-    for(let k=0; k<4; k++) {
+    // 5 CARTAS LIBRE ALBEDRÍO (Probabilidad aumentada)
+    for(let k=0; k<5; k++) {
         room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
     }
     
@@ -230,6 +230,7 @@ io.on('connection', (socket) => {
         const card = player.hand[cardIndex];
         const top = room.discardPile[room.discardPile.length - 1];
 
+        // Regla: Última carta
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -240,13 +241,14 @@ io.on('connection', (socket) => {
         if (top.color !== 'negro') room.activeColor = top.color;
 
         let isSaff = false;
-        // LÓGICA DE SAFF (Intercepción)
+        
+        // --- LÓGICA DE SAFF (Intercepción) ---
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
             if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                // CORRECCIÓN SAFF: Prohibido si es la carta del gane
+                // CANDADO DE SEGURIDAD: Prohibido si es la carta del gane
                 if (player.hand.length === 1) {
-                    socket.emit('notification', '🚫 No puedes ganar haciendo SAFF.');
+                    socket.emit('notification', '🚫 Prohibido ganar haciendo SAFF. Espera tu turno.');
                     return;
                 }
                 isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
@@ -637,13 +639,14 @@ app.get('/', (req, res) => {
         /* NOTIFICACIÓN DE CHAT - Clases de prioridad alta */
         @keyframes pulse-gold {
             0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
-            70% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(255, 215, 0, 0); }
-            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
+            50% { transform: scale(1.1); box-shadow: 0 0 15px 5px rgba(255, 215, 0, 0.5); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
         }
         .chat-unread {
             animation: pulse-gold 1s infinite !important;
             background-color: #f1c40f !important; /* Gold */
-            border: 3px solid white !important;
+            border: 3px solid #e74c3c !important; /* Red Border */
+            color: black !important;
         }
 
         .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
@@ -714,8 +717,6 @@ app.get('/', (req, res) => {
     <script>
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
-        let chatAbierto = false; // VARIABLE DE ESTADO DEL CHAT
-        
         let myUUID = localStorage.getItem('uno_uuid');
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
@@ -941,18 +942,19 @@ app.get('/', (req, res) => {
         function uno(){ socket.emit('sayUno'); }
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
         
-        // --- CHAT TOGGLE (FIXED) ---
+        // --- CHAT TOGGLE (SOLUCIÓN DEFINITIVA) ---
         function toggleChat(){ 
             const w = document.getElementById('chat-win'); 
             const b = document.getElementById('chat-btn');
             
-            chatAbierto = !chatAbierto; // Toggle State
+            // Leemos el estado REAL del elemento, sin variables intermedias
+            const isVisible = window.getComputedStyle(w).display !== 'none';
 
-            if(chatAbierto){
-                w.style.display = 'flex';
-                b.classList.remove('chat-unread'); // Stop blinking
-            } else {
+            if(isVisible){
                 w.style.display = 'none';
+            } else {
+                w.style.display = 'flex';
+                b.classList.remove('chat-unread'); // Limpiamos la alerta al abrir
             }
         }
         
@@ -966,14 +968,17 @@ app.get('/', (req, res) => {
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',3000);});
         socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
         
-        // --- CHAT LOGIC IMPROVED V2 ---
+        // --- CHAT LOGIC IMPROVED V2 (SOLUCIÓN DEFINITIVA) ---
         socket.on('chatMessage', m => {
             const b = document.getElementById('chat-msgs'); 
             b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; 
             b.scrollTop = b.scrollHeight;
             
-            // Si el chat está cerrado (variable de estado), activar notificación
-            if(!chatAbierto) {
+            // Verificación infalible: ¿Está el chat visible en pantalla?
+            const w = document.getElementById('chat-win');
+            const isHidden = window.getComputedStyle(w).display === 'none';
+
+            if(isHidden) {
                 document.getElementById('chat-btn').classList.add('chat-unread');
             }
         });

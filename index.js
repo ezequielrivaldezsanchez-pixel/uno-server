@@ -146,7 +146,7 @@ io.on('connection', (socket) => {
 
             // EXCLUSIVIDAD: Ambas deben ser '1 y 1/2'
             if (c1.value !== '1 y 1/2' || c2.value !== '1 y 1/2') {
-                 // Si no son 1.5, intentamos validar como escalera (aunque de 2 no existe, el front no debería mandarlo, pero validamos).
+                 // Si no son 1.5, intentamos validar como escalera
                  socket.emit('notification', '🚫 Para jugar 2 cartas, deben ser Escalera (3+) o dos "1 y 1/2".');
                  return;
             }
@@ -337,8 +337,9 @@ io.on('connection', (socket) => {
 
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no sirve para evitar castigos.'); return; }
-            const isTopNumeric = /^[0-9]$/.test(top.value) || top.value === '1 y 1/2';
-            if (!isTopNumeric) { socket.emit('notification', '🚫 RIP solo se puede jugar sobre Números.'); return; }
+            // CORRECCIÓN: Eliminada la restricción de "Solo sobre Números".
+            // Ahora se puede tirar RIP sobre cualquier carta siempre que no haya castigo pendiente.
+            
             if (getAlivePlayersCount(roomId) < 2) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
                 io.to(roomId).emit('notification', '💀 RIP fallido.');
@@ -642,9 +643,27 @@ app.get('/', (req, res) => {
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
         #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
         
-        /* CHAT SYSTEM IMPROVED */
-        #chat-btn { position: fixed; bottom: 220px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: flex; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
-        #chat-win { position: fixed; bottom: 280px; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; }
+        /* CHAT SYSTEM MOVIDO ARRIBA (FIXED) */
+        #chat-btn { 
+            position: fixed; 
+            top: 110px; /* Debajo de los nombres */
+            right: 20px; 
+            width: 50px; height: 50px; 
+            background: #3498db; border-radius: 50%; 
+            display: flex; justify-content: center; align-items: center; 
+            border: 2px solid white; z-index: 50000; 
+            box-shadow: 0 4px 5px rgba(0,0,0,0.3); 
+            font-size: 24px; cursor: pointer; transition: all 0.3s; 
+        }
+        #chat-win { 
+            position: fixed; 
+            top: 170px; /* Debajo del botón */
+            right: 20px; 
+            width: 280px; height: 250px; 
+            background: rgba(0,0,0,0.95); border: 2px solid #666; 
+            display: none; flex-direction: column; 
+            z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; 
+        }
         #chat-badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: none; justify-content: center; align-items: center; font-weight: bold; border: 2px solid white; }
 
         #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
@@ -808,7 +827,22 @@ app.get('/', (req, res) => {
         function showJoin() { changeScreen('join-menu'); }
         function backToLogin() { changeScreen('login'); }
         function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
-        function copyLink() { navigator.clipboard.writeText(window.location.origin + '/?room=' + document.getElementById('lobby-code').innerText); }
+        
+        // --- FUNCIÓN DE LINK CORREGIDA ---
+        function copyLink() { 
+            const code = document.getElementById('lobby-code').innerText;
+            const url = window.location.origin + '/?room=' + code;
+            if(navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(() => {
+                    alert('¡Link copiado al portapapeles!');
+                }).catch(err => {
+                    prompt("Copia este link manualmente:", url);
+                });
+            } else {
+                prompt("Copia este link manualmente:", url);
+            }
+        }
+
         function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
 
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
@@ -816,7 +850,7 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             if(s.state === 'waiting') {
-                document.getElementById('lobby-users').innerHTML = s.players.map(p => \`<div>\${p.isConnected?'🟢':'🔴'} \${p.name} \${s.iamAdmin&&p.id!==myId?\`<button onclick="kick('\${p.id}')">❌</button>\`:''}</div>\`).join('');
+                document.getElementById('lobby-users').innerHTML = s.players.map(p => `<div>${p.isConnected?'🟢':'🔴'} ${p.name} ${s.iamAdmin&&p.id!==myId?`<button onclick="kick('${p.id}')">❌</button>`:''}</div>`).join('');
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
                 return;
             }
@@ -832,15 +866,15 @@ app.get('/', (req, res) => {
             else if (s.state === 'rip_decision') {
                 document.body.classList.add('state-rip');
                 if(s.duelInfo.defenderId === myId) { document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; } 
-                else { document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta del desafiado..."; document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`; document.getElementById('duel-opts').style.display = 'none'; }
+                else { document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta del desafiado..."; document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`; document.getElementById('duel-opts').style.display = 'none'; }
             }
             else if (s.state === 'dueling') {
                 document.body.classList.add('state-dueling');
                 document.getElementById('rip-screen').style.display = 'none';
                 document.getElementById('duel-screen').style.display = 'flex';
                 document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "...";
-                document.getElementById('duel-names').innerText = \`\${s.duelInfo.attackerName} vs \${s.duelInfo.defenderName}\`;
-                document.getElementById('duel-sc').innerText = \`\${s.duelInfo.scoreAttacker} - \${s.duelInfo.scoreDefender}\`;
+                document.getElementById('duel-names').innerText = `${s.duelInfo.attackerName} vs ${s.duelInfo.defenderName}`;
+                document.getElementById('duel-sc').innerText = `${s.duelInfo.scoreAttacker} - ${s.duelInfo.scoreDefender}`;
                 const amFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
                 document.getElementById('duel-opts').style.display = amFighter ? 'block' : 'none';
                 if(amFighter) {
@@ -853,7 +887,7 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'playing') {
-                document.getElementById('players-zone').innerHTML = s.players.map(p => \`<div class="player-badge \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}">\${p.isConnected?'':'🔴'} \${p.name} (\${p.cardCount})</div>\`).join('');
+                document.getElementById('players-zone').innerHTML = s.players.map(p => `<div class="player-badge ${p.isTurn?'is-turn':''} ${p.isDead?'is-dead':''}">${p.isConnected?'':'🔴'} ${p.name} (${p.cardCount})</div>`).join('');
                 if(s.topCard) {
                     const tc = s.topCard; const el = document.getElementById('top-card');
                     el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white'));
@@ -922,11 +956,11 @@ app.get('/', (req, res) => {
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',3000);});
         socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
-        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += \`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
-        socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+=\`<div><b style="color:gold">\${m.name}:</b> \${m.text}</div>\`); b.scrollTop=b.scrollHeight;});
+        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += `<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
+        socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+=`<div><b style="color:gold">${m.name}:</b> ${m.text}</div>`); b.scrollTop=b.scrollHeight;});
         socket.on('gameOver',d=>{document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText=d.winner; setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);});
-        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=\`\${x.name}<br><small>(\${x.count})</small>\`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
-        socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML=\`✨<br>\${d.revived} fue resucitado por gracia divina de \${d.savior}<br>✨\`; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
+        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=`${x.name}<br><small>(${x.count})</small>`; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
+        socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML=`✨<br>${d.revived} fue resucitado por gracia divina de ${d.savior}<br>✨`; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
     </script>
 </body>
 </html>

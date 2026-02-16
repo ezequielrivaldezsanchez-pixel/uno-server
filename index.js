@@ -337,7 +337,6 @@ io.on('connection', (socket) => {
 
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no sirve para evitar castigos.'); return; }
-            // RESTRICCION ELIMINADA: Se permite tirar RIP sobre cualquier carta si no hay castigo pendiente.
             
             if (getAlivePlayersCount(roomId) < 2) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
@@ -571,6 +570,7 @@ function updateAll(roomId) {
 
 // --- CLIENTE ---
 app.get('/', (req, res) => {
+    // IMPORTANTE: USAMOS COMILLAS INVERTIDAS CORRECTAS AQUÍ PARA QUE EL SCRIPT FUNCIONE BIEN
     res.send(`
 <!DOCTYPE html>
 <html lang="es">
@@ -613,11 +613,12 @@ app.get('/', (req, res) => {
         /* --- BARRA DE ACCIONES FLOTANTE (FIXED) --- */
         #action-bar {
             position: fixed;
-            bottom: 180px; /* Justo arriba de las cartas */
+            bottom: 180px; 
             left: 0; width: 100%;
-            display: flex; justify-content: center; align-items: center;
-            padding: 10px; pointer-events: none; /* Dejar pasar clicks por los costados */
-            z-index: 20000; /* SUPERIOR A TODO */
+            display: none; /* AHORA ESTÁ OCULTO POR DEFECTO */
+            justify-content: center; align-items: center;
+            padding: 10px; pointer-events: none; 
+            z-index: 20000;
         }
         #uno-btn-area { 
             pointer-events: auto; 
@@ -645,11 +646,12 @@ app.get('/', (req, res) => {
         /* CHAT SYSTEM MOVIDO ARRIBA (FIXED) */
         #chat-btn { 
             position: fixed; 
-            top: 110px; /* Debajo de los nombres */
+            top: 110px; 
             right: 20px; 
             width: 50px; height: 50px; 
             background: #3498db; border-radius: 50%; 
-            display: flex; justify-content: center; align-items: center; 
+            display: none; /* AHORA ESTÁ OCULTO POR DEFECTO */
+            justify-content: center; align-items: center; 
             border: 2px solid white; z-index: 50000; 
             box-shadow: 0 4px 5px rgba(0,0,0,0.3); 
             font-size: 24px; cursor: pointer; transition: all 0.3s; 
@@ -827,7 +829,6 @@ app.get('/', (req, res) => {
         function backToLogin() { changeScreen('login'); }
         function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
         
-        // --- FUNCIÓN DE LINK CORREGIDA ---
         function copyLink() { 
             const code = document.getElementById('lobby-code').innerText;
             const url = window.location.origin + '/?room=' + code;
@@ -849,7 +850,7 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             if(s.state === 'waiting') {
-                const list = s.players.map(p => '<div>' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + (s.iamAdmin&&p.id!==myId?('<button onclick="kick(\''+p.id+'\')">❌</button>'):'') + '</div>').join('');
+                const list = s.players.map(p => '<div>' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + (s.iamAdmin&&p.id!==myId?('<button onclick="kick(\\''+p.id+'\\')">❌</button>'):'') + '</div>').join('');
                 document.getElementById('lobby-users').innerHTML = list;
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
                 return;
@@ -859,7 +860,8 @@ app.get('/', (req, res) => {
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
                  document.getElementById('game-area').style.display = 'flex';
                  document.getElementById('hand-zone').style.display = 'flex';
-                 document.getElementById('action-bar').style.display = 'flex';
+                 document.getElementById('action-bar').style.display = 'flex'; // SE MUESTRA SOLO AL JUGAR
+                 document.getElementById('chat-btn').style.display = 'flex'; // CHAT SOLO AL JUGAR
                  document.getElementById('duel-screen').style.display = 'none';
                  document.getElementById('rip-screen').style.display = 'none';
             } 
@@ -945,7 +947,13 @@ app.get('/', (req, res) => {
         }
         function submitLadder() { if(ladderSelected.length < 2) return; socket.emit('playMultiCards', ladderSelected); toggleLadderMode(); }
 
-        function changeScreen(id) { document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById('action-bar').style.display='none'; document.getElementById(id).style.display='flex'; }
+        function changeScreen(id) { 
+            document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); 
+            document.getElementById('game-area').style.display='none'; 
+            document.getElementById('action-bar').style.display='none'; 
+            document.getElementById('chat-btn').style.display='none'; // OCULTAR CHAT AL CAMBIAR PANTALLA
+            document.getElementById(id).style.display='flex'; 
+        }
         function start(){ socket.emit('requestStart'); }
         function draw(){ socket.emit('draw'); }
         function pass(){ socket.emit('passTurn'); }

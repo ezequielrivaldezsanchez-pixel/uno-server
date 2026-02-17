@@ -1,17 +1,21 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
-const io = require('socket.io')(http);
+// --- ESTABILIDAD: Configuración de tolerancia para móviles ---
+const io = require('socket.io')(http, {
+    pingTimeout: 60000, // Espera 60 segundos antes de cerrar conexión (ideal para pantallas bloqueadas)
+    pingInterval: 25000
+});
 
 // --- CONFIGURACIÓN ---
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-// Limpieza automática
+// Limpieza automática (aumentada a 2 horas por seguridad)
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
-        if (now - rooms[roomId].lastActivity > 3600000) delete rooms[roomId];
+        if (now - rooms[roomId].lastActivity > 7200000) delete rooms[roomId];
     });
 }, 60000 * 5); 
 
@@ -86,13 +90,24 @@ io.on('connection', (socket) => {
     
     socket.on('checkSession', (uuid) => {
         let foundRoomId = null; let foundPlayer = null;
-        for (const rId in rooms) { const p = rooms[rId].players.find(pl => pl.uuid === uuid); if (p) { foundRoomId = rId; foundPlayer = p; break; } }
+        // Búsqueda profunda de sesión perdida
+        for (const rId in rooms) { 
+            const p = rooms[rId].players.find(pl => pl.uuid === uuid); 
+            if (p) { foundRoomId = rId; foundPlayer = p; break; } 
+        }
+        
         if (foundRoomId && foundPlayer) {
-            foundPlayer.id = socket.id; foundPlayer.isConnected = true;
-            socket.join(foundRoomId); touchRoom(foundRoomId);
+            // Restaurar conexión silenciosamente
+            foundPlayer.id = socket.id; 
+            foundPlayer.isConnected = true;
+            socket.join(foundRoomId); 
+            touchRoom(foundRoomId);
             socket.emit('sessionRestored', { roomId: foundRoomId, name: foundPlayer.name });
             updateAll(foundRoomId);
-        } else { socket.emit('requireLogin'); }
+        } else { 
+            // Solo pedir login si REALMENTE no existe la sesión
+            socket.emit('requireLogin'); 
+        }
     });
 
     socket.on('createRoom', (data) => {
@@ -144,9 +159,7 @@ io.on('connection', (socket) => {
             const c1 = playCards[0];
             const c2 = playCards[1];
 
-            // EXCLUSIVIDAD: Ambas deben ser '1 y 1/2'
             if (c1.value !== '1 y 1/2' || c2.value !== '1 y 1/2') {
-                 // Si no son 1.5, intentamos validar como escalera
                  socket.emit('notification', '🚫 Para jugar 2 cartas, deben ser Escalera (3+) o dos "1 y 1/2".');
                  return;
             }
@@ -216,7 +229,7 @@ io.on('connection', (socket) => {
         const giftIdx = player.hand.findIndex(c => c.id === data.giftCardId);
         if (!target || giftIdx === -1) return; 
         const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
-        io.to(roomId).emit('notification', `🎁 ${player.name} regaló carta a ${target.name} (Libre Albedrío)`);
+        
         io.to(target.id).emit('handUpdate', target.hand);
 
         let lastDiscard = null;
@@ -228,7 +241,8 @@ io.on('connection', (socket) => {
         }
         if (!lastDiscard) { finishRound(roomId, player); return; }
 
-        io.to(roomId).emit('notification', `🌪️ ${player.name} descartó ${data.discardIds.length} cartas.`);
+        // --- NOTIFICACIÓN GENERAL UNIFICADA ---
+        io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO: regaló carta a ${target.name} y descartó ${data.discardIds.length}.`);
         io.to(roomId).emit('playSound', 'wild');
 
         if (player.hand.length === 0) {
@@ -455,11 +469,17 @@ io.on('connection', (socket) => {
             const room = rooms[roomId]; const p = room.players.find(pl => pl.id === socket.id); 
             if(p) {
                 p.isConnected = false;
+                // NO ELIMINAMOS AL JUGADOR DE INMEDIATO PARA PERMITIR RECONEXIÓN
                 if ((room.gameState === 'dueling' || room.gameState === 'rip_decision') && (socket.id === room.duelState.attackerId || socket.id === room.duelState.defenderId)) {
-                    io.to(roomId).emit('notification', '🔌 Jugador desconectado. Duelo cancelado.');
-                    if (socket.id === room.duelState.attackerId) { eliminatePlayer(roomId, room.duelState.attackerId); }
-                    if (socket.id === room.duelState.defenderId) { eliminatePlayer(roomId, room.duelState.defenderId); }
-                    checkWinCondition(roomId);
+                    // Solo si hay duelo activo, esperamos un poco y cancelamos si no vuelve
+                    setTimeout(() => {
+                        if(rooms[roomId] && !p.isConnected) {
+                             io.to(roomId).emit('notification', '🔌 Jugador desconectado. Duelo cancelado.');
+                             if (socket.id === room.duelState.attackerId) { eliminatePlayer(roomId, room.duelState.attackerId); }
+                             if (socket.id === room.duelState.defenderId) { eliminatePlayer(roomId, room.duelState.defenderId); }
+                             checkWinCondition(roomId);
+                        }
+                    }, 5000);
                 } else { updateAll(roomId); }
             }
         }
@@ -589,7 +609,12 @@ app.get('/', (req, res) => {
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 11000; text-align: center; border: 5px solid gold; }
         #revive-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 10500; display: none; text-align: center; width: 90%; max-width: 400px; }
         
-        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 12000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
+        #reconnect-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:90000; display:none; justify-content:center; align-items:center; color:white; font-size:20px; flex-direction:column; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom:15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Z-INDEX ELEVADO PARA MODAL */
+        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 60000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
         .libre-step { display: none; width: 90%; text-align: center; }
         .libre-step.active { display: block; }
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
@@ -684,6 +709,8 @@ app.get('/', (req, res) => {
     </style>
 </head>
 <body>
+    <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
+
     <div id="login" class="screen" style="display:flex;"><h1 style="font-size:60px; margin:0;">UNO y 1/2</h1><input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15"><button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button><button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button></div>
     <div id="join-menu" class="screen"><h1>Unirse</h1><input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;"><button class="btn-main" onclick="joinRoom()">Entrar</button><button class="btn-main" onclick="backToLogin()">Volver</button></div>
     <div id="lobby" class="screen"><h1>Sala: <span id="lobby-code" style="color:gold;"></span></h1><button onclick="copyLink()">🔗 Link</button><div id="lobby-users"></div><button id="start-btn" onclick="start()" class="btn-main" style="display:none;">EMPEZAR</button><p id="wait-msg" style="display:none;">Esperando...</p></div>
@@ -765,13 +792,32 @@ app.get('/', (req, res) => {
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
-        socket.on('connect', () => { myId = socket.id; socket.emit('checkSession', myUUID); });
+        // --- MANEJO ROBUSTO DE CONEXIÓN ---
+        socket.on('connect', () => { 
+            document.getElementById('reconnect-overlay').style.display = 'none';
+            myId = socket.id; 
+            socket.emit('checkSession', myUUID); 
+        });
+        
+        socket.on('disconnect', () => {
+            // Mostrar overlay en lugar de ir al login
+            document.getElementById('reconnect-overlay').style.display = 'flex';
+        });
+
         socket.on('sessionRestored', (data) => { changeScreen('lobby'); });
-        socket.on('requireLogin', () => { changeScreen('login'); });
+        socket.on('requireLogin', () => { 
+            // Solo ir al login si el servidor rechaza explícitamente la sesión
+            document.getElementById('reconnect-overlay').style.display = 'none';
+            changeScreen('login'); 
+        });
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardIds: [] };
+        
         function startLibreAlbedrio(cardId) {
             if(myHand.length < 3) return alert("Necesitas al menos 3 cartas para usar esto.");
+            // OCULTAR BARRA DE ACCIÓN AL ABRIR
+            document.getElementById('action-bar').style.display = 'none';
+            
             libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardIds: [] };
             document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1);
             const div = document.getElementById('libre-targets'); div.innerHTML = '';
@@ -818,6 +864,9 @@ app.get('/', (req, res) => {
         }
         function finishLibre(color) {
             document.getElementById('libre-modal').style.display = 'none';
+            // RESTAURAR BARRA DE ACCIÓN AL CERRAR
+            if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex';
+            
             socket.emit('playLibreAlbedrio', { cardId: libreState.cardId, targetPlayerId: libreState.targetId, giftCardId: libreState.giftId, discardIds: libreState.discardIds, chosenColor: color });
             libreState = { active: false };
         }
@@ -857,11 +906,17 @@ app.get('/', (req, res) => {
             }
             document.body.className = ''; 
             if(s.state === 'playing') {
+                 document.body.classList.add('playing-state'); // Flag para saber si estamos jugando
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
                  document.getElementById('game-area').style.display = 'flex';
                  document.getElementById('hand-zone').style.display = 'flex';
-                 document.getElementById('action-bar').style.display = 'flex'; // SE MUESTRA SOLO AL JUGAR
-                 document.getElementById('chat-btn').style.display = 'flex'; // CHAT SOLO AL JUGAR
+                 
+                 // Solo mostrar si NO estamos en el modal
+                 if(document.getElementById('libre-modal').style.display !== 'flex') {
+                    document.getElementById('action-bar').style.display = 'flex';
+                 }
+                 
+                 document.getElementById('chat-btn').style.display = 'flex'; 
                  document.getElementById('duel-screen').style.display = 'none';
                  document.getElementById('rip-screen').style.display = 'none';
             } 

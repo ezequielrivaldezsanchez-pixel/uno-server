@@ -132,7 +132,6 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
     
-    // --- SOLICITUD DE ORDENAMIENTO (SERVIDOR) ---
     socket.on('requestSort', () => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId];
@@ -189,35 +188,97 @@ io.on('connection', (socket) => {
         }
         const top = room.discardPile[room.discardPile.length - 1];
 
-        if (playCards.length === 2) {
+        // --- LÓGICA DE ESCALERAS Y COMBOS ---
+
+        // 1. Combo 1 y 1/2
+        if (playCards.length === 2 && playCards[0].value === '1 y 1/2' && playCards[1].value === '1 y 1/2') {
             const c1 = playCards[0]; const c2 = playCards[1];
-            if (c1.value !== '1 y 1/2' || c2.value !== '1 y 1/2') { socket.emit('notification', '🚫 Para jugar 2 cartas, deben ser Escalera (3+) o dos "1 y 1/2".'); return; }
             if (c1.color !== c2.color) { socket.emit('notification', '🚫 Las dos "1 y 1/2" deben ser del mismo color.'); return; }
             if (top.value !== '3') { socket.emit('notification', '🚫 El combo de "1 y 1/2" solo se puede tirar sobre un 3.'); return; }
-
+            
             cardIds.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
             room.discardPile.push(...playCards); room.activeColor = c1.color; 
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! (1.5 + 1.5 = 3)`); io.to(roomId).emit('playSound', 'divine'); 
-        } else {
-            const firstColor = playCards[0].color;
-            if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con cartas de color.'); return; }
-            if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Todas deben ser del mismo color.'); return; }
-            const indices = playCards.map(c => ladderOrder.indexOf(c.value));
-            if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo números (0-9) y 1y1/2.'); return; }
-            const sortedIndices = [...indices].sort((a,b) => a-b);
-            let isConsecutive = true;
-            for(let i = 0; i < sortedIndices.length - 1; i++) { if(sortedIndices[i+1] !== sortedIndices[i] + 1) { isConsecutive = false; break; } }
-            if(!isConsecutive) { socket.emit('notification', '🚫 La escalera no es consecutiva.'); return; }
-            const firstCard = playCards[0];
-            let match = false;
-            if(firstCard.color === room.activeColor) match = true; else if(firstCard.value === top.value) match = true;
-            if(!match) { socket.emit('notification', '🚫 La primera carta seleccionada no coincide con la mesa.'); return; }
-            
-            cardIds.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
-            room.discardPile.push(...playCards); room.activeColor = firstColor;
-            io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}! (${playCards.length} cartas)`); io.to(roomId).emit('playSound', 'soft');
+            if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
+            return;
         }
-        if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
+
+        // 2. Validación Común para Escaleras
+        const firstColor = playCards[0].color;
+        if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con cartas de color.'); return; }
+        if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Todas deben ser del mismo color.'); return; }
+        
+        const indices = playCards.map(c => ladderOrder.indexOf(c.value));
+        if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo números (0-9) y 1y1/2.'); return; }
+        
+        // Ordenamos los índices de las cartas jugadas para verificar continuidad interna
+        const sortedIndices = [...indices].sort((a,b) => a-b);
+        let isInternallyConsecutive = true;
+        for(let i = 0; i < sortedIndices.length - 1; i++) { if(sortedIndices[i+1] !== sortedIndices[i] + 1) { isInternallyConsecutive = false; break; } }
+        if(!isInternallyConsecutive) { socket.emit('notification', '🚫 Las cartas seleccionadas no son consecutivas.'); return; }
+
+        let isValidPlay = false;
+
+        // CASO A: ESCALERA INTEGRADA (2 Cartas + Mesa)
+        if (playCards.length === 2) {
+            const topIdx = ladderOrder.indexOf(top.value);
+            // Requisitos: Tope numérico, Mismo color que la mano
+            if (topIdx !== -1 && top.color === firstColor) {
+                const min = sortedIndices[0];
+                const max = sortedIndices[1];
+                
+                // Opción 1: Ascendente (Mesa -> min -> max) | Ej: 3 -> 4 -> 5
+                const isAsc = (min === topIdx + 1 && max === topIdx + 2);
+                
+                // Opción 2: Descendente (Mesa -> max -> min) | Ej: 3 -> 2 -> 1
+                const isDesc = (max === topIdx - 1 && min === topIdx - 2);
+                
+                if (isAsc || isDesc) {
+                    isValidPlay = true;
+                    // Reordenar visualmente para el descarte si es necesario (opcional, pero queda mejor)
+                    if (isAsc) playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
+                    if (isDesc) playCards.sort((a,b) => ladderOrder.indexOf(b.value) - ladderOrder.indexOf(a.value));
+                } else {
+                     socket.emit('notification', '🚫 No forman escalera con la mesa (Ascendente o Descendente).'); return;
+                }
+            } else {
+                socket.emit('notification', '🚫 Para escalera de 2, deben conectar color y número con la mesa.'); return;
+            }
+        } 
+        // CASO B: ESCALERA AUTÓNOMA (3+ Cartas)
+        else {
+             // Ya verificamos que son consecutivas internamente y del mismo color.
+             // Solo falta verificar si la "primera" carta (la más baja o la más alta) entra en la mesa.
+             // O simplemente si el COLOR coincide con el activo.
+             // Regla UNO estándar: Si coincide el color, se puede jugar.
+             let colorMatch = (firstColor === room.activeColor);
+             let valueMatch = false;
+             
+             // Si el color no coincide, verificamos si alguno de los extremos conecta por número
+             if (!colorMatch) {
+                 // Esto es un "Cambio de color mediante escalera", técnica avanzada pero válida si conecta valor.
+                 // Ej: Mesa 5 Rojo -> Juego 5, 6, 7 Azul.
+                 // Verificamos si alguna carta del set coincide en valor con el top.
+                 if (playCards.some(c => c.value === top.value)) valueMatch = true;
+             }
+             
+             if (colorMatch || valueMatch) {
+                 isValidPlay = true;
+                 // Ordenamos ascendente por defecto para que quede bonito en el descarte
+                 playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
+             } else {
+                 socket.emit('notification', '🚫 El color no coincide con la mesa.'); return;
+             }
+        }
+
+        if (isValidPlay) {
+            cardIds.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
+            room.discardPile.push(...playCards); 
+            room.activeColor = firstColor;
+            io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}! (${playCards.length} cartas)`); io.to(roomId).emit('playSound', 'soft');
+            
+            if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
+        }
     });
 
     socket.on('playLibreAlbedrio', (data) => {
@@ -893,7 +954,9 @@ app.get('/', (req, res) => {
 
         <div class="rule-row">
             <div class="rule-badge" style="background:linear-gradient(45deg, #e74c3c, #f1c40f, #2ecc71, #3498db); font-size:12px;">1-2-3</div>
-            <div class="rule-text"><b>Escalera:</b> Puedes descartar 3 o más cartas numéricas consecutivas. Deben ser del MISMO color (Rojo, Azul, Verde o Amarillo).</div>
+            <div class="rule-text"><b>Escalera:</b> Secuencia de 3+ cartas (mismo color). <br>
+            • <b>Autónoma:</b> Tienes 3+ cartas en mano. <br>
+            • <b>Integrada:</b> Tienes 2 cartas en mano que conectan (Asc/Desc) con la carta de la mesa (Mismo color).</div>
         </div>
 
         <div class="rule-row">
@@ -1320,10 +1383,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-`);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

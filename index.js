@@ -1302,7 +1302,8 @@ app.get('/', (req, res) => {
         // ANIMACIÓN LIBRE ALBEDRIO
         socket.on('animateLibre', (data) => {
             const alertBox = document.getElementById('main-alert');
-            alertBox.innerText = `🕊️ ${data.playerName} usó LIBRE ALBEDRÍO`;
+            // CORREGIDO: Concatenación simple para evitar error de sintaxis en el servidor
+            alertBox.innerText = '🕊️ ' + data.playerName + ' usó LIBRE ALBEDRÍO';
             alertBox.style.display = 'block';
             
             const topEl = document.getElementById('top-card');
@@ -1354,3 +1355,10 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
+`);
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

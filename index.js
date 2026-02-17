@@ -20,6 +20,9 @@ const sortValWeights = {
 };
 const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
 
+const colors = ['rojo', 'azul', 'verde', 'amarillo'];
+const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
+
 // Limpieza automática
 setInterval(() => {
     const now = Date.now();
@@ -27,9 +30,6 @@ setInterval(() => {
         if (now - rooms[roomId].lastActivity > 7200000) delete rooms[roomId];
     });
 }, 60000 * 5); 
-
-const colors = ['rojo', 'azul', 'verde', 'amarillo'];
-const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
 // --- FUNCIONES DEL SERVIDOR ---
 
@@ -211,7 +211,6 @@ io.on('connection', (socket) => {
         const indices = playCards.map(c => ladderOrder.indexOf(c.value));
         if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo números (0-9) y 1y1/2.'); return; }
         
-        // Ordenamos los índices de las cartas jugadas para verificar continuidad interna
         const sortedIndices = [...indices].sort((a,b) => a-b);
         let isInternallyConsecutive = true;
         for(let i = 0; i < sortedIndices.length - 1; i++) { if(sortedIndices[i+1] !== sortedIndices[i] + 1) { isInternallyConsecutive = false; break; } }
@@ -235,7 +234,7 @@ io.on('connection', (socket) => {
                 
                 if (isAsc || isDesc) {
                     isValidPlay = true;
-                    // Reordenar visualmente para el descarte si es necesario (opcional, pero queda mejor)
+                    // Reordenar visualmente
                     if (isAsc) playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
                     if (isDesc) playCards.sort((a,b) => ladderOrder.indexOf(b.value) - ladderOrder.indexOf(a.value));
                 } else {
@@ -247,24 +246,15 @@ io.on('connection', (socket) => {
         } 
         // CASO B: ESCALERA AUTÓNOMA (3+ Cartas)
         else {
-             // Ya verificamos que son consecutivas internamente y del mismo color.
-             // Solo falta verificar si la "primera" carta (la más baja o la más alta) entra en la mesa.
-             // O simplemente si el COLOR coincide con el activo.
-             // Regla UNO estándar: Si coincide el color, se puede jugar.
              let colorMatch = (firstColor === room.activeColor);
              let valueMatch = false;
              
-             // Si el color no coincide, verificamos si alguno de los extremos conecta por número
              if (!colorMatch) {
-                 // Esto es un "Cambio de color mediante escalera", técnica avanzada pero válida si conecta valor.
-                 // Ej: Mesa 5 Rojo -> Juego 5, 6, 7 Azul.
-                 // Verificamos si alguna carta del set coincide en valor con el top.
                  if (playCards.some(c => c.value === top.value)) valueMatch = true;
              }
              
              if (colorMatch || valueMatch) {
                  isValidPlay = true;
-                 // Ordenamos ascendente por defecto para que quede bonito en el descarte
                  playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
              } else {
                  socket.emit('notification', '🚫 El color no coincide con la mesa.'); return;
@@ -785,8 +775,8 @@ function updateAll(roomId) {
 
 // --- CLIENTE ---
 app.get('/', (req, res) => {
-    // IMPORTANTE: USAMOS COMILLAS INVERTIDAS CORRECTAS AQUÍ
-    res.send(`
+    // SEPARAR EL CONTENIDO HTML PARA EVITAR ERRORES DE PARSEO
+    const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1383,3 +1373,11 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
+    `;
+    res.send(htmlContent);
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

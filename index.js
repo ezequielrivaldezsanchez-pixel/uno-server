@@ -211,21 +211,28 @@ io.on('connection', (socket) => {
         const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
         io.to(target.id).emit('handUpdate', target.hand);
 
-        // 2. Descartes
+        // 2. Descartes (CON ANIMACIÓN SECUENCIAL)
+        let discardedCardsForAnimation = [];
         let lastDiscard = null;
+        
         if (data.discardIds && data.discardIds.length > 0) {
             data.discardIds.forEach(dId => {
                 const dIdx = player.hand.findIndex(c => c.id === dId);
                 if (dIdx !== -1) { 
                     const dCard = player.hand.splice(dIdx, 1)[0]; 
                     room.discardPile.push(dCard); 
-                    lastDiscard = dCard; // Identificamos la última arrojada
+                    lastDiscard = dCard;
+                    discardedCardsForAnimation.push(dCard);
                 }
             });
         }
         if (!lastDiscard) { finishRound(roomId, player); return; }
 
-        io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO: regaló carta a ${target.name} y descartó ${data.discardIds.length}.`);
+        // EMITIR EVENTO DE ANIMACIÓN A TODOS LOS CLIENTES
+        io.to(roomId).emit('animateLibre', { 
+            playerName: player.name, 
+            cards: discardedCardsForAnimation 
+        });
         io.to(roomId).emit('playSound', 'wild');
 
         if (player.hand.length === 0) {
@@ -236,54 +243,55 @@ io.on('connection', (socket) => {
         // Establecer color (siempre se establece, aunque sea Gracia)
         if (lastDiscard.color === 'negro' && data.chosenColor) room.activeColor = data.chosenColor;
         else if (lastDiscard.color !== 'negro') room.activeColor = lastDiscard.color;
-        io.to(roomId).emit('cardPlayedEffect', { color: room.activeColor });
-
-        // --- LÓGICA DE EFECTOS ÚLTIMA CARTA ---
-
-        // 1. GRACIA DIVINA (Si es la última)
-        if (lastDiscard.value === 'GRACIA') {
-             const deadPlayers = room.players.filter(p => p.isDead);
-             // Si hay muertos, pausamos turno y preguntamos
-             if (deadPlayers.length > 0) {
-                 io.to(roomId).emit('playSound', 'divine');
-                 if(deadPlayers.length === 1) {
-                     socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: lastDiscard.id });
-                 } else {
-                     const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
-                     socket.emit('askReviveTarget', zombieList);
-                 }
-                 // NO avanzamos turno. Esperamos confirmación del cliente.
-                 updateAll(roomId);
-                 return;
-             } 
-             // Si NO hay muertos, funciona como comodín normal. El color ya fue seteado arriba. 
-             // Avanzamos turno abajo.
-        }
-
-        // 2. RIP (Si es la última)
-        if (lastDiscard.value === 'RIP') {
-             if (getAlivePlayersCount(roomId) < 2) { advanceTurn(roomId, 1); updateAll(roomId); return; }
-             io.to(roomId).emit('playSound', 'rip');
-             room.gameState = 'rip_decision';
-             const attacker = player; 
-             const victimIdx = getNextPlayerIndex(roomId, 1); 
-             const defender = room.players[victimIdx];
-             room.duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: attacker.id, narrative: `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!` };
-             updateAll(roomId); return;
-        }
-
-        // 3. CASTIGOS NUMÉRICOS
-        if (['+2', '+4', '+12'].includes(lastDiscard.value)) {
-            const val = parseInt(lastDiscard.value.replace('+','')); room.pendingPenalty += val;
-            io.to(roomId).emit('notification', `💥 ¡+${val}!`); io.to(roomId).emit('playSound', 'attack');
-            advanceTurn(roomId, 1); updateAll(roomId); return;
-        }
         
-        // 4. DIRECCIÓN / SALTO
-        let steps = 1;
-        if (lastDiscard.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
-        if (lastDiscard.value === 'X') steps = 2;
-        advanceTurn(roomId, steps); updateAll(roomId);
+        // RETRASAMOS EL UPDATE DEL ESTADO PARA QUE SE VEA LA ANIMACIÓN (2 segundos)
+        setTimeout(() => {
+            io.to(roomId).emit('cardPlayedEffect', { color: room.activeColor });
+            
+            // Lógica de efectos ÚLTIMA CARTA (se ejecuta tras la animación)
+            
+            // 1. GRACIA DIVINA
+            if (lastDiscard.value === 'GRACIA') {
+                 const deadPlayers = room.players.filter(p => p.isDead);
+                 if (deadPlayers.length > 0) {
+                     io.to(roomId).emit('playSound', 'divine');
+                     if(deadPlayers.length === 1) {
+                         socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: lastDiscard.id });
+                     } else {
+                         const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
+                         socket.emit('askReviveTarget', zombieList);
+                     }
+                     updateAll(roomId);
+                     return;
+                 } 
+            }
+
+            // 2. RIP
+            if (lastDiscard.value === 'RIP') {
+                 if (getAlivePlayersCount(roomId) < 2) { advanceTurn(roomId, 1); updateAll(roomId); return; }
+                 io.to(roomId).emit('playSound', 'rip');
+                 room.gameState = 'rip_decision';
+                 const attacker = player; 
+                 const victimIdx = getNextPlayerIndex(roomId, 1); 
+                 const defender = room.players[victimIdx];
+                 room.duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: attacker.id, narrative: `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!` };
+                 updateAll(roomId); return;
+            }
+
+            // 3. CASTIGOS
+            if (['+2', '+4', '+12'].includes(lastDiscard.value)) {
+                const val = parseInt(lastDiscard.value.replace('+','')); room.pendingPenalty += val;
+                io.to(roomId).emit('notification', `💥 ¡+${val}!`); io.to(roomId).emit('playSound', 'attack');
+                advanceTurn(roomId, 1); updateAll(roomId); return;
+            }
+            
+            // 4. DIRECCIÓN / SALTO
+            let steps = 1;
+            if (lastDiscard.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
+            if (lastDiscard.value === 'X') steps = 2;
+            advanceTurn(roomId, steps); 
+            updateAll(roomId);
+        }, 1500 + (discardedCardsForAnimation.length * 400)); // Tiempo base + tiempo por carta
     });
 
     socket.on('confirmReviveSingle', (data) => {
@@ -799,6 +807,10 @@ app.get('/', (req, res) => {
         #rules-btn { position: fixed; top: 110px; left: 20px; width: 50px; height: 50px; background: #9b59b6; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
         #rules-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 500px; max-height: 80vh; background: rgba(0,0,0,0.95); border: 2px solid #9b59b6; display: none; flex-direction: column; z-index: 50001; border-radius: 10px; padding: 20px; color: white; overflow-y: auto; }
         #rules-close { position: absolute; top: 10px; right: 15px; color: white; font-size: 20px; cursor: pointer; font-weight: bold; }
+        
+        .rule-row { display: flex; align-items: center; margin-bottom: 15px; text-align: left; }
+        .rule-badge { width: 40px; height: 56px; border-radius: 4px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-weight: bold; margin-right: 15px; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 5px black; }
+        .rule-text { font-size: 14px; line-height: 1.4; }
 
         #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
         .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
@@ -866,14 +878,42 @@ app.get('/', (req, res) => {
     <div id="rules-btn" onclick="toggleRules()">❓</div>
     <div id="rules-modal">
         <div id="rules-close" onclick="toggleRules()">X</div>
-        <h2 style="color:gold; text-align:center;">Reglamento</h2>
-        <p>1. <b>Objetivo:</b> Quedarse sin cartas.</p>
-        <p>2. <b>1 y 1/2:</b> Puedes jugar dos "1 y 1/2" juntas (mismo color) sobre un 3.</p>
-        <p>3. <b>Escalera:</b> 3 o más cartas consecutivas del mismo color (o color negro).</p>
-        <p>4. <b>SAFF:</b> Juega una carta idéntica fuera de turno para robar el turno.</p>
-        <p>5. <b>RIP:</b> Desafía a duelo de Piedra-Papel-Tijera elemental (Fuego>Hielo>Agua>Fuego). El perdedor roba 4.</p>
-        <p>6. <b>Gracia:</b> Cancela castigos o revive muertos (si es tu turno). Si no hay efectos, funciona como comodín.</p>
-        <p>7. <b>Libre Albedrío:</b> Regala 1 carta, descarta hasta 4. Si la última es válida, ganas.</p>
+        <h2 style="color:gold; text-align:center; border-bottom:1px solid #555; padding-bottom:10px;">Reglamento</h2>
+        
+        <p style="text-align:center; font-style:italic; margin-bottom:20px;">
+            <b>Objetivo:</b> Quedarse sin cartas.<br>
+            ⚠️ IMPORTANTE: La última carta descartada para ganar DEBE ser Numérica o GRACIA DIVINA.
+        </p>
+
+        <div class="rule-row">
+            <div class="rule-badge" style="background:#e74c3c">1½</div>
+            <div class="rule-text"><b>1 y 1/2:</b> Puedes jugar dos cartas "1 y 1/2" juntas (del mismo color) únicamente sobre un 3.</div>
+        </div>
+
+        <div class="rule-row">
+            <div class="rule-badge" style="background:linear-gradient(45deg, #e74c3c, #f1c40f, #2ecc71, #3498db); font-size:12px;">1-2-3</div>
+            <div class="rule-text"><b>Escalera:</b> Puedes descartar 3 o más cartas numéricas consecutivas. Deben ser del MISMO color (Rojo, Azul, Verde o Amarillo).</div>
+        </div>
+
+        <div class="rule-row">
+            <div class="rule-badge" style="background:#2ecc71">7</div>
+            <div class="rule-text"><b>SAFF:</b> Si tienes una carta Numérica idéntica (mismo número y color) a la de la mesa, ¡juégala fuera de turno! Robas el turno inmediatamente. No vale con cartas especiales.</div>
+        </div>
+
+        <div class="rule-row">
+            <div class="rule-badge" style="background:#000; color:white; border-color:#666;">🪦</div>
+            <div class="rule-text"><b>RIP:</b> Desafías a duelo al siguiente jugador. El perdedor queda ELIMINADO de la ronda (pierde 1 vida). Si gana el defensor, el atacante roba cartas.</div>
+        </div>
+
+        <div class="rule-row">
+            <div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div>
+            <div class="rule-text"><b>GRACIA DIVINA:</b> Carta suprema. <br>1. Anula castigos (+2, +4, Duelos). <br>2. Revive a un muerto (si es tu turno). <br>3. Comodín: Eliges color. <br>✅ Es la única carta especial válida para cerrar el juego.</div>
+        </div>
+
+        <div class="rule-row">
+            <div class="rule-badge" style="background:#000; color:white;">🕊️</div>
+            <div class="rule-text"><b>LIBRE ALBEDRÍO:</b> Jugada maestra.<br>1. Eliges una carta de tu mano y se la REGALAS a otro jugador.<br>2. Seleccionas hasta 4 cartas de tu mano para DESCARTAR.<br>Si logras vaciar tu mano y la última carta que cae es válida (Número o Gracia), ganas.</div>
+        </div>
     </div>
 
     <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA</h1><h2 id="winner-name"></h2></div>
@@ -1102,6 +1142,15 @@ app.get('/', (req, res) => {
                     const tc = s.topCard; const el = document.getElementById('top-card');
                     el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white'));
                     el.innerText = (tc.value==='RIP'?'🪦':(tc.value==='GRACIA'?'❤️':(tc.value==='LIBRE'?'🕊️':tc.value)));
+                    
+                    // CORRECCION VISUAL 1.5 EN DESCARTE
+                    if(tc.value === '1 y 1/2') {
+                        el.style.fontSize = '20px';
+                        el.style.padding = '0 5px';
+                    } else {
+                        el.style.fontSize = '24px';
+                        el.style.padding = '0';
+                    }
                 }
                 document.getElementById('btn-pass').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
                 if(me && me.isTurn && s.pendingPenalty>0) { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty; } else document.getElementById('penalty-display').style.display='none';
@@ -1126,10 +1175,22 @@ app.get('/', (req, res) => {
             
             let displayHand = [...myHand];
             if(sortMode === 'color') {
+                const valMap = {
+                    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
+                    '+2':20, 'X':21, 'R':22, 
+                    'color':50, '+4':51, '+12':52, 'RIP':53, 'LIBRE':54, 'GRACIA':55
+                };
+                const colMap = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
+
                 displayHand.sort((a,b) => {
-                    if(a.color < b.color) return -1;
-                    if(a.color > b.color) return 1;
-                    return a.value.localeCompare(b.value);
+                    // Primero Color
+                    const cA = colMap[a.color] || 99;
+                    const cB = colMap[b.color] || 99;
+                    if(cA !== cB) return cA - cB;
+                    // Luego Valor
+                    const vA = valMap[a.value] || 99;
+                    const vB = valMap[b.value] || 99;
+                    return vA - vB;
                 });
             }
 
@@ -1142,10 +1203,18 @@ app.get('/', (req, res) => {
                 d.style.backgroundColor = getBgColor(c); 
                 d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white';
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':(c.value==='LIBRE'?'🕊️':c.value)));
-                if(c.value === '1 y 1/2') d.style.fontSize = '18px';
+                
+                // CORRECCION VISUAL 1.5
+                if(c.value === '1 y 1/2') {
+                    d.style.fontSize = '16px'; 
+                    d.style.padding = '0 5px';
+                }
                 
                 d.onclick = () => {
-                    if(sortMode !== 'default') { sortMode = 'default'; document.getElementById('btn-sort').innerText = "ORDENAR"; renderHand(); return; }
+                    if(sortMode !== 'default') {
+                        // Si tocamos carta en modo ordenar, no juega, solo resetea modo (opcional, o juega igual)
+                        // Para mejor UX, jugamos la carta pero mantenemos el sort visual si llega update
+                    }
 
                     if(ladderMode) {
                         if(ladderSelected.includes(c.id)) { ladderSelected = ladderSelected.filter(id => id !== c.id); d.classList.remove('selected-ladder'); } 
@@ -1160,7 +1229,16 @@ app.get('/', (req, res) => {
                         const hasZombies = currentPlayers.some(p => p.isDead);
                         const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
                         if(!hasZombies && !hasPenalty) {
-                             if(!confirm("⚠️ No hay castigos ni muertos. ¿Usar Gracia como carta normal (cambio de color)?")) return;
+                             if(confirm("⚠️ No hay castigos ni muertos. ¿Usar Gracia como carta normal (cambio de color)?")) {
+                                 // CORRECCION GRACIA: Abrir picker en vez de jugar directo
+                                 pendingCard = c.id; 
+                                 pendingColorForRevive = null; // Reset
+                                 pendingGrace = false; 
+                                 document.getElementById('color-picker').style.display='block';
+                                 return;
+                             } else {
+                                 return; // Canceló
+                             }
                         }
                     }
 
@@ -1198,7 +1276,7 @@ app.get('/', (req, res) => {
 
         function pickCol(c){ 
             document.getElementById('color-picker').style.display='none'; 
-            pendingColorForRevive = c; // CORREGIDO: Guardar color
+            pendingColorForRevive = c; 
             if(pendingGrace) socket.emit('playGraceDefense',c); 
             else socket.emit('playCard',pendingCard,c,null); 
         }
@@ -1220,6 +1298,38 @@ app.get('/', (req, res) => {
             } 
             pendingReviveCardId = null;
         }
+
+        // ANIMACIÓN LIBRE ALBEDRIO
+        socket.on('animateLibre', (data) => {
+            const alertBox = document.getElementById('main-alert');
+            alertBox.innerText = `🕊️ ${data.playerName} usó LIBRE ALBEDRÍO`;
+            alertBox.style.display = 'block';
+            
+            const topEl = document.getElementById('top-card');
+            let i = 0;
+            
+            function showNextCard() {
+                if (i >= data.cards.length) {
+                    setTimeout(() => alertBox.style.display = 'none', 1000);
+                    return;
+                }
+                const c = data.cards[i];
+                
+                // Efecto visual directo
+                topEl.style.transition = "transform 0.1s";
+                topEl.style.transform = "scale(1.2)";
+                
+                topEl.style.backgroundColor = getBgColor(c);
+                topEl.style.border = (c.value==='RIP'?'3px solid #666':(c.value==='GRACIA'?'3px solid gold':'3px solid white'));
+                topEl.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':(c.value==='LIBRE'?'🕊️':c.value)));
+                
+                setTimeout(() => { topEl.style.transform = "scale(1)"; }, 100);
+                
+                i++;
+                setTimeout(showNextCard, 400); // 400ms por carta
+            }
+            showNextCard();
+        });
 
         socket.on('countdownTick',n=>{ changeScreen('game-area'); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
@@ -1244,10 +1354,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-`);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

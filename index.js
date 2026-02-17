@@ -23,6 +23,14 @@ setInterval(() => {
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
+// Pesos para ordenamiento
+const sortValWeights = {
+    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
+    '+2': 20, 'X': 21, 'R': 22,
+    'color': 50, '+4': 51, '+12': 52, 'RIP': 53, 'LIBRE': 54, 'GRACIA': 55
+};
+const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
+
 // --- LÓGICA DEL SERVIDOR ---
 
 function initRoom(roomId) {
@@ -124,6 +132,26 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
     
+    // --- NUEVO: ORDENAMIENTO SERVIDOR ---
+    socket.on('requestSort', () => {
+        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        const p = room.players.find(x => x.id === socket.id);
+        if(!p) return;
+
+        p.hand.sort((a,b) => {
+            const cA = sortColWeights[a.color] || 99;
+            const cB = sortColWeights[b.color] || 99;
+            if(cA !== cB) return cA - cB;
+            const vA = sortValWeights[a.value] || 99;
+            const vB = sortValWeights[b.value] || 99;
+            return vA - vB;
+        });
+
+        io.to(p.id).emit('handUpdate', p.hand);
+        socket.emit('notification', 'Cartas ordenadas.');
+    });
+
     socket.on('kickPlayer', (targetId) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId];
@@ -856,7 +884,7 @@ app.get('/', (req, res) => {
 
     <div id="action-bar">
         <div id="uno-btn-area">
-            <button id="btn-sort" onclick="sortHand()">ORDENAR</button>
+            <button id="btn-sort" onclick="requestSort()">ORDENAR</button>
             <button id="btn-pass" class="btn-pass" onclick="pass()">PASAR</button>
             <button id="btn-ladder-toggle" onclick="toggleLadderMode()">ACTIVAR SELECCIÓN</button>
             <button id="btn-ladder-play" onclick="submitLadder()">JUGAR SELECCIÓN</button>
@@ -967,8 +995,7 @@ app.get('/', (req, res) => {
         let isChatOpen = false; let unreadCount = 0;
         let ladderMode = false; let ladderSelected = []; 
         let myUUID = localStorage.getItem('uno_uuid');
-        let sortMode = 'default'; 
-        // CORREGIDO: Se declaran variables globales faltantes
+        // SortMode removed, server handles sort action
         let pendingColorForRevive = null;
 
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
@@ -1162,37 +1189,15 @@ app.get('/', (req, res) => {
             renderHand(); 
         });
         
-        function sortHand() {
-            sortMode = (sortMode === 'default') ? 'color' : 'default';
-            if(sortMode === 'default') document.getElementById('btn-sort').innerText = "ORDENAR";
-            else document.getElementById('btn-sort').innerText = "RESTABLECER";
-            renderHand();
+        function requestSort() {
+            socket.emit('requestSort');
         }
 
         function renderHand() {
             if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
             const hz = document.getElementById('hand-zone'); hz.innerHTML = '';
             
-            let displayHand = [...myHand];
-            if(sortMode === 'color') {
-                const valMap = {
-                    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
-                    '+2':20, 'X':21, 'R':22, 
-                    'color':50, '+4':51, '+12':52, 'RIP':53, 'LIBRE':54, 'GRACIA':55
-                };
-                const colMap = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
-
-                displayHand.sort((a,b) => {
-                    // Primero Color
-                    const cA = colMap[a.color] || 99;
-                    const cB = colMap[b.color] || 99;
-                    if(cA !== cB) return cA - cB;
-                    // Luego Valor
-                    const vA = valMap[a.value] || 99;
-                    const vB = valMap[b.value] || 99;
-                    return vA - vB;
-                });
-            }
+            let displayHand = myHand; // Ya viene ordenada o con nuevas al final desde el servidor
 
             const hasGrace = myHand.some(c=>c.value==='GRACIA');
             document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
@@ -1211,11 +1216,6 @@ app.get('/', (req, res) => {
                 }
                 
                 d.onclick = () => {
-                    if(sortMode !== 'default') {
-                        // Si tocamos carta en modo ordenar, no juega, solo resetea modo (opcional, o juega igual)
-                        // Para mejor UX, jugamos la carta pero mantenemos el sort visual si llega update
-                    }
-
                     if(ladderMode) {
                         if(ladderSelected.includes(c.id)) { ladderSelected = ladderSelected.filter(id => id !== c.id); d.classList.remove('selected-ladder'); } 
                         else { ladderSelected.push(c.id); d.classList.add('selected-ladder'); }
@@ -1355,10 +1355,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-`);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

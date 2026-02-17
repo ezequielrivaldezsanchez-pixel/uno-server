@@ -182,7 +182,7 @@ io.on('connection', (socket) => {
             room.gameState = 'rip_decision';
             const victimIdx = getNextPlayerIndex(roomId, 1);
             const defender = room.players[victimIdx];
-            room.duelState = { attackerId: player.id, defenderId: defender.id, attackerName: player.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, turn: player.id, narrative: `⚔️ ¡${player.name} RIP a ${defender.name}!` };
+            room.duelState = { attackerId: player.id, defenderId: defender.id, attackerName: player.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, turn: player.id, narrative: `⚔️ ¡${player.name} te ha desafiado a muerte!` };
             updateAll(roomId); return;
         }
 
@@ -247,7 +247,7 @@ function getNextPlayerIndex(roomId, steps) {
 function drawCards(roomId, pid, n) { 
     const room = rooms[roomId]; for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); room.players[pid].hand.push(room.deck.pop()); } 
 }
-function eliminatePlayer(roomId, id) { const p = rooms[roomId].players.find(p => p.id === id); p.isDead = true; }
+function eliminatePlayer(roomId, id) { const p = rooms[roomId].players.find(p => p.id === id); if(p) p.isDead = true; }
 function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead).length; }
 function checkWinCondition(roomId) { if (getAlivePlayersCount(roomId) <= 1) finishRound(roomId, rooms[roomId].players.find(p => !p.isDead)); else { rooms[roomId].gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); } }
 function finishRound(roomId, w) { io.to(roomId).emit('gameOver', { winner: w.name }); delete rooms[roomId]; }
@@ -379,7 +379,7 @@ app.get('/', (req, res) => {
         function join() { socket.emit('joinRoom', { roomId: document.getElementById('code-in').value, name: document.getElementById('name-in').value, uuid: myUUID }); }
 
         socket.on('updateState', s => {
-            document.getElementById('players').innerHTML = s.players.map(p => \`<div class="player \${p.isTurn?'is-turn':''} \${p.isDead?'dead':''}">\${p.name} (\${pl.cardCount})</div>\`).join('');
+            document.getElementById('players').innerHTML = s.players.map(p => \`<div class="player \${p.isTurn?'is-turn':''} \${p.isDead?'dead':''}">\${p.name} (\${p.cardCount})</div>\`).join('');
             const top = document.getElementById('top-card');
             top.innerText = s.topCard.value;
             top.style.backgroundColor = getHex(s.topCard.color);
@@ -395,7 +395,8 @@ app.get('/', (req, res) => {
             } else rip.style.display = 'none';
             
             // Si perdí el turno y estaba seleccionando, limpiar
-            if(!s.players.find(p => p.isTurn && p.name === document.getElementById('name-in').value)) cancelSelect();
+            const me = s.players.find(p => p.name === document.getElementById('name-in').value);
+            if(me && !me.isTurn) cancelSelect();
         });
 
         socket.on('handUpdate', hand => {

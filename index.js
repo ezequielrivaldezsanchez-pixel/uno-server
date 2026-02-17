@@ -2,13 +2,11 @@ const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
 
-// --- CONFIGURACIÓN SOCKET.IO ---
 const io = require('socket.io')(http, {
     pingTimeout: 60000, 
     pingInterval: 25000
 });
 
-// --- VARIABLES GLOBALES ---
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
@@ -28,8 +26,6 @@ setInterval(() => {
         if (now - rooms[roomId].lastActivity > 7200000) delete rooms[roomId];
     });
 }, 300000); 
-
-// --- FUNCIONES DEL SERVIDOR ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -88,9 +84,7 @@ function recycleDeck(roomId) {
     }
 }
 
-// --- SOCKETS ---
 io.on('connection', (socket) => {
-    
     socket.on('checkSession', (uuid) => {
         for (const rId in rooms) { 
             const p = rooms[rId].players.find(pl => pl.uuid === uuid); 
@@ -233,7 +227,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- HELPERS SERVIDOR ---
 function getRoomId(socket) { return Array.from(socket.rooms).find(r => r !== socket.id); }
 function advanceTurn(roomId, steps) {
     const room = rooms[roomId]; room.players.forEach(p => p.hasDrawn = false);
@@ -279,7 +272,6 @@ function updateAll(roomId) {
     });
 }
 
-// --- CLIENTE ---
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -287,7 +279,7 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>UNO y 1/2 v10</title>
+    <title>UNO y 1/2 v10.1</title>
     <style>
         body { margin: 0; font-family: sans-serif; background: #1e272e; color: white; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
         .screen { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
@@ -298,10 +290,10 @@ app.get('/', (req, res) => {
         #table { flex: 1; display: flex; justify-content: center; align-items: center; gap: 20px; }
         .card { width: 80px; height: 120px; border-radius: 10px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; position: relative; transition: 0.2s; }
         #hand { height: 160px; display: flex; align-items: center; padding: 0 20px; gap: 10px; overflow-x: auto; background: rgba(0,0,0,0.5); border-top: 2px solid #444; }
-        .hand-card { flex-shrink: 0; cursor: pointer; user-select: none; -webkit-touch-callout: none; }
+        .hand-card { flex-shrink: 0; cursor: pointer; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
         .selected { border: 4px solid #00d2ff !important; transform: translateY(-20px); box-shadow: 0 10px 20px rgba(0,210,255,0.4); }
         #controls { position: fixed; bottom: 180px; width: 100%; display: flex; justify-content: center; gap: 10px; pointer-events: none; }
-        .btn { pointer-events: auto; padding: 12px 25px; border-radius: 25px; border: none; font-weight: bold; cursor: pointer; color: white; }
+        .btn { pointer-events: auto; padding: 12px 25px; border-radius: 25px; border: none; font-weight: bold; cursor: pointer; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         #btn-play { background: #2ecc71; display: none; }
         #btn-cancel { background: #e74c3c; display: none; }
         #btn-draw { background: #3498db; }
@@ -364,6 +356,10 @@ app.get('/', (req, res) => {
         let selectionMode = false;
         let pressTimer;
 
+        // Sonido sutil de selección
+        const clickSound = new Audio('https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3');
+        clickSound.volume = 0.2;
+
         socket.on('connect', () => socket.emit('checkSession', myUUID));
         socket.on('requireLogin', () => showScreen('login'));
         socket.on('roomCreated', d => showScreen('game-area'));
@@ -379,7 +375,7 @@ app.get('/', (req, res) => {
         function join() { socket.emit('joinRoom', { roomId: document.getElementById('code-in').value, name: document.getElementById('name-in').value, uuid: myUUID }); }
 
         socket.on('updateState', s => {
-            document.getElementById('players').innerHTML = s.players.map(p => \`<div class="player \${p.isTurn?'is-turn':''} \${p.isDead?'dead':''}">\${p.name} (\${p.cardCount})</div>\`).join('');
+            document.getElementById('players').innerHTML = s.players.map(p => '<div class="player ' + (p.isTurn?'is-turn':'') + '">' + p.name + ' (' + p.cardCount + ')</div>').join('');
             const top = document.getElementById('top-card');
             top.innerText = s.topCard.value;
             top.style.backgroundColor = getHex(s.topCard.color);
@@ -394,7 +390,6 @@ app.get('/', (req, res) => {
                 document.getElementById('duel-opts').style.display = (s.state === 'dueling' && isMe && s.duelInfo.turn === socket.id) ? 'block' : 'none';
             } else rip.style.display = 'none';
             
-            // Si perdí el turno y estaba seleccionando, limpiar
             const me = s.players.find(p => p.name === document.getElementById('name-in').value);
             if(me && !me.isTurn) cancelSelect();
         });
@@ -408,12 +403,12 @@ app.get('/', (req, res) => {
                 el.style.backgroundColor = getHex(c.color);
                 el.innerText = c.value;
                 
-                // --- LÓGICA DE GESTOS ---
                 el.onmousedown = el.ontouchstart = (e) => {
                     pressTimer = setTimeout(() => {
                         if(!selectionMode) {
                             selectionMode = true;
                             if(navigator.vibrate) navigator.vibrate(50);
+                            clickSound.play();
                             toggleSelect(c.id, el);
                         }
                     }, 800);
@@ -421,8 +416,10 @@ app.get('/', (req, res) => {
                 el.onmouseup = el.onmouseleave = el.ontouchend = () => clearTimeout(pressTimer);
                 
                 el.onclick = () => {
-                    if (selectionMode) toggleSelect(c.id, el);
-                    else {
+                    if (selectionMode) {
+                        clickSound.play();
+                        toggleSelect(c.id, el);
+                    } else {
                         if (c.color === 'negro') { window.pendingCard = c.id; document.getElementById('color-picker').style.display='block'; }
                         else socket.emit('playCard', c.id);
                     }
@@ -466,6 +463,7 @@ app.get('/', (req, res) => {
         
         socket.on('notification', m => alert(m));
         socket.on('gameOver', d => { alert("GANADOR: " + d.winner); location.reload(); });
+        socket.on('error', m => alert(m));
     </script>
 </body>
 </html>
@@ -473,4 +471,4 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => console.log(\`Port \${PORT}\`));
+http.listen(PORT, () => console.log('Server running on port ' + PORT));

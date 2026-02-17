@@ -2,15 +2,23 @@ const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
 
-// --- ESTABILIDAD MÓVIL ALTA ---
+// --- CONFIGURACIÓN SOCKET.IO ---
 const io = require('socket.io')(http, {
     pingTimeout: 60000, 
     pingInterval: 25000
 });
 
-// --- CONFIGURACIÓN ---
+// --- VARIABLES GLOBALES ---
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+// Pesos para ordenamiento (Server-Side)
+const sortValWeights = {
+    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
+    '+2': 20, 'X': 21, 'R': 22,
+    'color': 50, '+4': 51, '+12': 52, 'RIP': 53, 'LIBRE': 54, 'GRACIA': 55
+};
+const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
 
 // Limpieza automática
 setInterval(() => {
@@ -23,15 +31,7 @@ setInterval(() => {
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// Pesos para ordenamiento
-const sortValWeights = {
-    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
-    '+2': 20, 'X': 21, 'R': 22,
-    'color': 50, '+4': 51, '+12': 52, 'RIP': 53, 'LIBRE': 54, 'GRACIA': 55
-};
-const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
-
-// --- LÓGICA DEL SERVIDOR ---
+// --- FUNCIONES DEL SERVIDOR ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -132,7 +132,7 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
     
-    // --- NUEVO: ORDENAMIENTO SERVIDOR ---
+    // --- SOLICITUD DE ORDENAMIENTO (SERVIDOR) ---
     socket.on('requestSort', () => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId];
@@ -239,7 +239,7 @@ io.on('connection', (socket) => {
         const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
         io.to(target.id).emit('handUpdate', target.hand);
 
-        // 2. Descartes (CON ANIMACIÓN SECUENCIAL)
+        // 2. Descartes
         let discardedCardsForAnimation = [];
         let lastDiscard = null;
         
@@ -256,7 +256,6 @@ io.on('connection', (socket) => {
         }
         if (!lastDiscard) { finishRound(roomId, player); return; }
 
-        // EMITIR EVENTO DE ANIMACIÓN A TODOS LOS CLIENTES
         io.to(roomId).emit('animateLibre', { 
             playerName: player.name, 
             cards: discardedCardsForAnimation 
@@ -268,15 +267,11 @@ io.on('connection', (socket) => {
             if (isLegal) { finishRound(roomId, player); return; } else { drawCards(roomId, pIndex, 1); io.to(roomId).emit('notification', `🚫 Cierre Ilegal con ${lastDiscard.value}. Robas 1 carta.`); io.to(player.id).emit('handUpdate', player.hand); }
         }
 
-        // Establecer color (siempre se establece, aunque sea Gracia)
         if (lastDiscard.color === 'negro' && data.chosenColor) room.activeColor = data.chosenColor;
         else if (lastDiscard.color !== 'negro') room.activeColor = lastDiscard.color;
         
-        // RETRASAMOS EL UPDATE DEL ESTADO PARA QUE SE VEA LA ANIMACIÓN (2 segundos)
         setTimeout(() => {
             io.to(roomId).emit('cardPlayedEffect', { color: room.activeColor });
-            
-            // Lógica de efectos ÚLTIMA CARTA (se ejecuta tras la animación)
             
             // 1. GRACIA DIVINA
             if (lastDiscard.value === 'GRACIA') {
@@ -319,7 +314,7 @@ io.on('connection', (socket) => {
             if (lastDiscard.value === 'X') steps = 2;
             advanceTurn(roomId, steps); 
             updateAll(roomId);
-        }, 1500 + (discardedCardsForAnimation.length * 400)); // Tiempo base + tiempo por carta
+        }, 1500 + (discardedCardsForAnimation.length * 400));
     });
 
     socket.on('confirmReviveSingle', (data) => {
@@ -330,25 +325,22 @@ io.on('connection', (socket) => {
         
         if (room.gameState !== 'playing' || pIndex !== room.currentTurn) return;
         
-        // Verificar si la carta está en MANO
         let cardIndex = player.hand.findIndex(c => c.id === data.cardId); 
         let card = null;
 
         if (cardIndex !== -1) {
-            // Está en mano (Jugada normal)
             card = player.hand[cardIndex];
             if(data.confirmed) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
             }
         } else {
-            // No está en mano. Verificar si es la TOP del descarte (Jugada Libre Albedrío)
             const top = room.discardPile[room.discardPile.length - 1];
             if (top && top.id === data.cardId) {
-                card = top; // Ya está descartada
+                card = top;
             }
         }
 
-        if(!card) return; // Error de seguridad
+        if(!card) return;
 
         const deadPlayers = room.players.filter(p => p.isDead);
 
@@ -358,15 +350,11 @@ io.on('connection', (socket) => {
              io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
              io.to(roomId).emit('playSound', 'divine');
              
-             // Si el color vino en la data, se aplica.
              if (data.chosenColor) room.activeColor = data.chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
              
              if (player.hand.length === 0) { finishRound(roomId, player); return; }
              advanceTurn(roomId, 1); updateAll(roomId);
         } else {
-             // Cancelado.
-             // Si vino de mano, no hacemos nada (carta sigue en mano).
-             // Si vino de Libre (ya en descarte), debemos pasar turno porque la carta ya fue jugada.
              if (cardIndex === -1) {
                  advanceTurn(roomId, 1); updateAll(roomId);
              }
@@ -380,7 +368,6 @@ io.on('connection', (socket) => {
         const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator) return;
 
-        // BÚSQUEDA DUAL: Mano o Tope Descarte
         let cardIndex = player.hand.findIndex(c => c.id === cardId); 
         let card = null;
         if(cardIndex !== -1) card = player.hand[cardIndex];
@@ -389,13 +376,10 @@ io.on('connection', (socket) => {
              if(top && top.value === 'GRACIA') card = top;
         }
 
-        if (!card) return; // No se encontró carta válida
-
+        if (!card) return;
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // Lógica normal de validación solo si viene de mano
         if (cardIndex !== -1) {
-            // Regla última carta
             if (player.hand.length === 1) {
                 const isStrictNumber = /^[0-9]$/.test(card.value);
                 const isUnoYMedio = card.value === '1 y 1/2';
@@ -405,7 +389,6 @@ io.on('connection', (socket) => {
 
             if (top.color !== 'negro') room.activeColor = top.color;
             
-            // --- SAFF ---
             let isSaff = false;
             if (pIndex !== room.currentTurn) {
                 const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
@@ -435,11 +418,9 @@ io.on('connection', (socket) => {
             }
         }
 
-        // --- LÓGICA GRACIA DIVINA ---
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
             
-            // Caso 1: Defensa (Solo desde mano)
             if (room.pendingPenalty > 0 && cardIndex !== -1) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
                 io.to(roomId).emit('playSound', 'divine');
@@ -450,7 +431,6 @@ io.on('connection', (socket) => {
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
 
-            // Caso 2: Revivir (Desde mano o Libre/Descarte)
             if (deadPlayers.length > 0) {
                 if(deadPlayers.length === 1) {
                     socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: card.id }); 
@@ -465,12 +445,10 @@ io.on('connection', (socket) => {
                             target.isDead = false; target.isSpectator = false; 
                             io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
                             
-                            // Consumir carta si viene de mano
                             if(cardIndex !== -1) {
                                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
                                 if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                             }
-                            // Si viene de Libre, ya está en descarte.
                             
                             io.to(roomId).emit('playSound', 'divine');
                             if (player.hand.length === 0) { finishRound(roomId, player); return; }
@@ -479,8 +457,6 @@ io.on('connection', (socket) => {
                     }
                 }
             } else { 
-                // Caso 3: Sin efecto (Ganar, Libre, o Comodín puro)
-                // Si viene de mano, hay que jugarla
                 if (cardIndex !== -1) {
                      io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
                      player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
@@ -492,7 +468,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // Si la carta no es GRACIA, debe venir de la mano obligatoriamente
         if (cardIndex === -1) return; 
 
         if (card.value === 'RIP') {
@@ -538,18 +513,16 @@ io.on('connection', (socket) => {
         if (pIndex === -1 || room.players[pIndex].isDead || room.players[pIndex].isSpectator) return;
         if (pIndex === room.currentTurn) {
             if (room.pendingPenalty > 0) {
-                // ROBO POR CASTIGO (DUELO O +2/+4) MANUAL
                 drawCards(roomId, pIndex, 1); room.pendingPenalty--; io.to(roomId).emit('playSound', 'soft');
                 if (room.pendingPenalty > 0) { 
                     io.to(roomId).emit('notification', `😰 Faltan: ${room.pendingPenalty}`); 
                     updateAll(roomId); 
                 } else { 
                     io.to(roomId).emit('notification', `😓 Terminó castigo.`); 
-                    advanceTurn(roomId, 1); // Pasa el turno al terminar de robar
+                    advanceTurn(roomId, 1);
                     updateAll(roomId); 
                 }
             } else {
-                // ROBO NORMAL
                 if (!room.players[pIndex].hasDrawn) { drawCards(roomId, pIndex, 1); room.players[pIndex].hasDrawn = true; io.to(roomId).emit('playSound', 'soft'); updateAll(roomId); } 
                 else { socket.emit('notification', 'Ya robaste.'); }
             }
@@ -995,7 +968,7 @@ app.get('/', (req, res) => {
         let isChatOpen = false; let unreadCount = 0;
         let ladderMode = false; let ladderSelected = []; 
         let myUUID = localStorage.getItem('uno_uuid');
-        // SortMode removed, server handles sort action
+        
         let pendingColorForRevive = null;
 
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
@@ -1170,7 +1143,6 @@ app.get('/', (req, res) => {
                     el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white'));
                     el.innerText = (tc.value==='RIP'?'🪦':(tc.value==='GRACIA'?'❤️':(tc.value==='LIBRE'?'🕊️':tc.value)));
                     
-                    // CORRECCION VISUAL 1.5 EN DESCARTE
                     if(tc.value === '1 y 1/2') {
                         el.style.fontSize = '20px';
                         el.style.padding = '0 5px';
@@ -1197,7 +1169,7 @@ app.get('/', (req, res) => {
             if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
             const hz = document.getElementById('hand-zone'); hz.innerHTML = '';
             
-            let displayHand = myHand; // Ya viene ordenada o con nuevas al final desde el servidor
+            let displayHand = myHand; 
 
             const hasGrace = myHand.some(c=>c.value==='GRACIA');
             document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
@@ -1209,7 +1181,6 @@ app.get('/', (req, res) => {
                 d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white';
                 d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':(c.value==='LIBRE'?'🕊️':c.value)));
                 
-                // CORRECCION VISUAL 1.5
                 if(c.value === '1 y 1/2') {
                     d.style.fontSize = '16px'; 
                     d.style.padding = '0 5px';
@@ -1230,14 +1201,13 @@ app.get('/', (req, res) => {
                         const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
                         if(!hasZombies && !hasPenalty) {
                              if(confirm("⚠️ No hay castigos ni muertos. ¿Usar Gracia como carta normal (cambio de color)?")) {
-                                 // CORRECCION GRACIA: Abrir picker en vez de jugar directo
                                  pendingCard = c.id; 
-                                 pendingColorForRevive = null; // Reset
+                                 pendingColorForRevive = null; 
                                  pendingGrace = false; 
                                  document.getElementById('color-picker').style.display='block';
                                  return;
                              } else {
-                                 return; // Canceló
+                                 return; 
                              }
                         }
                     }
@@ -1293,16 +1263,13 @@ app.get('/', (req, res) => {
         function confirmRevive(confirmed) {
             document.getElementById('revive-confirm-screen').style.display = 'none';
             if(pendingReviveCardId) {
-                // CORREGIDO: Se envía el color guardado
                 socket.emit('confirmReviveSingle', { cardId: pendingReviveCardId, confirmed: confirmed, chosenColor: pendingColorForRevive });
             } 
             pendingReviveCardId = null;
         }
 
-        // ANIMACIÓN LIBRE ALBEDRIO
         socket.on('animateLibre', (data) => {
             const alertBox = document.getElementById('main-alert');
-            // CORREGIDO: Concatenación simple para evitar error de sintaxis en el servidor
             alertBox.innerText = '🕊️ ' + data.playerName + ' usó LIBRE ALBEDRÍO';
             alertBox.style.display = 'block';
             
@@ -1316,7 +1283,6 @@ app.get('/', (req, res) => {
                 }
                 const c = data.cards[i];
                 
-                // Efecto visual directo
                 topEl.style.transition = "transform 0.1s";
                 topEl.style.transform = "scale(1.2)";
                 
@@ -1327,7 +1293,7 @@ app.get('/', (req, res) => {
                 setTimeout(() => { topEl.style.transform = "scale(1)"; }, 100);
                 
                 i++;
-                setTimeout(showNextCard, 400); // 400ms por carta
+                setTimeout(showNextCard, 400); 
             }
             showNextCard();
         });
@@ -1349,9 +1315,15 @@ app.get('/', (req, res) => {
             setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);
         });
         
-        // CORREGIDO: pendingColorForRevive ahora existe
         socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
         socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML='✨<br>' + d.revived + ' fue resucitado por gracia divina de ' + d.savior + '<br>✨'; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
     </script>
 </body>
 </html>
+`);
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

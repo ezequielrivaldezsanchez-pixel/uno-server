@@ -3,7 +3,6 @@ const app = express();
 const http = require('http').createServer(app);
 
 // --- ESTABILIDAD MÓVIL ALTA ---
-// Timeout aumentado a 60s: Permite bloquear/desbloquear celular sin que el servidor corte la conexión
 const io = require('socket.io')(http, {
     pingTimeout: 60000, 
     pingInterval: 25000
@@ -13,7 +12,7 @@ const io = require('socket.io')(http, {
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-// Limpieza automática: 2 horas de inactividad
+// Limpieza automática
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
@@ -57,12 +56,10 @@ function createDeck(roomId) {
             if (val !== '0') room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // Cartas Especiales Negras
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // Cartas Únicas
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
     room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
@@ -74,7 +71,6 @@ function createDeck(roomId) {
         room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
     }
     
-    // Barajar
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -93,20 +89,17 @@ function recycleDeck(roomId) {
 // --- SOCKETS ---
 io.on('connection', (socket) => {
     
-    // RECONEXIÓN INTELIGENTE
     socket.on('checkSession', (uuid) => {
         let foundRoomId = null; let foundPlayer = null;
         for (const rId in rooms) { 
             const p = rooms[rId].players.find(pl => pl.uuid === uuid); 
             if (p) { foundRoomId = rId; foundPlayer = p; break; } 
         }
-        
         if (foundRoomId && foundPlayer) {
             foundPlayer.id = socket.id; 
             foundPlayer.isConnected = true;
             socket.join(foundRoomId); 
             touchRoom(foundRoomId);
-            // No redirigimos ciegamente. Enviamos el estado y el cliente decide.
             updateAll(foundRoomId);
         } else { 
             socket.emit('requireLogin'); 
@@ -138,14 +131,12 @@ io.on('connection', (socket) => {
         const room = rooms[roomId]; if (room.gameState === 'waiting' && room.players.length >= 2) startCountdown(roomId);
     });
 
-    // --- LÓGICA DE JUGADA MÚLTIPLE (ESCALERA O COMBO 1.5) ---
     socket.on('playMultiCards', (cardIds) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId];
         const pIndex = room.players.findIndex(p => p.id === socket.id);
         const player = room.players[pIndex];
         
-        // PROTECCIÓN SAFF: Si alguien robó el turno, esta jugada se rechaza aquí.
         if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
         if (!cardIds || cardIds.length < 2) return; 
 
@@ -158,7 +149,6 @@ io.on('connection', (socket) => {
         }
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // CASO 1: COMBO "1 Y 1/2" (2 cartas)
         if (playCards.length === 2) {
             const c1 = playCards[0]; const c2 = playCards[1];
             if (c1.value !== '1 y 1/2' || c2.value !== '1 y 1/2') { socket.emit('notification', '🚫 Para jugar 2 cartas, deben ser Escalera (3+) o dos "1 y 1/2".'); return; }
@@ -168,9 +158,7 @@ io.on('connection', (socket) => {
             cardIds.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
             room.discardPile.push(...playCards); room.activeColor = c1.color; 
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! (1.5 + 1.5 = 3)`); io.to(roomId).emit('playSound', 'divine'); 
-        } 
-        // CASO 2: ESCALERA (3+ cartas)
-        else {
+        } else {
             const firstColor = playCards[0].color;
             if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con cartas de color.'); return; }
             if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Todas deben ser del mismo color.'); return; }
@@ -198,7 +186,6 @@ io.on('connection', (socket) => {
         const pIndex = room.players.findIndex(p => p.id === socket.id);
         const player = room.players[pIndex];
 
-        // PROTECCIÓN SAFF
         if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
         if (player.hand.length < 3) return; 
 
@@ -209,7 +196,7 @@ io.on('connection', (socket) => {
         const giftIdx = player.hand.findIndex(c => c.id === data.giftCardId);
         if (!target || giftIdx === -1) return; 
         const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
-        io.to(target.id).emit('handUpdate', target.hand); // Actualiza mano del receptor
+        io.to(target.id).emit('handUpdate', target.hand);
 
         let lastDiscard = null;
         if (data.discardIds && data.discardIds.length > 0) {
@@ -220,7 +207,6 @@ io.on('connection', (socket) => {
         }
         if (!lastDiscard) { finishRound(roomId, player); return; }
 
-        // Notificación Unificada
         io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO: regaló carta a ${target.name} y descartó ${data.discardIds.length}.`);
         io.to(roomId).emit('playSound', 'wild');
 
@@ -265,7 +251,6 @@ io.on('connection', (socket) => {
         const cardIndex = player.hand.findIndex(c => c.id === cardId); if (cardIndex === -1) return;
         const card = player.hand[cardIndex]; const top = room.discardPile[room.discardPile.length - 1];
 
-        // Regla de última carta
         if (player.hand.length === 1) {
             const isStrictNumber = /^[0-9]$/.test(card.value);
             const isUnoYMedio = card.value === '1 y 1/2';
@@ -275,18 +260,14 @@ io.on('connection', (socket) => {
 
         if (top.color !== 'negro') room.activeColor = top.color;
         
-        // --- LÓGICA DE SAFF (INTERCEPCIÓN DE TURNO) ---
         let isSaff = false;
         if (pIndex !== room.currentTurn) {
             const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
             if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
                 if (player.hand.length === 1) { socket.emit('notification', '🚫 Prohibido ganar con SAFF. Espera tu turno.'); return; }
-                
-                // ROBO DE TURNO
                 isSaff = true; 
-                room.currentTurn = pIndex; // El turno salta al interceptor
+                room.currentTurn = pIndex; // ROBO DE TURNO
                 room.pendingPenalty = 0;
-                
                 io.to(roomId).emit('notification', `⚡ ¡${player.name} hizo SAFF!`); 
                 io.to(roomId).emit('playSound', 'saff');
             } else { return; }
@@ -434,12 +415,6 @@ io.on('connection', (socket) => {
         else if (socket.id === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId); return; }
         updateAll(roomId);
     });
-
-    socket.on('sayUno', () => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId]; const p = room.players.find(p => p.id === socket.id);
-        if (p && !p.isDead && !p.isSpectator) { io.to(roomId).emit('notification', `🚨 ¡${p.name} gritó UNO y 1/2!`); io.to(roomId).emit('playSound', 'uno'); }
-    });
     
     socket.on('sendChat', (text) => { 
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
@@ -457,9 +432,7 @@ io.on('connection', (socket) => {
             const room = rooms[roomId]; const p = room.players.find(pl => pl.id === socket.id); 
             if(p) {
                 p.isConnected = false;
-                // NO ELIMINAMOS AL JUGADOR DE INMEDIATO. Tolerancia a desconexión.
                 if ((room.gameState === 'dueling' || room.gameState === 'rip_decision') && (socket.id === room.duelState.attackerId || socket.id === room.duelState.defenderId)) {
-                    // Si está en duelo, tolerancia de 5s antes de cancelar
                     setTimeout(() => {
                         if(rooms[roomId] && !p.isConnected) {
                              io.to(roomId).emit('notification', '🔌 Jugador desconectado. Duelo cancelado.');
@@ -613,9 +586,22 @@ app.get('/', (req, res) => {
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
         
-        #alert-zone { flex: 0 1 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 50px; pointer-events: none; margin-top: 10px; }
+        /* ZONA DE ALERTAS FIJA POR ENCIMA DE TODO (Z-Index 60000, Chat tiene 50000) */
+        #alert-zone { 
+            position: fixed; 
+            top: 120px; 
+            left: 0; 
+            width: 100%; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 60000; 
+            pointer-events: none; 
+        }
+        
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
-        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; }
+        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; pointer-events: auto; }
         
         #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
@@ -623,12 +609,12 @@ app.get('/', (req, res) => {
         #deck-pile { background: #e74c3c; cursor: pointer; }
         #top-card { background: #333; }
         
-        /* --- BARRA DE ACCIONES FLOTANTE (FIXED) --- */
+        /* --- BARRA DE ACCIONES FLOTANTE (SIN FONDO NEGRO) --- */
         #action-bar {
             position: fixed;
             bottom: 180px; 
             left: 0; width: 100%;
-            display: none; /* OCULTO POR DEFECTO */
+            display: none;
             justify-content: center; align-items: center;
             padding: 10px; pointer-events: none; 
             z-index: 20000;
@@ -636,10 +622,12 @@ app.get('/', (req, res) => {
         #uno-btn-area { 
             pointer-events: auto; 
             display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; 
-            background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 30px;
+            /* SIN FONDO NI BORDES */
+            background: none; 
+            padding: 0; 
+            border-radius: 0;
         }
 
-        .btn-uno { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #c0392b; }
         .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
         #btn-ladder-toggle { background: #8e44ad; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #6c3483; }
         #btn-ladder-play { background: #27ae60; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px gold; font-size: 14px; }
@@ -656,14 +644,14 @@ app.get('/', (req, res) => {
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
         #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
         
-        /* CHAT SYSTEM MOVIDO ARRIBA (FIXED) */
+        /* CHAT SYSTEM (Z-Index 50000) */
         #chat-btn { 
             position: fixed; 
             top: 110px; 
             right: 20px; 
             width: 50px; height: 50px; 
             background: #3498db; border-radius: 50%; 
-            display: none; /* AHORA ESTÁ OCULTO POR DEFECTO */
+            display: none; 
             justify-content: center; align-items: center; 
             border: 2px solid white; z-index: 50000; 
             box-shadow: 0 4px 5px rgba(0,0,0,0.3); 
@@ -671,7 +659,7 @@ app.get('/', (req, res) => {
         }
         #chat-win { 
             position: fixed; 
-            top: 170px; /* Debajo del botón */
+            top: 170px; 
             right: 20px; 
             width: 280px; height: 250px; 
             background: rgba(0,0,0,0.95); border: 2px solid #666; 
@@ -705,16 +693,16 @@ app.get('/', (req, res) => {
     
     <div id="game-area">
         <div id="players-zone"></div>
-        <div id="alert-zone"><div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div><div id="main-alert" class="alert-box"></div></div>
         <div id="table-zone">
             <div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">📦</div><div id="top-card" class="card-pile"></div></div>
         </div>
     </div>
 
+    <div id="alert-zone"><div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div><div id="main-alert" class="alert-box"></div></div>
+
     <div id="action-bar">
         <div id="uno-btn-area">
             <button id="btn-pass" class="btn-pass" onclick="pass()">PASAR</button>
-            <button class="btn-uno" onclick="uno()">¡UNO y 1/2!</button>
             <button id="btn-ladder-toggle" onclick="toggleLadderMode()">ACTIVAR SELECCIÓN</button>
             <button id="btn-ladder-play" onclick="submitLadder()">JUGAR SELECCIÓN</button>
         </div>
@@ -878,7 +866,6 @@ app.get('/', (req, res) => {
             // --- PROTECCIÓN VISUAL SAFF ---
             const me = s.players.find(p=>p.id===myId);
             const amITurning = me && me.isTurn;
-            // Si estaba seleccionando (ladder o libre) y ya NO es mi turno (porque me lo robaron), cerrar todo.
             if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
                  ladderMode = false;
                  ladderSelected = [];
@@ -896,20 +883,18 @@ app.get('/', (req, res) => {
                 const list = s.players.map(p => '<div>' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + (s.iamAdmin&&p.id!==myId?('<button onclick="kick(\\''+p.id+'\\')">❌</button>'):'') + '</div>').join('');
                 document.getElementById('lobby-users').innerHTML = list;
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
-                changeScreen('lobby'); // Asegura volver al lobby si está esperando
+                changeScreen('lobby'); 
                 return;
             }
             
-            // Si no es waiting, estamos jugando o en duelo. Mostrar pantalla de juego.
             document.body.className = ''; 
             if(s.state === 'playing') {
-                 changeScreen('game-area'); // Fuerza mostrar el juego
+                 changeScreen('game-area'); 
                  document.body.classList.add('playing-state'); 
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
                  document.getElementById('game-area').style.display = 'flex';
                  document.getElementById('hand-zone').style.display = 'flex';
                  
-                 // Solo mostrar barra de acción si NO estamos en el modal de Libre Albedrío
                  if(document.getElementById('libre-modal').style.display !== 'flex') {
                     document.getElementById('action-bar').style.display = 'flex';
                  }

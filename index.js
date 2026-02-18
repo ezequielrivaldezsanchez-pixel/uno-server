@@ -21,7 +21,6 @@ const sortValWeights = {
 const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
-// Eliminamos el '0' de esta lista para agregarlo manualmente dos veces, el resto sigue igual
 const values = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
 // Limpieza automática
@@ -64,7 +63,7 @@ function createDeck(roomId) {
     
     // Generación del Mazo (Total 130 cartas)
     colors.forEach(color => {
-        // CORRECCIÓN 1: El '0' debe estar 2 veces por color, igual que los demás números.
+        // El '0' debe estar 2 veces por color
         room.deck.push({ color, value: '0', type: 'normal', id: Math.random().toString(36) });
         room.deck.push({ color, value: '0', type: 'normal', id: Math.random().toString(36) });
         
@@ -75,13 +74,13 @@ function createDeck(roomId) {
         });
     });
 
-    // Negras Básicas: 4 Comodines, 4 +4 (8 total)
+    // Negras Básicas
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
     
-    // Negras Supremas: 2 de cada una (10 total)
+    // Negras Supremas
     const addSpecial = (val, count) => {
         for(let k=0; k<count; k++) room.deck.push({ color: 'negro', value: val, type: 'special', id: Math.random().toString(36) });
     };
@@ -574,7 +573,12 @@ io.on('connection', (socket) => {
     // UNO y 1/2
     socket.on('sayUno', () => {
         const roomId = getRoomId(socket); if(!roomId) return;
-        const room = rooms[roomId]; const p = room.players.find(x => x.id === socket.id);
+        const room = rooms[roomId]; 
+        
+        // CORRECCIÓN CRÍTICA: Bloquear acción si hay un duelo en curso
+        if (room.gameState !== 'playing') return;
+
+        const p = room.players.find(x => x.id === socket.id);
         if(p && p.hand.length === 1) {
             p.saidUno = true;
             io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`);
@@ -584,7 +588,15 @@ io.on('connection', (socket) => {
 
     socket.on('reportUno', (targetId) => {
         const roomId = getRoomId(socket); if(!roomId) return;
-        const room = rooms[roomId]; const accuser = room.players.find(x => x.id === socket.id);
+        const room = rooms[roomId]; 
+
+        // CORRECCIÓN CRÍTICA: Bloquear acción si hay un duelo en curso
+        if (room.gameState !== 'playing') {
+            socket.emit('notification', '⛔ No puedes denunciar durante un duelo/castigo.');
+            return;
+        }
+
+        const accuser = room.players.find(x => x.id === socket.id);
         const target = room.players.find(x => x.id === targetId);
         
         if(!target || target.hand.length !== 1 || target.saidUno) { socket.emit('notification', 'Denuncia inválida.'); return; }
@@ -742,7 +754,6 @@ function finalizeDuel(roomId) {
     else { 
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
         if (!isPenaltyDuel) {
-             // CORRECCIÓN DUELO RIP: Si el atacante pierde un duelo RIP, roba 4 cartas.
              io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y pierde 4 cartas!`);
              drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
              room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
@@ -954,8 +965,9 @@ app.get('/', (req, res) => {
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 30px; }
         
-        #uno-main-btn { position: fixed; bottom: 220px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: #e67e22; border: 3px solid white; font-weight: bold; z-index: 30000; font-size: 11px; display: none; align-items: center; justify-content: center; text-align: center; box-shadow: 0 0 10px orange; cursor: pointer; }
-        #uno-menu { display: none; position: fixed; bottom: 290px; right: 20px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 160px; border: 1px solid #e67e22; }
+        /* BOTÓN UNO CORREGIDO - ELEVADO PARA NO TAPAR BOTONES */
+        #uno-main-btn { position: fixed; bottom: 280px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: #e67e22; border: 3px solid white; font-weight: bold; z-index: 30000; font-size: 11px; display: none; align-items: center; justify-content: center; text-align: center; box-shadow: 0 0 10px orange; cursor: pointer; }
+        #uno-menu { display: none; position: fixed; bottom: 350px; right: 20px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 160px; border: 1px solid #e67e22; }
         
         /* Animacion voladora para escalera */
         .flying-card { position: fixed; width: 70px; height: 100px; background: #fff; border-radius: 8px; z-index: 50000; transition: all 0.5s ease-in-out; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; }
@@ -1303,7 +1315,6 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             
-            // CORRECCIÓN: Siempre actualizar el código de sala en pantalla por si se perdió
             if(s.state === 'waiting' || s.state === 'playing') {
                 const lc = document.getElementById('lobby-code');
                 if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
@@ -1312,6 +1323,16 @@ app.get('/', (req, res) => {
             const me = s.players.find(p=>p.id===myId);
             const amITurning = me && me.isTurn;
             
+            // Si el estado es de duelo o decisión, cerrar menús y botones UNO
+            if(s.state === 'dueling' || s.state === 'rip_decision' || s.state === 'penalty_decision') {
+                document.getElementById('uno-main-btn').style.display = 'none';
+                document.getElementById('uno-menu').style.display = 'none';
+                forceCloseChat(); // Cierra manual, reglas y chat
+            } else if (s.state === 'playing') {
+                // Volver a mostrar el botón UNO si volvemos a jugar
+                document.getElementById('uno-main-btn').style.display = 'flex';
+            }
+
             if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
                  cancelLadder();
                  document.getElementById('libre-modal').style.display = 'none';
@@ -1333,7 +1354,8 @@ app.get('/', (req, res) => {
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
                  document.getElementById('game-area').style.display = 'flex';
                  document.getElementById('hand-zone').style.display = 'flex';
-                 document.getElementById('uno-main-btn').style.display = 'flex';
+                 // El botón se muestra arriba, pero aquí aseguramos visibilidad si no estamos en duelo
+                 if(s.state === 'playing') document.getElementById('uno-main-btn').style.display = 'flex';
                  
                  if(document.getElementById('libre-modal').style.display !== 'flex') {
                     document.getElementById('action-bar').style.display = 'flex';
@@ -1343,7 +1365,6 @@ app.get('/', (req, res) => {
                  document.getElementById('duel-screen').style.display = 'none';
                  document.getElementById('rip-screen').style.display = 'none';
                  
-                 // UNO Report logic (NO MOSTRARME A MI MISMO)
                  const reportList = document.getElementById('report-list');
                  reportList.innerHTML = '';
                  if(s.reportTargets && s.reportTargets.length > 0) {
@@ -1575,7 +1596,14 @@ app.get('/', (req, res) => {
             sayUno();
         }
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
-        function toggleUnoMenu() { const m = document.getElementById('uno-menu'); m.style.display = (m.style.display==='flex'?'none':'flex'); }
+        
+        function toggleUnoMenu() { 
+            // Bloqueo de cliente por si acaso
+            if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
+            const m = document.getElementById('uno-menu'); 
+            m.style.display = (m.style.display==='flex'?'none':'flex'); 
+        }
+        
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
         function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } }
         function forceCloseChat() { const w = document.getElementById('chat-win'); w.style.display = 'none'; isChatOpen = false; document.getElementById('rules-modal').style.display='none'; document.getElementById('manual-modal').style.display='none'; }
@@ -1676,11 +1704,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-    `;
-    res.send(htmlContent);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

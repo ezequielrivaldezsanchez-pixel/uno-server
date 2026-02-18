@@ -21,7 +21,8 @@ const sortValWeights = {
 const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
-const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
+// Eliminamos el '0' de esta lista para agregarlo manualmente dos veces, el resto sigue igual
+const values = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
 // Limpieza automática
 setInterval(() => {
@@ -61,16 +62,14 @@ function createDeck(roomId) {
     const room = rooms[roomId]; if(!room) return;
     room.deck = [];
     
-    // 126 Cartas en total
+    // Generación del Mazo (Total 130 cartas)
     colors.forEach(color => {
-        // 0: 1 por color (4 total)
+        // CORRECCIÓN 1: El '0' debe estar 2 veces por color, igual que los demás números.
+        room.deck.push({ color, value: '0', type: 'normal', id: Math.random().toString(36) });
         room.deck.push({ color, value: '0', type: 'normal', id: Math.random().toString(36) });
         
-        // 1-9, 1y1/2, +2, X, R: 2 por color.
-        // (9 num + 1.5 + 3 accion) = 13 tipos * 2 = 26 cartas * 4 colores = 104
-        // Total base = 104 + 4 (ceros) = 108.
-        const doubleCards = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
-        doubleCards.forEach(val => {
+        // El resto (1-9, especiales color) x2
+        values.forEach(val => {
             room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
@@ -83,7 +82,6 @@ function createDeck(roomId) {
     }
     
     // Negras Supremas: 2 de cada una (10 total)
-    // 108 + 8 + 10 = 126 cartas.
     const addSpecial = (val, count) => {
         for(let k=0; k<count; k++) room.deck.push({ color: 'negro', value: val, type: 'special', id: Math.random().toString(36) });
     };
@@ -128,7 +126,9 @@ io.on('connection', (socket) => {
     socket.on('createRoom', (data) => {
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase(); initRoom(roomId);
         const player = createPlayerObj(socket.id, data.uuid, data.name, true);
-        rooms[roomId].players.push(player); socket.join(roomId); socket.emit('roomCreated', { roomId, name: data.name }); updateAll(roomId);
+        rooms[roomId].players.push(player); socket.join(roomId); 
+        socket.emit('roomCreated', { roomId, name: data.name }); 
+        updateAll(roomId);
     });
 
     socket.on('joinRoom', (data) => {
@@ -546,17 +546,12 @@ io.on('connection', (socket) => {
         }
         else { 
             io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling';
-            // CORRECCION NARRATIVA DUELO:
-            // Si es 'penalty', el que inicia el duelo es el defensor (victima) para salvarse.
             if(room.duelState.type === 'penalty') {
                 room.duelState.narrative = `⚔️ ¡${room.duelState.defenderName} desafió a duelo a ${room.duelState.attackerName} para salvarse!`;
             } else {
                 room.duelState.narrative = `¡${room.duelState.defenderName} aceptó el duelo!`; 
             }
             
-            // CORRECCION BOTONES DUELO:
-            // Aseguramos que el turno inicial sea del "atacante" (quien tiró la carta agresora) para mantener la lógica
-            // Pero el cliente verá sus botones si 'amFighter' es true y 'turn' es correcto.
             room.duelState.turn = room.duelState.attackerId; 
 
             updateAll(roomId); 
@@ -747,7 +742,9 @@ function finalizeDuel(roomId) {
     else { 
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
         if (!isPenaltyDuel) {
-             drawCards(roomId, rooms[roomId].players.indexOf(att), 2); 
+             // CORRECCIÓN DUELO RIP: Si el atacante pierde un duelo RIP, roba 4 cartas.
+             io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y pierde 4 cartas!`);
+             drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
              room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
         } else {
              io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`);
@@ -1033,10 +1030,10 @@ app.get('/', (req, res) => {
         <h2 style="color:gold; text-align:center;">MANUAL DE JUEGO</h2>
         
         <div style="padding:0 10px;">
-            <h3>1. COMPOSICIÓN DEL MAZO (126 Cartas)</h3>
+            <h3>1. COMPOSICIÓN DEL MAZO (130 Cartas)</h3>
             <p>El juego utiliza un mazo especial con 4 colores (Rojo, Azul, Verde, Amarillo) y cartas Negras.</p>
             <ul>
-                <li><b>Cartas Numéricas (0-9):</b> 76 cartas. (El '0' hay 1 por color, del 1 al 9 hay 2 por color).</li>
+                <li><b>Cartas Numéricas (0-9):</b> 80 cartas (2 de cada número por color).</li>
                 <li><b>Cartas "1 y 1/2":</b> 8 cartas (2 por color).</li>
                 <li><b>Cartas de Acción (+2, Salto, Reversa):</b> 24 cartas (2 de cada una por color).</li>
                 <li><b>Cartas Negras Básicas:</b> 4 Comodines Color y 4 Comodines +4.</li>
@@ -1088,7 +1085,11 @@ app.get('/', (req, res) => {
             <h3>5. CARTAS SUPREMAS</h3>
             <div style="display:flex; align-items:center; margin-bottom:10px;">
                 <span class="man-card" style="background:black; border-color:#666">🪦</span>
-                <div style="margin-left:10px;"><b>RIP:</b> Retas a un Duelo. El que pierde queda <b>ELIMINADO</b>.</div>
+                <div style="margin-left:10px;">
+                    <b>RIP (Duelo a Muerte):</b> Retas al siguiente. 
+                    <br>- Si tú ganas: El rival queda <b>ELIMINADO</b>.
+                    <br>- Si tú pierdes: Robas <b>4 CARTAS</b> (no mueres).
+                </div>
             </div>
             <div style="display:flex; align-items:center; margin-bottom:10px;">
                 <span class="man-card" style="background:white; color:red; border-color:gold">❤️</span>
@@ -1096,23 +1097,34 @@ app.get('/', (req, res) => {
             </div>
             <div style="display:flex; align-items:center; margin-bottom:10px;">
                 <span class="man-card" style="background:black">🕊️</span>
-                <div style="margin-left:10px;"><b>LIBRE ALBEDRÍO:</b> Te defiende de robos (+2/+4/+12). Te permite regalar 1 carta a otro jugador y descartar 1 carta de tu mano.</div>
+                <div style="margin-left:10px;">
+                    <b>LIBRE ALBEDRÍO:</b>
+                    <br><b>Ofensivo (tu turno):</b> Te permite limpiar tu mano. 1. Regalas una carta molesta a otro. 2. Descartas otra. 3. Eliges color.
+                    <br><b>Defensivo (respuesta):</b> Anula robos (+2/+4/+12). Haces el mismo proceso (Regalar -> Descartar -> Color).
+                </div>
             </div>
 
             <hr style="border-color:#555;">
+            
+            <h3>6. DUELOS DE CASTIGO</h3>
+            <p>Cuando alguien te lanza un <b>+12</b> o un <b>Salteo Supremo</b>, no tienes por qué aceptarlo sumisamente. ¡Puedes desafiar a DUELO al agresor!</p>
+            <p><b>Ejemplo:</b> Juan te tira un +12.</p>
+            <ul>
+                <li><b>Opción A (Aceptar):</b> Robas las 12 cartas y pierdes el turno.</li>
+                <li><b>Opción B (Duelar):</b> Se juega un duelo (Fuego/Hielo/Agua).
+                    <ul>
+                        <li><b>Si ganas (Defensa Exitosa):</b> No robas nada. Juan (el agresor) roba 4 cartas.</li>
+                        <li><b>Si pierdes (Defensa Fallida):</b> ¡El castigo empeora! Robarás las 12 originales + 4 extra por perder el duelo (Total 16).</li>
+                    </ul>
+                </li>
+            </ul>
 
-            <h3>6. BOTÓN UNO Y 1/2</h3>
+            <hr style="border-color:#555;">
+
+            <h3>7. BOTÓN UNO Y 1/2</h3>
             <p>Cuando te quede <b>1 sola carta</b>, ¡toca el botón naranja RÁPIDO! 📢</p>
             <p>Si pasan 2 segundos y no lo dijiste, cualquiera te puede <b>DENUNCIAR</b> y comerás +2 cartas.</p>
 
-            <hr style="border-color:#555;">
-            
-            <h3>7. DUELOS DE CASTIGO</h3>
-            <p>Si te tiran un <b>+12</b> o un <b>Salteo Supremo</b>, puedes aceptar el castigo o... ¡Batirte a Duelo! ⚔️</p>
-            <ul>
-                <li><b>Si ganas:</b> Devuelves el castigo (el agresor come 4 cartas).</li>
-                <li><b>Si pierdes:</b> El castigo aumenta (+16 cartas o peor).</li>
-            </ul>
         </div>
         <br><br>
     </div>
@@ -1280,10 +1292,23 @@ app.get('/', (req, res) => {
 
         function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
 
-        socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
-        socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
+        socket.on('roomCreated', (d) => { 
+            changeScreen('lobby'); 
+            document.getElementById('lobby-code').innerText = d.roomId; 
+        });
+        socket.on('roomJoined', (d) => { 
+            changeScreen('lobby'); 
+            document.getElementById('lobby-code').innerText = d.roomId; 
+        });
         socket.on('updateState', s => {
             currentPlayers = s.players;
+            
+            // CORRECCIÓN: Siempre actualizar el código de sala en pantalla por si se perdió
+            if(s.state === 'waiting' || s.state === 'playing') {
+                const lc = document.getElementById('lobby-code');
+                if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
+            }
+
             const me = s.players.find(p=>p.id===myId);
             const amITurning = me && me.isTurn;
             

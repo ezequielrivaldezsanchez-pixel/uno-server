@@ -314,10 +314,16 @@ io.on('connection', (socket) => {
 
     socket.on('playCard', (cardId, chosenColor, reviveTargetId) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'playing') return;
+        const room = rooms[roomId]; 
+        
+        // CORRECCIÓN 1: Permitir jugar carta si es penalty_decision Y la carta es GRACIA o LIBRE
+        if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision') return;
         
         const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator) return;
+
+        // Si es penalty_decision, solo puede jugar quien tiene el turno (la víctima)
+        if (room.gameState === 'penalty_decision' && pIndex !== room.currentTurn) return;
 
         let cardIndex = player.hand.findIndex(c => c.id === cardId); 
         let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
@@ -329,6 +335,29 @@ io.on('connection', (socket) => {
         if (!card) return;
         const top = room.discardPile[room.discardPile.length - 1];
 
+        // LOGICA EN FASE DE DECISION DE CASTIGO
+        if (room.gameState === 'penalty_decision') {
+            if (card.value === 'GRACIA') {
+                player.hand.splice(cardIndex, 1); room.discardPile.push(card);
+                io.to(roomId).emit('playSound', 'divine');
+                if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
+                io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`);
+                room.pendingPenalty = 0; room.pendingSkip = 0;
+                room.gameState = 'playing'; // Volver a jugar
+                checkUnoCheck(roomId, player);
+                if (player.hand.length === 0) { finishRound(roomId, player); return; }
+                advanceTurn(roomId, 1); updateAll(roomId); return;
+            } 
+            else if (card.value === 'LIBRE') {
+                socket.emit('startLibreLogic', card.id); return;
+            }
+            else {
+                // No se puede jugar otra cosa durante la decisión de castigo
+                return; 
+            }
+        }
+
+        // LOGICA NORMAL DE JUEGO
         if (cardIndex !== -1) {
             if (player.hand.length === 1) {
                 const isStrictNumber = /^[0-9]$/.test(card.value);
@@ -432,7 +461,6 @@ io.on('connection', (socket) => {
                 advanceTurn(roomId, 1); updateAll(roomId); return; 
             }
             
-            // CORRECCIÓN PARADOJA AUTO-DUELO
             const victimIdx = getNextPlayerIndex(roomId, 1);
             if (victimIdx === pIndex) {
                  socket.emit('notification', '⛔ No puedes desafiarte a duelo a ti mismo. Arroja otra carta o roba.');
@@ -719,7 +747,8 @@ function finalizeDuel(roomId) {
         if (!isPenaltyDuel) {
             eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
         } else {
-            // CORRECCIÓN TURNOS: Si pierde el defensor, se mantiene el skip original del castigo.
+            // CORRECCIÓN: Defensor pierde duelo de castigo. Se le suma 4 al castigo pendiente.
+            // NO se resetea pendingSkip (si venía de SS, pierde turnos).
             io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`);
             room.pendingPenalty += 4; 
             room.gameState = 'playing'; 
@@ -730,14 +759,24 @@ function finalizeDuel(roomId) {
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
         if (!isPenaltyDuel) {
              io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y pierde 4 cartas!`);
-             drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
-             room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
+             // CORRECCIÓN ROBO MANUAL: Asignar castigo al atacante y darle el turno
+             room.pendingPenalty = 4;
+             room.pendingSkip = 0;
+             room.currentTurn = room.players.indexOf(att);
+             room.gameState = 'playing'; 
+             updateAll(roomId);
         } else {
              io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`);
-             room.pendingPenalty = 0; room.pendingSkip = 0; 
-             drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
+             // CORRECCIÓN ROBO MANUAL: Defensor se salva (0), Atacante recibe el castigo (4)
+             // El atacante NO hereda el Skip del defensor, solo la penalidad de cartas por perder duelo
+             room.pendingPenalty = 0; room.pendingSkip = 0; // Limpia al defensor
+             
+             // Asigna penalidad al atacante
+             room.players.forEach(p => p.hasDrawn = false); // Reset draws
+             room.currentTurn = room.players.indexOf(att);
+             room.pendingPenalty = 4; // Solo las 4 del duelo perdido
+             
              room.gameState = 'playing';
-             advanceTurn(roomId, 1); 
              updateAll(roomId);
         }
     }
@@ -1399,6 +1438,7 @@ app.get('/', (req, res) => {
                 document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
                 
                 const amFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
+                // OCULTAR TODO SI NO ERES PELEADOR
                 document.getElementById('duel-opts').style.display = amFighter ? 'block' : 'none';
                 
                 if(amFighter) {
@@ -1511,9 +1551,18 @@ app.get('/', (req, res) => {
             if(document.getElementById('color-picker').style.display === 'block') return;
             if(c.value === 'LIBRE') { socket.emit('playCard', c.id, null, null); return; }
             
+            // LOGICA GRACIA DIVINA DEFENSIVA
             if(c.value === 'GRACIA') {
                 const hasZombies = currentPlayers.some(p => p.isDead);
                 const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
+                const isDecisionPhase = (document.body.classList.contains('state-rip'));
+
+                // Si estamos en decision de castigo, usar directamente para salvarse
+                if(isDecisionPhase) {
+                    socket.emit('playCard', c.id, null, null);
+                    return;
+                }
+
                 if(!hasZombies && !hasPenalty) {
                      showGraceModal();
                      pendingCard = c.id; 

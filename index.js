@@ -1,37 +1,31 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
+const io = require('socket.io')(http, { pingTimeout: 60000, pingInterval: 25000 });
 
-// --- CONFIGURACIÓN SOCKET.IO ---
-const io = require('socket.io')(http, {
-    pingTimeout: 60000, 
-    pingInterval: 25000
-});
-
-// --- VARIABLES GLOBALES ---
-const rooms = {}; 
+// --- CONFIGURACIÓN ---
+const rooms = {};
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
-
-// Pesos para ordenamiento (Server-Side)
-const sortValWeights = {
-    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
-    '+2': 20, 'X': 21, 'R': 22,
-    'color': 50, '+4': 51, '+12': 52, 'RIP': 53, 'LIBRE': 54, 'GRACIA': 55
-};
-const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
-
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// Limpieza automática
+// Pesos para ordenamiento
+const sortValWeights = {
+    '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
+    '+2': 20, 'X': 21, 'R': 22,
+    'color': 50, '+4': 51, '+12': 52, 'SALTEO SUPREMO': 53, 'RIP': 54, 'LIBRE': 55, 'GRACIA': 56
+};
+const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 };
+
+// Limpieza de salas inactivas
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
         if (now - rooms[roomId].lastActivity > 7200000) delete rooms[roomId];
     });
-}, 60000 * 5); 
+}, 300000);
 
-// --- FUNCIONES DEL SERVIDOR ---
+// --- FUNCIONES CORE ---
 
 function initRoom(roomId) {
     rooms[roomId] = {
@@ -42,18 +36,19 @@ function initRoom(roomId) {
         currentTurn: 0,
         direction: 1,
         activeColor: '',
-        pendingPenalty: 0,
+        pendingPenalty: 0, 
+        pendingSkip: 0,    
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
-            attackerChoice: null, defenderChoice: null, history: [], turn: null, narrative: '' 
+            attackerChoice: null, defenderChoice: null, history: [], turn: null, narrative: '',
+            isPenaltyDuel: false, penaltyType: '' // '+12' o 'SALTEO'
         },
+        libreState: { userId: null, victimId: null, giveCardId: null },
         chatHistory: [],
         lastActivity: Date.now()
     };
 }
-
-function touchRoom(roomId) { if (rooms[roomId]) rooms[roomId].lastActivity = Date.now(); }
 
 function createDeck(roomId) {
     const room = rooms[roomId]; if(!room) return;
@@ -64,24 +59,19 @@ function createDeck(roomId) {
             if (val !== '0') room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // Especiales Negras
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
-    // Únicas
-    room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
-    room.deck.push({ color: 'negro', value: 'RIP', type: 'death', id: Math.random().toString(36) });
-    room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
-    room.deck.push({ color: 'negro', value: 'GRACIA', type: 'divine', id: Math.random().toString(36) });
-    room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
-    room.deck.push({ color: 'negro', value: '+12', type: 'wild', id: Math.random().toString(36) });
-    
-    // Solo 2 cartas Libre Albedrío
-    for(let k=0; k<2; k++) {
-        room.deck.push({ color: 'negro', value: 'LIBRE', type: 'special', id: Math.random().toString(36) });
-    }
-    
+    const addSpecial = (val, count) => {
+        for(let i=0; i<count; i++) room.deck.push({ color: 'negro', value: val, type: 'special', id: Math.random().toString(36) });
+    };
+    addSpecial('RIP', 2);
+    addSpecial('GRACIA', 2);
+    addSpecial('+12', 2);
+    addSpecial('LIBRE', 2);
+    addSpecial('SALTEO SUPREMO', 2);
+
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -89,1295 +79,986 @@ function createDeck(roomId) {
 }
 
 function recycleDeck(roomId) {
-    const room = rooms[roomId]; if(!room) return;
-    if (room.discardPile.length <= 1) { createDeck(roomId); io.to(roomId).emit('notification', '⚠️ Mazo regenerado.'); return; }
+    const room = rooms[roomId];
+    if (room.discardPile.length <= 1) { createDeck(roomId); return; }
     const topCard = room.discardPile.pop();
-    room.deck = [...room.discardPile]; room.discardPile = [topCard];
-    for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; }
-    io.to(roomId).emit('notification', '♻️ Barajando descartes...');
+    room.deck = [...room.discardPile];
+    room.discardPile = [topCard];
+    for (let i = room.deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
+    }
 }
 
-// --- SOCKETS ---
+// --- LOGICA SOCKET ---
+
 io.on('connection', (socket) => {
-    
     socket.on('checkSession', (uuid) => {
-        let foundRoomId = null; let foundPlayer = null;
+        let found = false;
         for (const rId in rooms) { 
             const p = rooms[rId].players.find(pl => pl.uuid === uuid); 
-            if (p) { foundRoomId = rId; foundPlayer = p; break; } 
+            if (p) {
+                p.id = socket.id; p.isConnected = true; found = true;
+                socket.join(rId); rooms[rId].lastActivity = Date.now(); updateAll(rId);
+                break;
+            } 
         }
-        if (foundRoomId && foundPlayer) {
-            foundPlayer.id = socket.id; foundPlayer.isConnected = true;
-            socket.join(foundRoomId); touchRoom(foundRoomId); updateAll(foundRoomId);
-        } else { socket.emit('requireLogin'); }
+        if(!found) socket.emit('requireLogin');
     });
 
     socket.on('createRoom', (data) => {
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase(); initRoom(roomId);
-        const player = { id: socket.id, uuid: data.uuid, name: data.name.substring(0, 15), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin: true, isConnected: true };
-        rooms[roomId].players.push(player); socket.join(roomId); socket.emit('roomCreated', { roomId, name: data.name }); updateAll(roomId);
+        rooms[roomId].players.push(createPlayer(socket.id, data.uuid, data.name, true));
+        socket.join(roomId); socket.emit('roomCreated', { roomId, name: data.name }); updateAll(roomId);
     });
 
     socket.on('joinRoom', (data) => {
         const roomId = data.roomId.toUpperCase(); const room = rooms[roomId];
         if (!room) { socket.emit('error', 'Sala no encontrada.'); return; }
-        touchRoom(roomId);
         const existing = room.players.find(p => p.uuid === data.uuid);
-        if (existing) { existing.id = socket.id; existing.name = data.name; existing.isConnected = true; socket.join(roomId); socket.emit('roomJoined', { roomId }); }
+        if (existing) { existing.id = socket.id; existing.isConnected = true; socket.join(roomId); }
         else {
-            const player = { id: socket.id, uuid: data.uuid, name: data.name, hand: [], hasDrawn: false, isSpectator: (room.gameState !== 'waiting'), isDead: false, isAdmin: (room.players.length === 0), isConnected: true };
-            room.players.push(player); socket.join(roomId); socket.emit('roomJoined', { roomId });
-            io.to(roomId).emit('notification', `👋 ${player.name} entró.`);
+            room.players.push(createPlayer(socket.id, data.uuid, data.name, (room.players.length === 0)));
+            socket.join(roomId);
         }
-        updateAll(roomId);
-    });
-    
-    socket.on('requestSort', () => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId];
-        const p = room.players.find(x => x.id === socket.id);
-        if(!p) return;
-
-        p.hand.sort((a,b) => {
-            const cA = sortColWeights[a.color] || 99;
-            const cB = sortColWeights[b.color] || 99;
-            if(cA !== cB) return cA - cB;
-            const vA = sortValWeights[a.value] || 99;
-            const vB = sortValWeights[b.value] || 99;
-            return vA - vB;
-        });
-
-        io.to(p.id).emit('handUpdate', p.hand);
-        socket.emit('notification', 'Cartas ordenadas.');
-    });
-
-    socket.on('kickPlayer', (targetId) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId];
-        const admin = room.players.find(p => p.id === socket.id);
-        if(admin && admin.isAdmin) {
-            const idx = room.players.findIndex(p => p.id === targetId);
-            if(idx !== -1) {
-                room.players.splice(idx, 1);
-                updateAll(roomId);
-                io.to(targetId).emit('error', 'Has sido expulsado de la sala.');
-            }
-        }
+        const p = room.players.find(pl => pl.uuid === data.uuid);
+        if (room.gameState !== 'waiting') p.isSpectator = true;
+        socket.emit('roomJoined', { roomId }); updateAll(roomId);
     });
 
     socket.on('requestStart', () => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId]; if (room.gameState === 'waiting' && room.players.length >= 2) startCountdown(roomId);
+        const roomId = getRoomId(socket); const room = rooms[roomId];
+        if(room && room.gameState === 'waiting') startCountdown(roomId);
     });
+
+    // --- JUGADAS ---
 
     socket.on('playMultiCards', (cardIds) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId];
-        const pIndex = room.players.findIndex(p => p.id === socket.id);
-        const player = room.players[pIndex];
-        
-        if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
-        if (!cardIds || cardIds.length < 2) return; 
+        const roomId = getRoomId(socket); if(!roomId) return;
+        const room = rooms[roomId]; const player = getPlayer(room, socket.id);
+        if (!isTurn(room, player) || room.gameState !== 'playing' || room.pendingPenalty > 0) return;
 
-        let playCards = [];
-        let tempHand = [...player.hand];
+        let cardsToPlay = [];
         for(let id of cardIds) {
-            const c = tempHand.find(x => x.id === id);
-            if(!c) return; 
-            playCards.push(c);
+            const c = player.hand.find(x => x.id === id);
+            if(c) cardsToPlay.push(c);
         }
+        if(cardsToPlay.length < 2) return;
+
         const top = room.discardPile[room.discardPile.length - 1];
+        let valid = false;
+        let type = '';
 
-        // --- LÓGICA DE ESCALERAS Y COMBOS ---
-
-        // 1. Combo 1 y 1/2
-        if (playCards.length === 2 && playCards[0].value === '1 y 1/2' && playCards[1].value === '1 y 1/2') {
-            const c1 = playCards[0]; const c2 = playCards[1];
-            if (c1.color !== c2.color) { socket.emit('notification', '🚫 Las dos "1 y 1/2" deben ser del mismo color.'); return; }
-            if (top.value !== '3') { socket.emit('notification', '🚫 El combo de "1 y 1/2" solo se puede tirar sobre un 3.'); return; }
-            
-            cardIds.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
-            room.discardPile.push(...playCards); room.activeColor = c1.color; 
-            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! (1.5 + 1.5 = 3)`); io.to(roomId).emit('playSound', 'divine'); 
-            if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
-            return;
-        }
-
-        // 2. Validación Común para Escaleras
-        const firstColor = playCards[0].color;
-        if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con cartas de color.'); return; }
-        if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Todas deben ser del mismo color.'); return; }
-        
-        const indices = playCards.map(c => ladderOrder.indexOf(c.value));
-        if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo números (0-9) y 1y1/2.'); return; }
-        
-        const sortedIndices = [...indices].sort((a,b) => a-b);
-        let isInternallyConsecutive = true;
-        for(let i = 0; i < sortedIndices.length - 1; i++) { if(sortedIndices[i+1] !== sortedIndices[i] + 1) { isInternallyConsecutive = false; break; } }
-        if(!isInternallyConsecutive) { socket.emit('notification', '🚫 Las cartas seleccionadas no son consecutivas.'); return; }
-
-        let isValidPlay = false;
-
-        // CASO A: ESCALERA INTEGRADA (2 Cartas + Mesa)
-        if (playCards.length === 2) {
-            const topIdx = ladderOrder.indexOf(top.value);
-            // Requisitos: Tope numérico, Mismo color que la mano
-            if (topIdx !== -1 && top.color === firstColor) {
-                const min = sortedIndices[0];
-                const max = sortedIndices[1];
-                
-                // Opción 1: Ascendente (Mesa -> min -> max) | Ej: 3 -> 4 -> 5
-                const isAsc = (min === topIdx + 1 && max === topIdx + 2);
-                
-                // Opción 2: Descendente (Mesa -> max -> min) | Ej: 3 -> 2 -> 1
-                const isDesc = (max === topIdx - 1 && min === topIdx - 2);
-                
-                if (isAsc || isDesc) {
-                    isValidPlay = true;
-                    // Reordenar visualmente
-                    if (isAsc) playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
-                    if (isDesc) playCards.sort((a,b) => ladderOrder.indexOf(b.value) - ladderOrder.indexOf(a.value));
-                } else {
-                     socket.emit('notification', '🚫 No forman escalera con la mesa (Ascendente o Descendente).'); return;
-                }
-            } else {
-                socket.emit('notification', '🚫 Para escalera de 2, deben conectar color y número con la mesa.'); return;
+        // Combo 1.5 + 1.5
+        if (cardsToPlay.length === 2 && cardsToPlay[0].value === '1 y 1/2' && cardsToPlay[1].value === '1 y 1/2') {
+            if (cardsToPlay[0].color === cardsToPlay[1].color && top.value === '3' && top.color === cardsToPlay[0].color) {
+                valid = true; type = 'Combo Matemático';
+                room.activeColor = cardsToPlay[0].color;
             }
         } 
-        // CASO B: ESCALERA AUTÓNOMA (3+ Cartas)
+        // Escaleras
         else {
-             let colorMatch = (firstColor === room.activeColor);
-             let valueMatch = false;
-             
-             if (!colorMatch) {
-                 if (playCards.some(c => c.value === top.value)) valueMatch = true;
-             }
-             
-             if (colorMatch || valueMatch) {
-                 isValidPlay = true;
-                 playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
-             } else {
-                 socket.emit('notification', '🚫 El color no coincide con la mesa.'); return;
-             }
-        }
-
-        if (isValidPlay) {
-            cardIds.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
-            room.discardPile.push(...playCards); 
-            room.activeColor = firstColor;
-            io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}! (${playCards.length} cartas)`); io.to(roomId).emit('playSound', 'soft');
-            
-            if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
-        }
-    });
-
-    socket.on('playLibreAlbedrio', (data) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId];
-        const pIndex = room.players.findIndex(p => p.id === socket.id);
-        const player = room.players[pIndex];
-
-        if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
-        if (player.hand.length < 3) return; 
-
-        // 1. Regalo
-        const libreIdx = player.hand.findIndex(c => c.id === data.cardId); if (libreIdx === -1) return;
-        const libreCard = player.hand.splice(libreIdx, 1)[0]; room.discardPile.push(libreCard); 
-
-        const target = room.players.find(p => p.id === data.targetPlayerId);
-        const giftIdx = player.hand.findIndex(c => c.id === data.giftCardId);
-        if (!target || giftIdx === -1) return; 
-        const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
-        io.to(target.id).emit('handUpdate', target.hand);
-
-        // 2. Descartes
-        let discardedCardsForAnimation = [];
-        let lastDiscard = null;
-        
-        if (data.discardIds && data.discardIds.length > 0) {
-            data.discardIds.forEach(dId => {
-                const dIdx = player.hand.findIndex(c => c.id === dId);
-                if (dIdx !== -1) { 
-                    const dCard = player.hand.splice(dIdx, 1)[0]; 
-                    room.discardPile.push(dCard); 
-                    lastDiscard = dCard;
-                    discardedCardsForAnimation.push(dCard);
-                }
-            });
-        }
-        if (!lastDiscard) { finishRound(roomId, player); return; }
-
-        io.to(roomId).emit('animateLibre', { 
-            playerName: player.name, 
-            cards: discardedCardsForAnimation 
-        });
-        io.to(roomId).emit('playSound', 'wild');
-
-        if (player.hand.length === 0) {
-            const isLegal = /^[0-9]$/.test(lastDiscard.value) || lastDiscard.value === '1 y 1/2' || lastDiscard.value === 'GRACIA';
-            if (isLegal) { finishRound(roomId, player); return; } else { drawCards(roomId, pIndex, 1); io.to(roomId).emit('notification', `🚫 Cierre Ilegal con ${lastDiscard.value}. Robas 1 carta.`); io.to(player.id).emit('handUpdate', player.hand); }
-        }
-
-        if (lastDiscard.color === 'negro' && data.chosenColor) room.activeColor = data.chosenColor;
-        else if (lastDiscard.color !== 'negro') room.activeColor = lastDiscard.color;
-        
-        setTimeout(() => {
-            io.to(roomId).emit('cardPlayedEffect', { color: room.activeColor });
-            
-            // 1. GRACIA DIVINA
-            if (lastDiscard.value === 'GRACIA') {
-                 const deadPlayers = room.players.filter(p => p.isDead);
-                 if (deadPlayers.length > 0) {
-                     io.to(roomId).emit('playSound', 'divine');
-                     if(deadPlayers.length === 1) {
-                         socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: lastDiscard.id });
-                     } else {
-                         const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
-                         socket.emit('askReviveTarget', zombieList);
-                     }
-                     updateAll(roomId);
-                     return;
-                 } 
-            }
-
-            // 2. RIP
-            if (lastDiscard.value === 'RIP') {
-                 if (getAlivePlayersCount(roomId) < 2) { advanceTurn(roomId, 1); updateAll(roomId); return; }
-                 io.to(roomId).emit('playSound', 'rip');
-                 room.gameState = 'rip_decision';
-                 const attacker = player; 
-                 const victimIdx = getNextPlayerIndex(roomId, 1); 
-                 const defender = room.players[victimIdx];
-                 room.duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: attacker.id, narrative: `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!` };
-                 updateAll(roomId); return;
-            }
-
-            // 3. CASTIGOS
-            if (['+2', '+4', '+12'].includes(lastDiscard.value)) {
-                const val = parseInt(lastDiscard.value.replace('+','')); room.pendingPenalty += val;
-                io.to(roomId).emit('notification', `💥 ¡+${val}!`); io.to(roomId).emit('playSound', 'attack');
-                advanceTurn(roomId, 1); updateAll(roomId); return;
-            }
-            
-            // 4. DIRECCIÓN / SALTO
-            let steps = 1;
-            if (lastDiscard.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
-            if (lastDiscard.value === 'X') steps = 2;
-            advanceTurn(roomId, steps); 
-            updateAll(roomId);
-        }, 1500 + (discardedCardsForAnimation.length * 400));
-    });
-
-    socket.on('confirmReviveSingle', (data) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; 
-        const pIndex = room.players.findIndex(p => p.id === socket.id);
-        const player = room.players[pIndex];
-        
-        if (room.gameState !== 'playing' || pIndex !== room.currentTurn) return;
-        
-        let cardIndex = player.hand.findIndex(c => c.id === data.cardId); 
-        let card = null;
-
-        if (cardIndex !== -1) {
-            card = player.hand[cardIndex];
-            if(data.confirmed) {
-                player.hand.splice(cardIndex, 1); room.discardPile.push(card);
-            }
-        } else {
-            const top = room.discardPile[room.discardPile.length - 1];
-            if (top && top.id === data.cardId) {
-                card = top;
-            }
-        }
-
-        if(!card) return;
-
-        const deadPlayers = room.players.filter(p => p.isDead);
-
-        if(data.confirmed && deadPlayers.length === 1) {
-             const target = deadPlayers[0];
-             target.isDead = false; target.isSpectator = false;
-             io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
-             io.to(roomId).emit('playSound', 'divine');
-             
-             if (data.chosenColor) room.activeColor = data.chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-             
-             if (player.hand.length === 0) { finishRound(roomId, player); return; }
-             advanceTurn(roomId, 1); updateAll(roomId);
-        } else {
-             if (cardIndex === -1) {
-                 advanceTurn(roomId, 1); updateAll(roomId);
-             }
-        }
-    });
-
-    socket.on('playCard', (cardId, chosenColor, reviveTargetId) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'playing') return;
-        
-        const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
-        const player = room.players[pIndex]; if (player.isDead || player.isSpectator) return;
-
-        let cardIndex = player.hand.findIndex(c => c.id === cardId); 
-        let card = null;
-        if(cardIndex !== -1) card = player.hand[cardIndex];
-        else if (reviveTargetId) {
-             const top = room.discardPile[room.discardPile.length - 1];
-             if(top && top.value === 'GRACIA') card = top;
-        }
-
-        if (!card) return;
-        const top = room.discardPile[room.discardPile.length - 1];
-
-        if (cardIndex !== -1) {
-            if (player.hand.length === 1) {
-                const isStrictNumber = /^[0-9]$/.test(card.value);
-                const isUnoYMedio = card.value === '1 y 1/2';
-                const isGracia = card.value === 'GRACIA';
-                if (!isStrictNumber && !isUnoYMedio && !isGracia) { socket.emit('notification', '🚫 Última carta: Solo Números o Gracia.'); return; }
-            }
-
-            if (top.color !== 'negro') room.activeColor = top.color;
-            
-            let isSaff = false;
-            if (pIndex !== room.currentTurn) {
-                const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
-                if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                    if (room.pendingPenalty > 0) { return; } 
-                    if (player.hand.length === 1) { socket.emit('notification', '🚫 Prohibido ganar con SAFF. Espera tu turno.'); return; }
-                    isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
-                    io.to(roomId).emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.to(roomId).emit('playSound', 'saff');
-                } else { return; }
-            }
-
-            if (pIndex === room.currentTurn && !isSaff) {
-                if (room.pendingPenalty > 0) {
-                    let allowed = false;
-                    if (card.value === 'GRACIA') allowed = true;
-                    else {
-                        const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
-                        const cardVal = getVal(card.value); const topVal = getVal(top.value);
-                        if (cardVal > 0 && cardVal >= topVal) allowed = true;
-                    }
-                    if (!allowed) { socket.emit('notification', `🚫 Debes tirar un castigo igual o mayor a la mesa, o Gracia.`); return; }
-                } else {
-                    let valid = false;
-                    if (card.color === 'negro') valid = true; else if (card.value === 'GRACIA') valid = true; else if (card.color === room.activeColor) valid = true; else if (card.value === top.value) valid = true;
-                    if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
-                }
-            }
-        }
-
-        if (card.value === 'GRACIA') {
-            const deadPlayers = room.players.filter(p => p.isDead);
-            
-            if (room.pendingPenalty > 0 && cardIndex !== -1) {
-                player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
-                io.to(roomId).emit('playSound', 'divine');
-                if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-                io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`); 
-                room.pendingPenalty = 0;
-                if (player.hand.length === 0) { finishRound(roomId, player); return; }
-                advanceTurn(roomId, 1); updateAll(roomId); return;
-            }
-
-            if (deadPlayers.length > 0) {
-                if(deadPlayers.length === 1) {
-                    socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: card.id }); 
-                    return; 
-                } else {
-                    if (!reviveTargetId) {
-                        const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length }));
-                        socket.emit('askReviveTarget', zombieList); return; 
-                    } else {
-                        const target = room.players.find(p => p.id === reviveTargetId && p.isDead);
-                        if (target) { 
-                            target.isDead = false; target.isSpectator = false; 
-                            io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
-                            
-                            if(cardIndex !== -1) {
-                                player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
-                                if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-                            }
-                            
-                            io.to(roomId).emit('playSound', 'divine');
-                            if (player.hand.length === 0) { finishRound(roomId, player); return; }
-                            advanceTurn(roomId, 1); updateAll(roomId); return;
+            const color = cardsToPlay[0].color;
+            if (color !== 'negro' && cardsToPlay.every(c => c.color === color)) {
+                const indices = cardsToPlay.map(c => ladderOrder.indexOf(c.value)).sort((a,b)=>a-b);
+                let consecutive = true;
+                for(let i=0; i<indices.length-1; i++) if(indices[i+1] !== indices[i]+1) consecutive = false;
+                
+                if (consecutive) {
+                    if (cardsToPlay.length >= 3) {
+                        if (color === room.activeColor || cardsToPlay.some(c => c.value === top.value)) { valid = true; type = 'Escalera'; room.activeColor = color; }
+                    } else if (cardsToPlay.length === 2) {
+                        const topIdx = ladderOrder.indexOf(top.value);
+                        if (top.color === color && ((indices[0] === topIdx + 1 && indices[1] === topIdx + 2) || (indices[1] === topIdx - 1 && indices[0] === topIdx - 2))) {
+                            valid = true; type = 'Escalera'; room.activeColor = color;
                         }
                     }
                 }
-            } else { 
-                if (cardIndex !== -1) {
-                     io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
-                     player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
-                     io.to(roomId).emit('playSound', 'divine'); 
-                     if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-                     if (player.hand.length === 0) { finishRound(roomId, player); return; }
-                     advanceTurn(roomId, 1); updateAll(roomId); return;
-                }
             }
         }
 
-        if (cardIndex === -1) return; 
+        if (valid) {
+            cardsToPlay.forEach(c => {
+                 player.hand.splice(player.hand.indexOf(c), 1);
+                 room.discardPile.push(c);
+            });
+            checkUnoStatus(player); // Chequeo de 1 carta
+            io.to(roomId).emit('notification', `✨ ${type} de ${player.name}`);
+            if(player.hand.length === 0) finishRound(roomId, player); 
+            else { advanceTurn(roomId, 1); updateAll(roomId); }
+        } else {
+            socket.emit('error', 'Jugada múltiple inválida');
+        }
+    });
 
+    socket.on('playCard', (cardId, chosenColor) => {
+        const roomId = getRoomId(socket); if(!roomId) return;
+        const room = rooms[roomId]; const player = getPlayer(room, socket.id);
+        if (!player) return;
+
+        const top = room.discardPile[room.discardPile.length - 1];
+        const card = player.hand.find(c => c.id === cardId);
+        if(!card) return;
+
+        // SAFF
+        let isSaff = (room.gameState === 'playing' && !isTurn(room, player) && card.value === top.value && card.color === top.color && card.color !== 'negro' && room.pendingPenalty === 0 && room.pendingSkip === 0);
+        
+        if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision') return;
+        if (!isSaff && !isTurn(room, player)) return;
+
+        // 1. GRACIA DIVINA en Decision (Salva de todo castigo negro)
+        if (room.gameState === 'penalty_decision') {
+            if (isTurn(room, player) && card.value === 'GRACIA') {
+                player.hand.splice(player.hand.findIndex(c => c.id === cardId), 1);
+                room.discardPile.push(card);
+                io.to(roomId).emit('notification', `🙏 ¡${player.name} usó GRACIA DIVINA y se salvó!`);
+                room.pendingPenalty = 0; room.pendingSkip = 0; room.gameState = 'playing';
+                checkUnoStatus(player);
+                if(player.hand.length === 0) finishRound(roomId, player);
+                else { advanceTurn(roomId, 1); updateAll(roomId); }
+                return;
+            } else return;
+        }
+
+        // 2. LIBRE ALBEDRÍO DEFENSIVO (+2, +4, +12) -> NO SIRVE CONTRA SALTEO
+        if (isTurn(room, player) && room.pendingPenalty > 0 && room.pendingSkip === 0 && card.value === 'LIBRE') {
+            player.hand.splice(player.hand.findIndex(c => c.id === cardId), 1);
+            room.discardPile.push(card);
+            io.to(roomId).emit('notification', `🛡️ ¡${player.name} usó LIBRE ALBEDRÍO para bloquear el castigo!`);
+            room.pendingPenalty = 0;
+            startLibreSequence(roomId, player);
+            return;
+        }
+
+        // Bloqueo si hay castigo pendiente y no es defensa
+        if (isTurn(room, player) && (room.pendingPenalty > 0 || room.pendingSkip > 0)) return;
+
+        // JUGAR CARTA
+        const cIndex = player.hand.findIndex(c => c.id === cardId);
+        player.hand.splice(cIndex, 1);
+        room.discardPile.push(card);
+
+        if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor;
+        else if (card.color !== 'negro') room.activeColor = card.color;
+
+        // --- EFECTOS ---
+
+        // RIP
         if (card.value === 'RIP') {
-            if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no sirve para evitar castigos.'); return; }
-            
-            if (getAlivePlayersCount(roomId) < 2) {
-                player.hand.splice(cardIndex, 1); room.discardPile.push(card);
-                io.to(roomId).emit('notification', '💀 RIP fallido.');
-                advanceTurn(roomId, 1); updateAll(roomId); return;
-            }
-            player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
-            
+            if (getAlivePlayersCount(roomId) < 2) { finishRound(roomId, player); return; }
             room.gameState = 'rip_decision';
-            const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
-            room.duelState = { attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: attacker.id, narrative: `⚔️ ¡${attacker.name} desafía a muerte a ${defender.name}!` };
-            io.to(roomId).emit('notification', `💀 ¡${attacker.name} RIP a ${defender.name}!`);
+            const victim = getNextPlayer(room, 1);
+            initDuel(room, player, victim, false);
+            room.duelState.narrative = `💀 ¡${player.name} te retó a Duelo usando la carta RIP!`;
+            checkUnoStatus(player);
             updateAll(roomId); return;
         }
 
-        player.hand.splice(cardIndex, 1); room.discardPile.push(card);
-        io.to(roomId).emit('cardPlayedEffect', { color: card.color });
-        if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; else if (card.color !== 'negro') room.activeColor = card.color;
-
-        let steps = 1;
-        if (card.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
-        if (card.value === 'X') steps = 2;
-        if (['+2', '+4', '+12'].includes(card.value)) {
-            const val = parseInt(card.value.replace('+','')); room.pendingPenalty += val;
-            io.to(roomId).emit('notification', `💥 ¡+${val}! Total: ${room.pendingPenalty}`); io.to(roomId).emit('playSound', 'attack');
-            if (val > 4) io.to(roomId).emit('shakeScreen');
-            advanceTurn(roomId, 1); updateAll(roomId); return; 
+        // LIBRE ALBEDRIO (Normal)
+        if (card.value === 'LIBRE') {
+            checkUnoStatus(player);
+            startLibreSequence(roomId, player);
+            return;
         }
 
-        if (card.color === 'negro') io.to(roomId).emit('playSound', 'wild'); else io.to(roomId).emit('playSound', 'soft');
+        // PENALIDADES NEGRAS (+12, SALTEO)
+        if (['+12', 'SALTEO SUPREMO'].includes(card.value)) {
+            let penalty = (card.value === '+12') ? 12 : 4;
+            let skips = (card.value === 'SALTEO SUPREMO') ? 4 : 0;
+            
+            room.pendingPenalty += penalty;
+            room.pendingSkip += skips;
+
+            checkUnoStatus(player);
+            if (player.hand.length === 0) { finishRound(roomId, player); return; }
+
+            room.currentTurn = getNextPlayerIndex(room, 1);
+            room.gameState = 'penalty_decision';
+            // Guardamos el tipo de penalidad para el duelo
+            initDuel(room, player, room.players[room.currentTurn], true); 
+            room.duelState.penaltyType = card.value; 
+            
+            updateAll(roomId); return;
+        }
+
+        // RESTO
+        if (['+2', '+4'].includes(card.value)) room.pendingPenalty += parseInt(card.value.replace('+',''));
+        
+        let steps = 1;
+        if (card.value === 'X') steps = 2;
+        if (card.value === 'R') room.direction *= -1;
+
+        checkUnoStatus(player);
         if (player.hand.length === 0) finishRound(roomId, player);
-        else { advanceTurn(roomId, steps); updateAll(roomId); }
+        else {
+            if (isSaff) room.currentTurn = rooms[roomId].players.findIndex(p => p.id === socket.id);
+            advanceTurn(roomId, steps);
+            updateAll(roomId);
+        }
     });
 
-    socket.on('draw', () => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'playing') return;
-        const pIndex = room.players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1 || room.players[pIndex].isDead || room.players[pIndex].isSpectator) return;
-        if (pIndex === room.currentTurn) {
-            if (room.pendingPenalty > 0) {
-                drawCards(roomId, pIndex, 1); room.pendingPenalty--; io.to(roomId).emit('playSound', 'soft');
-                if (room.pendingPenalty > 0) { 
-                    io.to(roomId).emit('notification', `😰 Faltan: ${room.pendingPenalty}`); 
-                    updateAll(roomId); 
-                } else { 
-                    io.to(roomId).emit('notification', `😓 Terminó castigo.`); 
-                    advanceTurn(roomId, 1);
-                    updateAll(roomId); 
-                }
-            } else {
-                if (!room.players[pIndex].hasDrawn) { drawCards(roomId, pIndex, 1); room.players[pIndex].hasDrawn = true; io.to(roomId).emit('playSound', 'soft'); updateAll(roomId); } 
-                else { socket.emit('notification', 'Ya robaste.'); }
+    // --- LIBRE ALBEDRIO ---
+    socket.on('libreAction', (data) => {
+        const roomId = getRoomId(socket); if(!roomId) return;
+        const room = rooms[roomId]; const player = getPlayer(room, socket.id);
+        if(!player || player.id !== room.libreState.userId) return;
+
+        if (data.type === 'victim' && room.gameState === 'libre_victim') {
+            room.libreState.victimId = data.val;
+            room.gameState = 'libre_give';
+        } else if (data.type === 'give' && room.gameState === 'libre_give') {
+            const idx = player.hand.findIndex(c => c.id === data.val);
+            if(idx > -1) {
+                const card = player.hand.splice(idx, 1)[0];
+                const victim = room.players.find(p => p.id === room.libreState.victimId);
+                victim.hand.push(card);
+                room.gameState = 'libre_discard';
             }
+        } else if (data.type === 'discard' && room.gameState === 'libre_discard') {
+            const idx = player.hand.findIndex(c => c.id === data.val);
+            if(idx > -1) {
+                const card = player.hand.splice(idx, 1)[0];
+                room.discardPile.push(card);
+                room.activeColor = (card.color === 'negro') ? room.activeColor : card.color;
+                room.gameState = 'libre_color';
+            }
+        } else if (data.type === 'color' && room.gameState === 'libre_color') {
+            room.activeColor = data.val;
+            const victimName = room.players.find(p => p.id === room.libreState.victimId).name;
+            io.to(roomId).emit('notification', `⚖️ ${player.name} regaló a ${victimName}, descartó y cambió a ${data.val}.`);
+            
+            if (player.hand.length === 0) finishRound(roomId, player);
+            else {
+                room.gameState = 'playing';
+                advanceTurn(roomId, 1);
+            }
+        }
+        updateAll(roomId);
+    });
+
+    // --- DECISIONES ---
+
+    socket.on('ripDecision', (action) => {
+        const roomId = getRoomId(socket); const room = rooms[roomId];
+        if(!room || room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
+
+        if (action === 'surrender') {
+            eliminatePlayer(roomId, room.duelState.defenderId);
+            checkWinCondition(roomId);
+        } else {
+            room.gameState = 'dueling';
+            updateAll(roomId);
+        }
+    });
+
+    socket.on('penaltyDecision', (action) => {
+        const roomId = getRoomId(socket); const room = rooms[roomId];
+        if(!room || room.gameState !== 'penalty_decision') return;
+        const player = getPlayer(room, socket.id);
+        if(!isTurn(room, player)) return;
+
+        if (action === 'accept') {
+            io.to(roomId).emit('notification', `${player.name} aceptó el castigo.`);
+            room.gameState = 'playing'; 
+            // NO se roban automatico. El estado es playing pero con pendingPenalty > 0
+            // El jugador debe hacer click en mazo para robar 1 a 1.
+            updateAll(roomId);
+        } else {
+            room.gameState = 'dueling';
+            const attacker = room.players.find(p => p.id === room.duelState.attackerId);
+            room.duelState.narrative = `⚔️ ¡${player.name} desafió a ${attacker.name} para evitar el castigo!`;
+            updateAll(roomId);
+        }
+    });
+
+    socket.on('duelPick', (choice) => {
+        const roomId = getRoomId(socket); const room = rooms[roomId];
+        if(!room || room.gameState !== 'dueling') return;
+
+        if (socket.id === room.duelState.attackerId) room.duelState.attackerChoice = choice;
+        else if (socket.id === room.duelState.defenderId) room.duelState.defenderChoice = choice;
+
+        if (room.duelState.attackerChoice && room.duelState.defenderChoice) {
+            resolveDuelRound(roomId);
+        } else {
+            room.duelState.turn = (socket.id === room.duelState.attackerId) ? room.duelState.defenderId : room.duelState.attackerId;
+            updateAll(roomId);
+        }
+    });
+
+    // --- UNO y 1/2 (ANUNCIO) ---
+
+    socket.on('sayUno', () => {
+        const roomId = getRoomId(socket); const room = rooms[roomId];
+        const p = getPlayer(room, socket.id);
+        if(p && p.hand.length === 1) {
+            p.saidUno = true;
+            io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`);
+            updateAll(roomId);
+        }
+    });
+
+    socket.on('reportUno', (targetId) => {
+        const roomId = getRoomId(socket); const room = rooms[roomId];
+        const accuser = getPlayer(room, socket.id);
+        const target = getPlayer(room, targetId);
+
+        if(!target || target.hand.length !== 1 || target.saidUno) {
+            socket.emit('error', 'Denuncia inválida.'); return;
+        }
+
+        // Inmunidad de 2 segundos
+        const timeDiff = Date.now() - target.lastOneCardTime;
+        if (timeDiff < 2000) {
+            socket.emit('error', '¡Espera! Todavía tiene tiempo de gracia.'); return;
+        }
+
+        drawCards(room, target, 2);
+        target.saidUno = true; // Para que no lo vuelvan a denunciar por la misma omisión
+        io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Castigo: +2 cartas.`);
+        updateAll(roomId);
+    });
+
+    // --- ROBAR Y PASAR ---
+
+    socket.on('draw', () => {
+        const roomId = getRoomId(socket); const room = rooms[roomId]; const p = getPlayer(room, socket.id);
+        if(room.gameState === 'playing' && isTurn(room, p)) {
+            
+            // CASO 1: Robando penalidad (manual)
+            if (room.pendingPenalty > 0) {
+                drawCards(room, p, 1);
+                room.pendingPenalty--;
+                
+                // Si terminó de robar penalidad
+                if (room.pendingPenalty === 0) {
+                    if (room.pendingSkip > 0) {
+                        // Era Salteo Supremo, ahora pierde turnos
+                        const skip = room.pendingSkip;
+                        room.pendingSkip = 0;
+                        advanceTurn(roomId, skip + 1); // +1 para salir de su turno
+                    } else {
+                        // Era +2, +4, +12. Pierde su turno actual.
+                        advanceTurn(roomId, 1);
+                    }
+                }
+            } 
+            // CASO 2: Robo normal
+            else if(!p.hasDrawn) { 
+                drawCards(room, p, 1); 
+                p.hasDrawn = true; 
+            }
+            updateAll(roomId);
         }
     });
 
     socket.on('passTurn', () => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'playing') return;
-        const pIndex = room.players.findIndex(p => p.id === socket.id);
-        if (pIndex === room.currentTurn && room.players[pIndex].hasDrawn && room.pendingPenalty === 0) { advanceTurn(roomId, 1); updateAll(roomId); }
-    });
-
-    socket.on('playGraceDefense', (chosenColor) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
-        const defender = room.players.find(p => p.id === socket.id);
-        const cardIndex = defender.hand.findIndex(c => c.value === 'GRACIA');
-        if (cardIndex !== -1) {
-            defender.hand.splice(cardIndex, 1); room.discardPile.push(defender.hand[cardIndex]);
-            room.activeColor = chosenColor || 'rojo';
-            io.to(roomId).emit('showDivine', `${defender.name} salvado por Gracia`); io.to(roomId).emit('playSound', 'divine');
-            const attIndex = room.players.findIndex(p => p.id === room.duelState.attackerId);
-            drawCards(roomId, attIndex, 4); 
-            room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
+        const roomId = getRoomId(socket); const room = rooms[roomId]; const p = getPlayer(room, socket.id);
+        if(room.gameState === 'playing' && isTurn(room, p) && p.hasDrawn && room.pendingPenalty === 0) {
+            advanceTurn(roomId, 1);
+            updateAll(roomId);
         }
-    });
-
-    socket.on('ripDecision', (d) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'rip_decision' || socket.id !== room.duelState.defenderId) return;
-        const def = room.players.find(p => p.id === room.duelState.defenderId);
-        if (d === 'surrender') { eliminatePlayer(roomId, def.id); checkWinCondition(roomId); }
-        else { 
-            io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling';
-            room.duelState.narrative = `¡${room.duelState.defenderName} aceptó! ${room.duelState.attackerName} está eligiendo...`; updateAll(roomId); 
-        }
-    });
-
-    socket.on('duelPick', (c) => {
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'dueling') return;
-        if (socket.id !== room.duelState.turn) return;
-        
-        if (socket.id === room.duelState.attackerId) { 
-            room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId;
-            room.duelState.narrative = `⚔️ ${room.duelState.attackerName} eligió arma oculta. Esperando a ${room.duelState.defenderName}...`;
-        } 
-        else if (socket.id === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId); return; }
-        updateAll(roomId);
     });
     
-    socket.on('sendChat', (text) => { 
-        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId]; const p = room.players.find(x => x.id === socket.id); 
-        if (p) {
-            const msg = { name: p.name, text }; room.chatHistory.push(msg);
-            if(room.chatHistory.length > 50) room.chatHistory.shift();
-            io.to(roomId).emit('chatMessage', msg); 
+    socket.on('sendChat', (text) => {
+        const roomId = getRoomId(socket); if(rooms[roomId]) {
+            const p = getPlayer(rooms[roomId], socket.id);
+            if(p) io.to(roomId).emit('chatMessage', {name: p.name, text}); 
         }
     });
 
-    socket.on('disconnect', () => {
-        const roomId = getRoomId(socket);
-        if (roomId && rooms[roomId]) { 
-            const room = rooms[roomId]; const p = room.players.find(pl => pl.id === socket.id); 
-            if(p) {
-                p.isConnected = false;
-                if ((room.gameState === 'dueling' || room.gameState === 'rip_decision') && (socket.id === room.duelState.attackerId || socket.id === room.duelState.defenderId)) {
-                    setTimeout(() => {
-                        if(rooms[roomId] && !p.isConnected) {
-                             io.to(roomId).emit('notification', '🔌 Jugador desconectado. Duelo cancelado.');
-                             if (socket.id === room.duelState.attackerId) { eliminatePlayer(roomId, room.duelState.attackerId); }
-                             if (socket.id === room.duelState.defenderId) { eliminatePlayer(roomId, room.duelState.defenderId); }
-                             checkWinCondition(roomId);
-                        }
-                    }, 5000);
-                } else { updateAll(roomId); }
-            }
-        }
+    socket.on('requestSort', () => {
+        const roomId = getRoomId(socket); const room = rooms[roomId]; const p = getPlayer(room, socket.id);
+        if(p) { p.hand.sort((a,b) => (sortColWeights[a.color]-sortColWeights[b.color]) || (sortValWeights[a.value]-sortValWeights[b.value])); socket.emit('handUpdate', p.hand); }
     });
 });
 
 // --- HELPERS ---
-function getDuelNarrative(attName, defName, att, def) {
-    if (att === def) return `⚡ Choque idéntico (${att.toUpperCase()}). ¡Empate!`;
-    if (att === 'fuego' && def === 'hielo') return `🔥 El Fuego de ${attName} derritió el Hielo de ${defName}.`;
-    if (att === 'hielo' && def === 'agua') return `❄️ El Hielo de ${attName} congeló el Agua de ${defName}.`;
-    if (att === 'agua' && def === 'fuego') return `💧 El Agua de ${attName} apagó el Fuego de ${defName}.`;
-    if (def === 'fuego' && att === 'hielo') return `🔥 El Fuego de ${defName} derritió el Hielo de ${attName}.`;
-    if (def === 'hielo' && att === 'agua') return `❄️ El Hielo de ${defName} congeló el Agua de ${attName}.`;
-    if (def === 'agua' && att === 'fuego') return `💧 El Agua de ${defName} apagó el Fuego de ${attName}.`;
-    return "Resultado confuso...";
+
+function createPlayer(socketId, uuid, name, isAdmin) {
+    return { 
+        id: socketId, uuid, name: name.substring(0,12), 
+        hand: [], hasDrawn: false, isSpectator: false, isDead: false, 
+        isAdmin, isConnected: true, 
+        saidUno: false, lastOneCardTime: 0 
+    };
 }
+
+function getPlayer(room, id) { return room.players.find(p => p.id === id); }
+function getRoomId(socket) { return Array.from(socket.rooms).find(r => r !== socket.id); }
+function isTurn(room, player) { return room.players[room.currentTurn].id === player.id; }
+
+function getNextPlayerIndex(room, steps) {
+    let next = room.currentTurn;
+    let count = 0;
+    while (count < steps) {
+        next = (next + room.direction + room.players.length) % room.players.length;
+        if (!room.players[next].isDead && !room.players[next].isSpectator) count++;
+    }
+    return next;
+}
+function getNextPlayer(room, steps) { return room.players[getNextPlayerIndex(room, steps)]; }
+function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator).length; }
+
+function advanceTurn(roomId, steps) {
+    const room = rooms[roomId];
+    room.players.forEach(p => p.hasDrawn = false);
+    room.currentTurn = getNextPlayerIndex(room, steps);
+}
+
+function drawCards(room, player, count) {
+    for(let i=0; i<count; i++) {
+        if(room.deck.length === 0) recycleDeck(Object.keys(rooms).find(key => rooms[key] === room));
+        if(room.deck.length > 0) player.hand.push(room.deck.pop());
+    }
+    checkUnoStatus(player);
+}
+
+function checkUnoStatus(player) {
+    if (player.hand.length === 1) {
+        player.lastOneCardTime = Date.now();
+        player.saidUno = false;
+    } else {
+        player.saidUno = false;
+        player.lastOneCardTime = 0;
+    }
+}
+
+function startLibreSequence(roomId, player) {
+    const room = rooms[roomId];
+    room.gameState = 'libre_victim';
+    room.libreState = { userId: player.id, victimId: null, giveCardId: null };
+    updateAll(roomId);
+}
+
+function initDuel(room, attacker, defender, isPenalty) {
+    room.duelState = {
+        attackerId: attacker.id, defenderId: defender.id,
+        attackerName: attacker.name, defenderName: defender.name,
+        round: 1, scoreAttacker: 0, scoreDefender: 0,
+        attackerChoice: null, defenderChoice: null,
+        turn: attacker.id, narrative: '', isPenaltyDuel: isPenalty
+    };
+}
+
 function resolveDuelRound(roomId) {
     const room = rooms[roomId];
     const att = room.duelState.attackerChoice, def = room.duelState.defenderChoice;
-    let winner = 'tie';
-    if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
-    else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
     
-    if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
-    let winName = 'Empate'; if(winner === 'attacker') winName = room.duelState.attackerName; if(winner === 'defender') winName = room.duelState.defenderName;
+    let winner = null;
+    if ((att==='fuego' && def==='hielo') || (att==='hielo' && def==='agua') || (att==='agua' && def==='fuego')) winner = 'att';
+    else if (att !== def) winner = 'def';
 
-    room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
-    room.duelState.history.push({ round: room.duelState.round, att, def, winnerName: winName });
-    room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
-    io.to(roomId).emit('playSound', 'soft');
-    if (room.duelState.round >= 3 || room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2500); } 
-    else { setTimeout(() => { if(rooms[roomId]) { room.duelState.round++; room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} elige arma...`; updateAll(roomId); } }, 3000); updateAll(roomId); }
-}
+    if (winner === 'att') room.duelState.scoreAttacker++;
+    if (winner === 'def') room.duelState.scoreDefender++;
 
-function finalizeDuel(roomId) {
-    const room = rooms[roomId]; const att = room.players.find(p => p.id === room.duelState.attackerId); const def = room.players.find(p => p.id === room.duelState.defenderId);
-    if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
-    
-    if (room.duelState.scoreAttacker > room.duelState.scoreDefender) { 
-        io.to(roomId).emit('notification', `💀 ${att.name} GANA.`); 
-        eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
-    }
-    else if (room.duelState.scoreDefender > room.duelState.scoreAttacker) { 
-        io.to(roomId).emit('notification', `🛡️ ${def.name} GANA. ${att.name} debe robar 4.`);
-        room.pendingPenalty = 4;
-        room.gameState = 'playing'; 
+    room.duelState.attackerChoice = null; room.duelState.defenderChoice = null;
+    room.duelState.turn = room.duelState.attackerId;
+
+    if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) {
+        finishDuel(roomId, room.duelState.scoreAttacker >= 2 ? 'attacker' : 'defender');
+    } else {
+        room.duelState.round++;
         updateAll(roomId);
     }
-    else { 
-        io.to(roomId).emit('notification', `🤝 EMPATE.`); 
-        room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); 
+}
+
+function finishDuel(roomId, winnerRole) {
+    const room = rooms[roomId];
+    const isPenalty = room.duelState.isPenaltyDuel;
+    
+    if (!isPenalty) {
+        // DUELO RIP
+        const loserId = (winnerRole === 'attacker') ? room.duelState.defenderId : room.duelState.attackerId;
+        eliminatePlayer(roomId, loserId);
+        checkWinCondition(roomId);
+    } else {
+        // DUELO POR PENALIDAD (+12 o Salteo)
+        const attacker = room.players.find(p => p.id === room.duelState.attackerId); // Quien tiró
+        const defender = room.players.find(p => p.id === room.duelState.defenderId); // Víctima
+
+        if (winnerRole === 'defender') {
+            // Defensor gana: Se salva de todo
+            io.to(roomId).emit('notification', `🛡️ ¡${defender.name} ganó! Devuelve el castigo.`);
+            room.pendingPenalty = 0; room.pendingSkip = 0;
+            
+            // Atacante recibe 4 cartas y turno pasa al siguiente de la víctima
+            drawCards(room, attacker, 4);
+            room.gameState = 'playing';
+            // Como el atacante ya jugó y la víctima se salvó, sigue el jugador después de la víctima
+            advanceTurn(roomId, 1);
+            updateAll(roomId);
+
+        } else {
+            // Atacante gana: Se duplica/agrava el castigo
+            // +12 -> +16 (4 extra)
+            // Salteo -> 8 cartas (4 extra) y mantiene 4 saltos
+            room.pendingPenalty += 4;
+            io.to(roomId).emit('notification', `☠️ ¡${attacker.name} ganó! El castigo aumenta.`);
+            
+            // Víctima debe robar manualmente
+            room.gameState = 'playing'; 
+            updateAll(roomId);
+        }
     }
 }
 
-function eliminatePlayer(roomId, id) { const room = rooms[roomId]; const p = room.players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
-function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator).length; }
-function getRoomId(socket) { return Array.from(socket.rooms).find(r => r !== socket.id); }
-function startCountdown(roomId) {
-    const room = rooms[roomId]; if (room.players.length < 2) return;
-    room.gameState = 'counting'; let count = 3; createDeck(roomId);
-    let safeCard = room.deck.pop();
-    while (safeCard.color === 'negro' || safeCard.value === '+2' || safeCard.value === 'R' || safeCard.value === 'X') {
-        room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
-    }
-    room.discardPile = [safeCard]; room.activeColor = safeCard.color; room.currentTurn = 0; room.pendingPenalty = 0;
-    room.players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } });
-    io.to(roomId).emit('countdownTick', 3);
-    room.countdownInterval = setInterval(() => {
-        if (!rooms[roomId]) return clearInterval(room.countdownInterval);
-        io.to(roomId).emit('countdownTick', count); io.to(roomId).emit('playSound', 'soft');
-        if (count <= 0) { clearInterval(room.countdownInterval); room.gameState = 'playing'; io.to(roomId).emit('playSound', 'start'); updateAll(roomId); } count--;
-    }, 1000);
-}
-function drawCards(roomId, pid, n) { 
-    const room = rooms[roomId]; if (pid < 0 || pid >= room.players.length) return; 
-    for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); if (room.deck.length > 0) room.players[pid].hand.push(room.deck.pop()); } 
-}
-function advanceTurn(roomId, steps) {
-    const room = rooms[roomId]; if (room.players.length === 0) return;
-    room.players.forEach(p => p.hasDrawn = false);
-    let attempts = 0;
-    while (steps > 0 && attempts < room.players.length * 2) {
-        room.currentTurn = (room.currentTurn + room.direction + room.players.length) % room.players.length;
-        if (!room.players[room.currentTurn].isDead && !room.players[room.currentTurn].isSpectator) { steps--; } attempts++;
-    }
-    if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
-}
-function getNextPlayerIndex(roomId, steps) {
-    const room = rooms[roomId]; let next = room.currentTurn; let attempts = 0;
-    while (steps > 0 && attempts < room.players.length * 2) {
-        next = (next + room.direction + room.players.length) % room.players.length;
-        if (!room.players[next].isDead && !room.players[next].isSpectator) steps--; attempts++;
-    } return next;
-}
-function finishRound(roomId, w) {
-    const room = rooms[roomId]; room.gameState = 'waiting';
-    io.to(roomId).emit('gameOver', { winner: w.name }); io.to(roomId).emit('playSound', 'win');
-    setTimeout(() => { delete rooms[roomId]; }, 5000);
-}
+function eliminatePlayer(roomId, id) { const p = rooms[roomId].players.find(p => p.id === id); if(p) p.isDead = true; }
+
 function checkWinCondition(roomId) {
-    const room = rooms[roomId];
-    if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { const winner = room.players.find(p => !p.isDead && !p.isSpectator); if (winner) finishRound(roomId, winner); } 
-    else { room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
+    if (getAlivePlayersCount(roomId) <= 1) finishRound(roomId, rooms[roomId].players.find(p => !p.isDead && !p.isSpectator));
+    else { rooms[roomId].gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
+}
+function finishRound(roomId, w) { io.to(roomId).emit('gameOver', { winner: w.name }); delete rooms[roomId]; }
+
+function startCountdown(roomId) {
+    const room = rooms[roomId]; room.gameState = 'playing'; createDeck(roomId);
+    room.discardPile = [room.deck.pop()]; room.activeColor = room.discardPile[0].color;
+    room.players.forEach((p, i) => { 
+        if(!p.isSpectator) { p.hand = []; drawCards(room, p, 7); p.isDead = false; } 
+    });
+    updateAll(roomId);
 }
 
 function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
-    let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative } : null;
-
-    const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory };
+    // Lista de denunciables (1 carta, sin anunciar, pasaron 2 segundos)
+    const canBeReportedList = room.players
+        .filter(p => !p.isDead && !p.isSpectator && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000))
+        .map(p => p.id);
+    
     room.players.forEach(p => {
-        if(p.isConnected) {
-            const mp = JSON.parse(JSON.stringify(pack)); mp.iamAdmin = p.isAdmin;
-            if (mp.duelInfo) { if (p.id === room.duelState.attackerId) mp.duelInfo.myChoice = room.duelState.attackerChoice; if (p.id === room.duelState.defenderId) mp.duelInfo.myChoice = room.duelState.defenderChoice; }
-            io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand); io.to(p.id).emit('chatHistory', room.chatHistory);
-        }
+        const pack = { 
+            state: room.gameState, roomId, iamAdmin: p.isAdmin, 
+            players: room.players.map(pl => ({ 
+                id: pl.id, name: pl.name, cardCount: pl.hand.length, 
+                isTurn: (room.players[room.currentTurn].id === pl.id), 
+                isDead: pl.isDead, isSpectator: pl.isSpectator, isConnected: pl.isConnected 
+            })), 
+            topCard: room.discardPile[room.discardPile.length-1], 
+            activeColor: room.activeColor, 
+            pendingPenalty: room.pendingPenalty,
+            pendingSkip: room.pendingSkip,
+            duelInfo: (['dueling','rip_decision','penalty_decision'].includes(room.gameState) ? room.duelState : null),
+            libreInfo: (room.gameState.startsWith('libre') ? { step: room.gameState, victim: room.libreState.victimId } : null),
+            chatHistory: room.chatHistory,
+            reportTargets: canBeReportedList
+        };
+        io.to(p.id).emit('updateState', pack); io.to(p.id).emit('handUpdate', p.hand);
     });
 }
 
-// --- CLIENTE ---
+// --- CLIENTE HTML ---
 app.get('/', (req, res) => {
-    // SEPARAR EL CONTENIDO HTML PARA EVITAR ERRORES DE PARSEO
-    const htmlContent = `
+    res.send(`
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>UNO y 1/2</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>UNO y 1/2 v11.5</title>
     <style>
-        * { box-sizing: border-box; }
-        :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
-        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-        #login, #join-menu, #lobby { background: #2c3e50; z-index: 2000; }
-        #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); }
-        #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
-        
-        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; }
-        
-        #revive-screen, #revive-confirm-screen { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 10500; display: none; text-align: center; width: 90%; max-width: 400px; }
-        
-        #reconnect-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:90000; display:none; justify-content:center; align-items:center; color:white; font-size:20px; flex-direction:column; }
-        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom:15px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+        .screen { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100%; width: 100%; position: absolute; top:0; left:0; z-index:10; }
+        .btn { padding: 12px 24px; border-radius: 25px; border: none; font-weight: bold; cursor: pointer; color: white; font-size: 14px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; margin: 5px; }
+        .btn:active { transform: scale(0.95); }
+        .input-box { padding: 12px; border-radius: 8px; border: none; margin-bottom: 10px; text-align: center; }
 
-        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 60000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
-        .libre-step { display: none; width: 90%; text-align: center; }
-        .libre-step.active { display: block; }
-        .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
-        .mini-card.selected { border-color: gold; transform: scale(1.1); background: #666; }
+        /* JUEGO */
+        #game-area { display: none; flex-direction: column; height: 100%; position: relative; }
+        #players { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; padding: 10px; background: rgba(0,0,0,0.2); }
+        .player { padding: 4px 10px; border-radius: 12px; background: #333; font-size: 11px; border: 1px solid #555; opacity: 0.8; }
+        .is-turn { background: #2ecc71; border-color: white; transform: scale(1.1); opacity: 1; z-index: 5; }
+        .is-dead { text-decoration: line-through; color: #7f8c8d; }
+        
+        #table { flex: 1; display: flex; justify-content: center; align-items: center; gap: 20px; position: relative; }
+        .card { width: 75px; height: 110px; border-radius: 8px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; background: #333; position: relative; transition: 0.2s; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+        
+        #hand { height: 160px; display: flex; align-items: center; padding: 0 15px; gap: -20px; overflow-x: auto; background: rgba(0,0,0,0.6); border-top: 1px solid #555; }
+        .hand-card { flex-shrink: 0; margin-right: 5px; cursor: pointer; user-select: none; -webkit-touch-callout: none; transition: transform 0.2s; }
+        .hand-card.selected { transform: translateY(-30px); border: 3px solid #00d2ff !important; box-shadow: 0 0 15px #00d2ff; }
+        
+        #controls { position: fixed; bottom: 170px; width: 100%; display: flex; justify-content: center; pointer-events: none; gap: 10px; z-index: 20; }
+        .control-btn { pointer-events: auto; }
+        
+        #uno-btn { position: fixed; bottom: 180px; left: 10px; width: 60px; height: 60px; border-radius: 50%; background: #e67e22; border: 3px solid white; font-weight: bold; z-index: 30; font-size: 11px; display: flex; align-items: center; justify-content: center; text-align: center; box-shadow: 0 0 10px orange; cursor: pointer; }
+        #uno-menu { display: none; position: fixed; bottom: 250px; left: 20px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40; flex-direction: column; width: 160px; }
 
-        #players-zone { flex: 0 0 auto; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
-        .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
-        .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
-        .is-dead { text-decoration: line-through; opacity: 0.6; }
+        #rip-overlay, #color-picker, #manual-overlay, #rules-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; overflow-y: auto; }
+        .color-circle { width: 60px; height: 60px; border-radius: 50%; margin: 10px; display: inline-block; border: 2px solid white; cursor: pointer; }
         
-        #alert-zone { 
-            position: fixed; top: 120px; left: 0; width: 100%; 
-            display: flex; flex-direction: column; justify-content: center; align-items: center; 
-            z-index: 60000; pointer-events: none; 
-        }
+        /* MANUAL y REGLAS */
+        .modal-content { width: 90%; max-width: 600px; background: #2c3e50; padding: 20px; border-radius: 10px; text-align: left; margin: 20px 0; border: 1px solid #7f8c8d; }
+        .card-preview { display: inline-block; width: 40px; height: 60px; border: 1px solid white; margin-right: 10px; vertical-align: middle; text-align: center; font-size: 12px; line-height: 60px; font-weight: bold; border-radius: 4px; }
         
-        .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
-        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; pointer-events: auto; }
-        
-        #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
-        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
-        
-        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; white-space: nowrap; overflow: hidden; }
-        #deck-pile { background: #e74c3c; cursor: pointer; }
-        #top-card { background: #333; }
-        
-        #action-bar {
-            position: fixed; bottom: 180px; left: 0; width: 100%;
-            display: none; justify-content: center; align-items: center;
-            padding: 10px; pointer-events: none; z-index: 20000;
-        }
-        #uno-btn-area { pointer-events: auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; background: none; padding: 0; border-radius: 0; }
-
-        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
-        #btn-ladder-toggle { background: #8e44ad; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #6c3483; }
-        #btn-ladder-play { background: #27ae60; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px gold; font-size: 14px; }
-        #btn-sort { background: #34495e; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #2c3e50; }
-
-        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; }
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: all 0.2s; white-space: nowrap; }
-        .hand-card:active { transform: scale(0.95); }
-        .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
-
-        body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
-        #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
-        .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
-        .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
-        #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
-        #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
-        
-        #chat-btn { position: fixed; top: 110px; right: 20px; width: 50px; height: 50px; background: #3498db; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
-        #chat-win { position: fixed; top: 170px; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; }
-        #chat-badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: none; justify-content: center; align-items: center; font-weight: bold; border: 2px solid white; }
-        #chat-close { position: absolute; top: 5px; right: 10px; color: #aaa; cursor: pointer; font-weight: bold; font-family: monospace; }
-        
-        #rules-btn { position: fixed; top: 110px; left: 20px; width: 50px; height: 50px; background: #9b59b6; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
-        #rules-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 500px; max-height: 80vh; background: rgba(0,0,0,0.95); border: 2px solid #9b59b6; display: none; flex-direction: column; z-index: 50001; border-radius: 10px; padding: 20px; color: white; overflow-y: auto; }
-        #rules-close { position: absolute; top: 10px; right: 15px; color: white; font-size: 20px; cursor: pointer; font-weight: bold; }
-        
-        .rule-row { display: flex; align-items: center; margin-bottom: 15px; text-align: left; }
-        .rule-badge { width: 40px; height: 56px; border-radius: 4px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-weight: bold; margin-right: 15px; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 5px black; }
-        .rule-text { font-size: 14px; line-height: 1.4; }
-
-        #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
-        .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
-        .duel-btn:hover { opacity: 0.8; }
-        .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
-        .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
-        input { padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:10px 0; }
-        .btn-main { padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer; margin: 10px; }
-        @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
-
-        body.state-dueling #game-area, body.state-dueling #hand-zone, body.state-dueling #action-bar { display: none !important; }
-        body.state-dueling #duel-screen { display: flex !important; }
-        body.state-rip #game-area, body.state-rip #hand-zone, body.state-rip #action-bar { display: none !important; }
-        body.state-rip #rip-screen { display: flex !important; } 
-
-        .lobby-row { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 300px; margin-bottom: 10px; background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 5px; }
-        .lobby-name { display: flex; align-items: center; gap: 10px; }
-        .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
-        #lobby-link-container { margin-bottom: 30px; }
+        #selection-indicator { display: none; position: fixed; bottom: 140px; width: 100%; text-align: center; color: #00d2ff; font-weight: bold; text-shadow: 0 0 5px black; pointer-events: none; }
+        #cancel-select-btn { display: none; position: fixed; bottom: 200px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: #e74c3c; border: 2px solid white; z-index: 30; line-height: 45px; font-size: 20px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
+    <div id="login" class="screen" style="display:flex;">
+        <h1 style="color: gold; text-shadow: 2px 2px 0 #000;">UNO y 1/2</h1>
+        <input id="name-in" type="text" class="input-box" placeholder="Tu Nombre">
+        <button class="btn" style="background: #27ae60; width: 200px;" onclick="createRoom()">CREAR SALA</button>
+        <p>o</p>
+        <input id="code-in" type="text" class="input-box" placeholder="CÓDIGO SALA" style="text-transform:uppercase;">
+        <button class="btn" style="background: #2980b9; width: 200px;" onclick="joinRoom()">UNIRSE</button>
+    </div>
 
-    <div id="login" class="screen" style="display:flex;"><h1 style="font-size:60px; margin:0;">UNO y 1/2</h1><input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15"><button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button><button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button></div>
-    <div id="join-menu" class="screen"><h1>Unirse</h1><input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;"><button class="btn-main" onclick="joinRoom()">Entrar</button><button class="btn-main" onclick="backToLogin()">Volver</button></div>
     <div id="lobby" class="screen">
-        <h1>Sala: <span id="lobby-code" style="color:gold;"></span></h1>
-        <div id="lobby-link-container"><button onclick="copyLink()">🔗 Link</button></div>
-        <div id="lobby-users"></div>
-        <button id="start-btn" onclick="start()" class="btn-main" style="display:none;">EMPEZAR</button>
-        <p id="wait-msg" style="display:none;">Esperando...</p>
+        <button class="btn" style="position: absolute; top: 10px; right: 10px; background: #8e44ad;" onclick="openManual()">📖 MANUAL DEL JUEGO</button>
+        <h2 style="color: #ecf0f1;">SALA: <span id="room-id-display" style="color: gold;"></span></h2>
+        <div id="lobby-list" style="margin: 20px;"></div>
+        <p id="wait-msg">Esperando al administrador...</p>
+        <button id="start-btn" class="btn" style="background: #2ecc71; display: none;" onclick="socket.emit('requestStart')">EMPEZAR PARTIDA</button>
     </div>
-    
+
     <div id="game-area">
-        <div id="players-zone"></div>
-        <div id="table-zone">
-            <div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">📦</div><div id="top-card" class="card-pile"></div></div>
+        <div id="players"></div>
+        <div id="table">
+            <div id="deck" class="card" style="background: #c0392b; cursor: pointer;" onclick="draw()">📦</div>
+            <div id="top-card" class="card"></div>
         </div>
-    </div>
-
-    <div id="alert-zone"><div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div><div id="main-alert" class="alert-box"></div></div>
-
-    <div id="action-bar">
-        <div id="uno-btn-area">
-            <button id="btn-sort" onclick="requestSort()">ORDENAR</button>
-            <button id="btn-pass" class="btn-pass" onclick="pass()">PASAR</button>
-            <button id="btn-ladder-toggle" onclick="toggleLadderMode()">ACTIVAR SELECCIÓN</button>
-            <button id="btn-ladder-play" onclick="submitLadder()">JUGAR SELECCIÓN</button>
-        </div>
-    </div>
-    
-    <div id="hand-zone"></div>
-    
-    <div id="chat-btn" onclick="toggleChat()">💬<div id="chat-badge">0</div></div>
-    <div id="chat-win">
-        <div id="chat-close" onclick="toggleChat()">X</div>
-        <div id="chat-msgs" style="flex:1; overflow-y:auto; padding:10px; font-size:12px; color:#ddd;"></div>
-        <div style="display:flex; border-top:1px solid #555;">
-            <input id="chat-in" style="flex:1; border-radius:0; padding:10px; border:none; background:#333; color:white; font-size:14px;" placeholder="Mensaje..." onkeypress="if(event.key==='Enter') sendChat()">
-            <button onclick="sendChat()" style="background:#2980b9; color:white; border:none; padding:0 15px; cursor:pointer;">></button>
-        </div>
-    </div>
-    
-    <div id="rules-btn" onclick="toggleRules()">❓</div>
-    <div id="rules-modal">
-        <div id="rules-close" onclick="toggleRules()">X</div>
-        <h2 style="color:gold; text-align:center; border-bottom:1px solid #555; padding-bottom:10px;">Reglamento</h2>
         
-        <p style="text-align:center; font-style:italic; margin-bottom:20px;">
-            <b>Objetivo:</b> Quedarse sin cartas.<br>
-            ⚠️ IMPORTANTE: La última carta descartada para ganar DEBE ser Numérica o GRACIA DIVINA.
-        </p>
+        <div id="selection-indicator">MODO SELECCIÓN MÚLTIPLE ACTIVO</div>
+        <button id="cancel-select-btn" onclick="cancelSelect()">✕</button>
 
-        <div class="rule-row">
-            <div class="rule-badge" style="background:#e74c3c">1½</div>
-            <div class="rule-text"><b>1 y 1/2:</b> Puedes jugar dos cartas "1 y 1/2" juntas (del mismo color) únicamente sobre un 3.</div>
+        <div id="controls">
+            <button id="btn-play-multi" class="btn control-btn" style="background: #2ecc71; display: none;" onclick="sendMulti()">JUGAR SELECCIÓN</button>
+            <button id="btn-pass" class="btn control-btn" style="background: #f39c12; display: none;" onclick="passTurn()">PASAR TURNO</button>
+            <button class="btn control-btn" style="background: #7f8c8d;" onclick="socket.emit('requestSort')">ORDENAR</button>
+            <button class="btn control-btn" style="background: #8e44ad;" onclick="openRules()">📜 REGLAS</button>
+        </div>
+        
+        <div id="uno-btn" onclick="toggleUnoMenu()">UNO<br>y 1/2</div>
+        <div id="uno-menu">
+            <button class="btn" style="background: #e67e22; margin-bottom:5px;" onclick="sayUno()">📢 ANUNCIAR</button>
+            <div id="report-list"></div>
+            <button class="btn" style="background: #c0392b;" onclick="toggleUnoMenu()">CERRAR</button>
         </div>
 
-        <div class="rule-row">
-            <div class="rule-badge" style="background:linear-gradient(45deg, #e74c3c, #f1c40f, #2ecc71, #3498db); font-size:12px;">1-2-3</div>
-            <div class="rule-text"><b>Escalera:</b> Secuencia de 3+ cartas (mismo color). <br>
-            • <b>Autónoma:</b> Tienes 3+ cartas en mano. <br>
-            • <b>Integrada:</b> Tienes 2 cartas en mano que conectan (Asc/Desc) con la carta de la mesa (Mismo color).</div>
-        </div>
+        <div id="hand"></div>
+    </div>
 
-        <div class="rule-row">
-            <div class="rule-badge" style="background:#2ecc71">7</div>
-            <div class="rule-text"><b>SAFF:</b> Si tienes una carta Numérica idéntica (mismo número y color) a la de la mesa, ¡juégala fuera de turno! Robas el turno inmediatamente. No vale con cartas especiales.</div>
-        </div>
-
-        <div class="rule-row">
-            <div class="rule-badge" style="background:#000; color:white; border-color:#666;">🪦</div>
-            <div class="rule-text"><b>RIP:</b> Desafías a duelo al siguiente jugador. El perdedor queda ELIMINADO de la ronda (pierde 1 vida). Si gana el defensor, el atacante roba cartas.</div>
-        </div>
-
-        <div class="rule-row">
-            <div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div>
-            <div class="rule-text"><b>GRACIA DIVINA:</b> Carta suprema. <br>1. Anula castigos (+2, +4, Duelos). <br>2. Revive a un muerto (si es tu turno). <br>3. Comodín: Eliges color. <br>✅ Es la única carta especial válida para cerrar el juego.</div>
-        </div>
-
-        <div class="rule-row">
-            <div class="rule-badge" style="background:#000; color:white;">🕊️</div>
-            <div class="rule-text"><b>LIBRE ALBEDRÍO:</b> Jugada maestra.<br>1. Eliges una carta de tu mano y se la REGALAS a otro jugador.<br>2. Seleccionas hasta 4 cartas de tu mano para DESCARTAR.<br>Si logras vaciar tu mano y la última carta que cae es válida (Número o Gracia), ganas.</div>
+    <div id="manual-overlay">
+        <div class="modal-content">
+            <h2 style="color: gold; text-align: center;">MANUAL DEL JUEGO</h2>
+            <p><strong>Objetivo:</strong> Quedarse sin cartas. Grita "UNO y 1/2" cuando te quede una o serás penalizado.</p>
+            <h3>Cartas Especiales</h3>
+            <p><span class="card-preview" style="background:#000; color:red;">RIP</span> <strong>RIP:</strong> Reta a duelo a muerte. El perdedor queda ELIMINADO de la partida.</p>
+            <p><span class="card-preview" style="background:#000; color:white;">LIB</span> <strong>LIBRE ALBEDRÍO:</strong> Defiende solo de +2, +4 y +12. Te permite regalar una carta, descartar y cambiar color.</p>
+            <p><span class="card-preview" style="background:#000; color:purple;">SS</span> <strong>SALTEO SUPREMO:</strong> El siguiente pierde 4 turnos y roba 4 cartas. Si pierde el duelo de defensa, pierde 4 turnos y roba 8 cartas.</p>
+            <p><span class="card-preview" style="background:#000; color:gold;">GD</span> <strong>GRACIA DIVINA:</strong> La defensa absoluta. Anula cualquier carta negra en tu contra (incluso RIP y Salteo).</p>
+            <p><span class="card-preview" style="background:#000; color:blue;">+12</span> <strong>+12:</strong> El siguiente roba 12 cartas. Puede batirse a duelo para intentar reflejar el castigo (+16 si pierde).</p>
+            <h3>Combos</h3>
+            <p><strong>Escalera:</strong> Selecciona varias cartas del mismo color en orden (ej: 4, 5, 6) manteniendo pulsada una carta.</p>
+            <br>
+            <button class="btn" style="width: 100%; background: #34495e;" onclick="document.getElementById('manual-overlay').style.display='none'">CERRAR</button>
         </div>
     </div>
 
-    <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA</h1><h2 id="winner-name"></h2></div>
-    
-    <div id="rip-screen" class="screen"><h1 style="color:red;">💀 RIP 💀</h1><button onclick="ripResp('duel')" class="btn-main" style="background:red; border:3px solid gold;">ACEPTAR</button><button onclick="ripResp('surrender')" class="btn-main">Rendirse</button><div id="grace-btn" style="display:none;"><button onclick="graceDef()" class="btn-main" style="background:white; color:red;">USAR MILAGRO</button></div></div>
-    <div id="duel-screen" class="screen"><h1 style="color:gold;">⚔️ DUELO ⚔️</h1><h3 id="duel-narrative">Cargando duelo...</h3><h2 id="duel-names">... vs ...</h2><h3 id="duel-sc">0 - 0</h3><p id="duel-turn-msg"></p><div id="duel-opts"><button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button><button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button><button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button></div></div>
-    
-    <div id="color-picker"><h3>Elige Color</h3><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div>
-    <div id="revive-screen"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div><div id="revival-overlay"><div id="revival-text"></div></div>
-    
-    <div id="revive-confirm-screen">
-        <h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2>
-        <button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button>
-        <button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button>
+    <div id="rules-overlay">
+        <div class="modal-content">
+            <h2 style="color: gold; text-align: center;">REGLAS RÁPIDAS</h2>
+            <ul>
+                <li><strong>UNO y 1/2:</strong> Cuando te quede 1 carta, toca el botón naranja "ANUNCIAR". Tienes 2 segundos de inmunidad. Si no, ¡+2 cartas!</li>
+                <li><strong>Selección Múltiple:</strong> Mantén pulsada una carta (0.8s) para seleccionar varias y jugar escaleras o combos.</li>
+                <li><strong>Castigos Manuales:</strong> Si te tiran +4, +12 o Salteo, debes tocar el mazo para robar las cartas una por una.</li>
+                <li><strong>Duelos:</strong> Puedes desafiar a quien te tire +12 o Salteo. Si ganas, le devuelves el castigo. Si pierdes, ¡se duplica!</li>
+            </ul>
+            <button class="btn" style="width: 100%; background: #34495e;" onclick="document.getElementById('rules-overlay').style.display='none'">CERRAR</button>
+        </div>
     </div>
 
-    <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:6000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
+    <div id="rip-overlay">
+        <h1 style="color: red; font-size: 40px; text-shadow: 0 0 10px black;">ATENCIÓN</h1>
+        <h2 id="rip-msg" style="padding: 20px; color: #bdc3c7;"></h2>
+        
+        <div id="action-btns" style="display:none;">
+            <button class="btn" style="background: red; border: 2px solid white; transform: scale(1.2);" onclick="decision('duel')">⚔️ BATIRSE A DUELO</button>
+            <br><br>
+            <button id="surrender-btn" class="btn" style="background: #333;" onclick="decision('surrender')">RENDIRSE</button>
+            <button id="accept-btn" class="btn" style="background: #333; display:none;" onclick="decision('accept')">ACEPTAR CASTIGO</button>
+            <p id="duel-note" style="font-size: 11px; color: #95a5a6; display:none;">Nota: batirse a duelo y perder implicará una penalidad extra para ti.</p>
+        </div>
 
-    <div id="libre-modal">
-        <div id="step-1" class="libre-step active">
-            <h2>Paso 1: ¿A quién regalas una carta?</h2>
-            <div id="libre-targets"></div>
+        <div id="duel-options" style="display:none; margin-top: 30px;">
+            <p>ELIGE TU ARMA:</p>
+            <button class="btn" style="font-size: 30px; background: transparent;" onclick="socket.emit('duelPick','fuego')">🔥</button>
+            <button class="btn" style="font-size: 30px; background: transparent;" onclick="socket.emit('duelPick','hielo')">❄️</button>
+            <button class="btn" style="font-size: 30px; background: transparent;" onclick="socket.emit('duelPick','agua')">💧</button>
         </div>
-        <div id="step-2" class="libre-step">
-            <h2>Paso 2: Elige la carta para regalar</h2>
-            <div id="libre-gift-hand"></div>
-        </div>
-        <div id="step-3" class="libre-step">
-            <h2>Paso 3: Elige cartas para descartar (1-4)</h2>
-            <p style="color:#aaa">Orden de descarte importa. Toca para agregar.</p>
-            <div id="libre-discard-hand"></div>
-            <div style="margin-top:20px; border-top:1px solid #555; padding-top:10px;">
-                <h3>Cartas a descartar:</h3>
-                <div id="libre-selected-discard"></div>
-            </div>
-            <button class="btn-main" onclick="confirmLibre()">CONFIRMAR JUGADA</button>
-        </div>
-        <div id="step-color" class="libre-step">
-            <h2>Paso 4: Elige Color Final</h2>
-            <div class="color-circle" style="background:#ff5252;" onclick="finishLibre('rojo')"></div>
-            <div class="color-circle" style="background:#448aff;" onclick="finishLibre('azul')"></div>
-            <div class="color-circle" style="background:#69f0ae;" onclick="finishLibre('verde')"></div>
-            <div class="color-circle" style="background:#ffd740;" onclick="finishLibre('amarillo')"></div>
+    </div>
+
+    <div id="color-picker">
+        <h3>ELIGE COLOR</h3>
+        <div>
+            <div class="color-circle" style="background: #e74c3c;" onclick="pickColor('rojo')"></div>
+            <div class="color-circle" style="background: #3498db;" onclick="pickColor('azul')"></div>
+            <div class="color-circle" style="background: #2ecc71;" onclick="pickColor('verde')"></div>
+            <div class="color-circle" style="background: #f1c40f;" onclick="pickColor('amarillo')"></div>
         </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
-        let isChatOpen = false; let unreadCount = 0;
-        let ladderMode = false; let ladderSelected = []; 
-        let myUUID = localStorage.getItem('uno_uuid');
+        let myUUID = localStorage.getItem('uno_uuid') || Math.random().toString(36).substring(2);
+        localStorage.setItem('uno_uuid', myUUID);
         
-        let pendingColorForRevive = null;
+        let selectedCards = [];
+        let selectionMode = false;
+        let pressTimer;
+        let pendingCardId = null; 
+        let currentGameState = '';
 
-        if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
-        const urlParams = new URLSearchParams(window.location.search);
-        const inviteCode = urlParams.get('room');
-        if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
-        
-        socket.on('connect', () => { 
-            document.getElementById('reconnect-overlay').style.display = 'none';
-            myId = socket.id; 
-            socket.emit('checkSession', myUUID); 
-        });
-        
-        socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
-        socket.on('sessionRestored', (data) => { });
-        socket.on('requireLogin', () => { document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); });
-        
-        let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardIds: [] };
-        
-        function startLibreAlbedrio(cardId) {
-            if(myHand.length < 3) return alert("Necesitas al menos 3 cartas para usar esto.");
-            document.getElementById('action-bar').style.display = 'none';
-            libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardIds: [] };
-            document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1);
-            const div = document.getElementById('libre-targets'); div.innerHTML = '';
-            currentPlayers.forEach(p => {
-                if(p.id !== myId && !p.isSpectator && !p.isDead) {
-                    const b = document.createElement('button'); b.className = 'btn-main'; b.innerText = p.name;
-                    b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); };
-                    div.appendChild(b);
-                }
-            });
-        }
-        function renderGiftHand() {
-            const div = document.getElementById('libre-gift-hand'); div.innerHTML = '';
-            myHand.forEach(c => {
-                if(c.id === libreState.cardId) return;
-                const b = document.createElement('div'); b.className = 'mini-card';
-                b.innerText = c.value; b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); };
-                div.appendChild(b);
-            });
-        }
-        function renderDiscardHand() {
-            const pool = document.getElementById('libre-discard-hand'); pool.innerHTML = '';
-            const selDiv = document.getElementById('libre-selected-discard'); selDiv.innerHTML = '';
-            myHand.forEach(c => {
-                if(c.id === libreState.cardId || c.id === libreState.giftId || libreState.discardIds.includes(c.id)) return;
-                const b = document.createElement('div'); b.className = 'mini-card';
-                b.innerText = c.value; b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { if(libreState.discardIds.length < 4) { libreState.discardIds.push(c.id); renderDiscardHand(); } };
-                pool.appendChild(b);
-            });
-            libreState.discardIds.forEach(did => {
-                const c = myHand.find(x => x.id === did);
-                const b = document.createElement('div'); b.className = 'mini-card selected';
-                b.innerText = c.value; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { libreState.discardIds = libreState.discardIds.filter(x => x !== did); renderDiscardHand(); };
-                selDiv.appendChild(b);
-            });
-        }
-        function confirmLibre() {
-            if(libreState.discardIds.length === 0) return alert("Debes descartar al menos 1 carta.");
-            const lastId = libreState.discardIds[libreState.discardIds.length-1]; const lastCard = myHand.find(c => c.id === lastId);
-            if(lastCard.color === 'negro') { showLibreStep('color'); } else { finishLibre(null); }
-        }
-        function finishLibre(color) {
-            document.getElementById('libre-modal').style.display = 'none';
-            if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex';
-            socket.emit('playLibreAlbedrio', { cardId: libreState.cardId, targetPlayerId: libreState.targetId, giftCardId: libreState.giftId, discardIds: libreState.discardIds, chosenColor: color });
-            libreState = { active: false };
-        }
-        function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); if(n==='color') document.getElementById('step-color').classList.add('active'); else document.getElementById('step-'+n).classList.add('active'); }
-        function getBgColor(c) { 
-            const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; 
-            if(c.value==='RIP') return 'black'; 
-            if(c.value==='GRACIA') return 'white'; 
-            if(c.value==='+12') return '#000000';
-            if(c.value==='LIBRE') return '#000'; 
-            return map[c.color] || '#444'; 
-        }
+        const sounds = {
+            pop: new Audio('https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3'),
+            alert: new Audio('https://cdn.freesound.org/previews/458/458587_5121236-lq.mp3')
+        };
+        sounds.pop.volume = 0.3;
 
-        function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
-        function showJoin() { changeScreen('join-menu'); }
-        function backToLogin() { changeScreen('login'); }
-        function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
-        
-        function copyLink() { 
-            const code = document.getElementById('lobby-code').innerText;
-            const url = window.location.origin + '/?room=' + code;
-            if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(url).then(() => { alert('¡Link copiado!'); }).catch(err => { prompt("Copia:", url); }); } 
-            else { prompt("Copia:", url); }
+        function showScreen(id) {
+            document.querySelectorAll('.screen').forEach(s => s.style.display='none');
+            document.getElementById('game-area').style.display='none';
+            document.getElementById(id).style.display='flex';
         }
+        function openManual() { document.getElementById('manual-overlay').style.display='flex'; }
+        function openRules() { document.getElementById('rules-overlay').style.display='flex'; }
 
-        function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
-
-        socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
-        socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
+        socket.on('connect', () => socket.emit('checkSession', myUUID));
+        socket.on('requireLogin', () => showScreen('login'));
+        socket.on('roomCreated', d => { showScreen('lobby'); document.getElementById('room-id-display').innerText = d.roomId; });
+        socket.on('roomJoined', d => { showScreen('lobby'); document.getElementById('room-id-display').innerText = d.roomId; });
+        
         socket.on('updateState', s => {
-            currentPlayers = s.players;
-            const me = s.players.find(p=>p.id===myId);
-            const amITurning = me && me.isTurn;
+            currentGameState = s.state;
             
-            if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
-                 ladderMode = false; ladderSelected = [];
-                 document.getElementById('btn-ladder-toggle').innerText = "ACTIVAR SELECCIÓN";
-                 document.getElementById('btn-ladder-toggle').style.background = "#8e44ad";
-                 document.getElementById('btn-ladder-play').style.display = 'none';
-                 document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected-ladder'));
-                 document.getElementById('libre-modal').style.display = 'none';
-                 libreState = { active: false };
+            if(s.state === 'waiting') {
+                showScreen('lobby');
+                document.getElementById('lobby-list').innerHTML = s.players.map(p => \`<div>\${p.isConnected?'🟢':'🔴'} \${p.name} \${p.isSpectator?'(Esp)':''}</div>\`).join('');
+                document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
+                document.getElementById('wait-msg').style.display = s.iamAdmin ? 'none' : 'block';
+                return;
             }
 
-            if(s.state === 'waiting') {
-                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin&&p.id!==myId?('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>'):'') + '</div>').join('');
-                document.getElementById('lobby-users').innerHTML = list;
-                document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
-                changeScreen('lobby'); 
+            showScreen('game-area');
+            renderPlayers(s);
+            renderTable(s);
+            handleOverlays(s);
+            handleUnoMenu(s);
+
+            const me = s.players.find(p => p.id === socket.id);
+            document.getElementById('btn-pass').style.display = (me && me.isTurn && s.pendingPenalty === 0) ? 'block' : 'none';
+            
+            if(me && !me.isTurn && selectionMode) cancelSelect();
+        });
+
+        socket.on('handUpdate', hand => {
+            const container = document.getElementById('hand');
+            container.innerHTML = '';
+            hand.forEach(c => {
+                const el = document.createElement('div');
+                el.className = \`card hand-card \${selectedCards.includes(c.id) ? 'selected' : ''}\`;
+                el.style.backgroundColor = getHex(c.color);
+                el.innerText = c.value;
+                el.style.color = (c.color === 'negro') ? 'white' : 'black';
+                if(['RIP','+12','SALTEO SUPREMO'].includes(c.value)) el.style.color = 'red';
+
+                el.onmousedown = el.ontouchstart = (e) => {
+                    if (e.type === 'touchstart') e.preventDefault();
+                    pressTimer = setTimeout(() => {
+                        if(!selectionMode) {
+                            selectionMode = true;
+                            if(navigator.vibrate) navigator.vibrate(50);
+                            sounds.pop.play();
+                            toggleSelect(c.id, el);
+                        }
+                    }, 800);
+                };
+                el.onmouseup = el.onmouseleave = el.ontouchend = () => clearTimeout(pressTimer);
+                
+                el.onclick = () => {
+                    if (selectionMode) {
+                        sounds.pop.play();
+                        toggleSelect(c.id, el);
+                    } else {
+                        handleCardClick(c);
+                    }
+                };
+                container.appendChild(el);
+            });
+        });
+
+        function handleCardClick(c) {
+            if (currentGameState === 'libre_give') {
+                if (confirm(\`¿Regalar \${c.value}?\`)) socket.emit('libreAction', {type:'give', val: c.id});
+                return;
+            }
+            if (currentGameState === 'libre_discard') {
+                if (confirm(\`¿Descartar \${c.value}?\`)) socket.emit('libreAction', {type:'discard', val: c.id});
                 return;
             }
             
-            document.body.className = ''; 
-            if(s.state === 'playing' || s.state === 'processing_penalty') {
-                 changeScreen('game-area'); 
-                 document.body.classList.add('playing-state'); 
-                 if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
-                 document.getElementById('game-area').style.display = 'flex';
-                 document.getElementById('hand-zone').style.display = 'flex';
-                 
-                 if(document.getElementById('libre-modal').style.display !== 'flex') {
-                    document.getElementById('action-bar').style.display = 'flex';
-                 }
-                 document.getElementById('chat-btn').style.display = 'flex';
-                 document.getElementById('rules-btn').style.display = 'flex';
-                 document.getElementById('duel-screen').style.display = 'none';
-                 document.getElementById('rip-screen').style.display = 'none';
-            } 
-            else if (s.state === 'rip_decision') {
-                changeScreen('game-area'); forceCloseChat();
-                document.body.classList.add('state-rip');
-                if(s.duelInfo.defenderId === myId) { document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; } 
-                else { 
-                    document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
-                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta del desafiado..."; 
-                    document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; 
-                    document.getElementById('duel-opts').style.display = 'none'; 
-                }
+            if (c.color === 'negro') {
+                pendingCardId = c.id;
+                if (c.value === 'LIBRE') socket.emit('playCard', c.id);
+                else document.getElementById('color-picker').style.display = 'flex';
+            } else {
+                socket.emit('playCard', c.id);
             }
-            else if (s.state === 'dueling') {
-                changeScreen('game-area'); forceCloseChat();
-                document.body.classList.add('state-dueling');
-                document.getElementById('rip-screen').style.display = 'none';
-                document.getElementById('duel-screen').style.display = 'flex';
-                document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "...";
-                document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName;
-                document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
-                const amFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId);
-                document.getElementById('duel-opts').style.display = amFighter ? 'block' : 'none';
-                if(amFighter) {
-                    const isTurn = s.duelInfo.turn === myId;
-                    document.getElementById('duel-turn-msg').innerText = isTurn ? "¡TU TURNO! Elige..." : "Esperando al oponente...";
-                    document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
-                    if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; }
-                    else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
-                } else { document.getElementById('duel-turn-msg').innerText = ""; }
+        }
+
+        function renderPlayers(s) {
+            document.getElementById('players').innerHTML = s.players.map(p => {
+                let status = '';
+                if(p.isDead) status = '💀';
+                else if(p.isSpectator) status = '👁️';
+                else if(!p.isConnected) status = '🔌';
+                return \`<div class="player \${p.isTurn?'is-turn':''} \${p.isDead?'is-dead':''}" onclick="playerClick('\${p.id}', '\${s.state}')">\${p.name} (\${p.cardCount}) \${status}</div>\`;
+            }).join('');
+        }
+
+        function playerClick(targetId, state) {
+            if (state === 'libre_victim') {
+                if(confirm('¿Elegir a este jugador para regalarle una carta?')) 
+                    socket.emit('libreAction', {type:'victim', val: targetId});
+            }
+        }
+
+        function renderTable(s) {
+            const top = document.getElementById('top-card');
+            top.innerText = s.topCard.value;
+            top.style.backgroundColor = getHex(s.topCard.color);
+            top.style.color = (s.topCard.color === 'negro') ? 'white' : 'black';
+            document.body.style.backgroundColor = getHex(s.activeColor, true);
+        }
+
+        function handleOverlays(s) {
+            const rip = document.getElementById('rip-overlay');
+            const colorPick = document.getElementById('color-picker');
+            
+            if (s.state === 'libre_color' && s.players.find(p=>p.id===socket.id && p.isTurn)) {
+                colorPick.style.display = 'flex';
+                pendingCardId = null;
+            } else if (s.state !== 'libre_color' && colorPick.style.display === 'flex' && !pendingCardId) {
+                colorPick.style.display = 'none';
             }
 
-            if(s.state === 'playing' || s.state === 'processing_penalty') {
-                document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ')</div>').join('');
-                if(s.topCard) {
-                    const tc = s.topCard; const el = document.getElementById('top-card');
-                    el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white'));
-                    el.innerText = (tc.value==='RIP'?'🪦':(tc.value==='GRACIA'?'❤️':(tc.value==='LIBRE'?'🕊️':tc.value)));
-                    
-                    if(tc.value === '1 y 1/2') {
-                        el.style.fontSize = '20px';
-                        el.style.padding = '0 5px';
-                    } else {
-                        el.style.fontSize = '24px';
-                        el.style.padding = '0';
-                    }
+            if (['rip_decision', 'penalty_decision', 'dueling'].includes(s.state)) {
+                const duel = s.duelInfo;
+                if (!duel) return;
+
+                rip.style.display = 'flex';
+                document.getElementById('rip-msg').innerText = duel.narrative;
+
+                const isMe = (socket.id === duel.defenderId);
+                const isAttacker = (socket.id === duel.attackerId);
+                const actionDiv = document.getElementById('action-btns');
+                const duelDiv = document.getElementById('duel-options');
+                
+                actionDiv.style.display = 'none';
+                duelDiv.style.display = 'none';
+
+                if (s.state === 'rip_decision' && isMe) {
+                    actionDiv.style.display = 'block';
+                    document.getElementById('surrender-btn').style.display = 'inline-block';
+                    document.getElementById('accept-btn').style.display = 'none';
+                    document.getElementById('duel-note').style.display = 'none';
+                } 
+                else if (s.state === 'penalty_decision' && isMe) {
+                    actionDiv.style.display = 'block';
+                    document.getElementById('surrender-btn').style.display = 'none';
+                    document.getElementById('accept-btn').style.display = 'inline-block';
+                    document.getElementById('duel-note').style.display = 'block';
                 }
-                document.getElementById('btn-pass').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
-                if(me && me.isTurn && s.pendingPenalty>0) { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty; } else document.getElementById('penalty-display').style.display='none';
+                else if (s.state === 'dueling') {
+                     if ((isMe || isAttacker) && duel.turn === socket.id) {
+                         duelDiv.style.display = 'block';
+                     }
+                }
+            } else {
+                rip.style.display = 'none';
             }
-        });
+        }
 
-        socket.on('handUpdate', h => {
-            myHand = h;
-            renderHand(); 
-        });
+        function handleUnoMenu(s) {
+             const list = document.getElementById('report-list');
+             list.innerHTML = '';
+             if(s.reportTargets && s.reportTargets.length > 0) {
+                 s.reportTargets.forEach(tid => {
+                     const p = s.players.find(x => x.id === tid);
+                     if(p) list.innerHTML += \`<button class="btn" style="background:red; width:100%; margin:2px;" onclick="socket.emit('reportUno', '\${tid}')">DENUNCIAR A \${p.name}</button>\`;
+                 });
+             } else {
+                 list.innerHTML = '<p style="font-size:10px;">Nadie para denunciar</p>';
+             }
+        }
+
+        function createRoom() { socket.emit('createRoom', { name: document.getElementById('name-in').value, uuid: myUUID }); }
+        function joinRoom() { socket.emit('joinRoom', { roomId: document.getElementById('code-in').value, name: document.getElementById('name-in').value, uuid: myUUID }); }
         
-        function requestSort() {
-            socket.emit('requestSort');
-        }
+        function draw() { socket.emit('draw'); }
+        function passTurn() { socket.emit('passTurn'); }
 
-        function renderHand() {
-            if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
-            const hz = document.getElementById('hand-zone'); hz.innerHTML = '';
-            
-            let displayHand = myHand; 
-
-            const hasGrace = myHand.some(c=>c.value==='GRACIA');
-            document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
-            
-            displayHand.forEach(c => {
-                const d = document.createElement('div'); d.className = 'hand-card';
-                if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
-                d.style.backgroundColor = getBgColor(c); 
-                d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white';
-                d.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':(c.value==='LIBRE'?'🕊️':c.value)));
-                
-                if(c.value === '1 y 1/2') {
-                    d.style.fontSize = '16px'; 
-                    d.style.padding = '0 5px';
-                }
-                
-                d.onclick = () => {
-                    if(ladderMode) {
-                        if(ladderSelected.includes(c.id)) { ladderSelected = ladderSelected.filter(id => id !== c.id); d.classList.remove('selected-ladder'); } 
-                        else { ladderSelected.push(c.id); d.classList.add('selected-ladder'); }
-                        document.getElementById('btn-ladder-play').style.display = (ladderSelected.length >= 2) ? 'block' : 'none';
-                        return;
-                    }
-                    if(document.getElementById('color-picker').style.display === 'block') return;
-                    if(c.value === 'LIBRE') { startLibreAlbedrio(c.id); return; }
-                    
-                    if(c.value === 'GRACIA') {
-                        const hasZombies = currentPlayers.some(p => p.isDead);
-                        const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
-                        if(!hasZombies && !hasPenalty) {
-                             if(confirm("⚠️ No hay castigos ni muertos. ¿Usar Gracia como carta normal (cambio de color)?")) {
-                                 pendingCard = c.id; 
-                                 pendingColorForRevive = null; 
-                                 pendingGrace = false; 
-                                 document.getElementById('color-picker').style.display='block';
-                                 return;
-                             } else {
-                                 return; 
-                             }
-                        }
-                    }
-
-                    if(c.color==='negro' && c.value!=='GRACIA') { if(c.value==='RIP') socket.emit('playCard', c.id, null, null); else { pendingCard=c.id; document.getElementById('color-picker').style.display='block'; } } 
-                    else socket.emit('playCard', c.id, null, null);
-                };
-                hz.appendChild(d);
-            });
-        }
-
-        function toggleLadderMode() {
-            ladderMode = !ladderMode; ladderSelected = []; 
-            const btn = document.getElementById('btn-ladder-toggle');
-            if(ladderMode) { btn.innerText = "CANCELAR"; btn.style.background = "#e74c3c"; } 
-            else { btn.innerText = "ACTIVAR SELECCIÓN"; btn.style.background = "#8e44ad"; document.getElementById('btn-ladder-play').style.display = 'none'; document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected-ladder')); }
-        }
-        function submitLadder() { if(ladderSelected.length < 2) return; socket.emit('playMultiCards', ladderSelected); toggleLadderMode(); }
-
-        function changeScreen(id) { 
-            document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); 
-            document.getElementById('game-area').style.display='none'; 
-            document.getElementById('action-bar').style.display='none'; 
-            document.getElementById('chat-btn').style.display='none'; 
-            document.getElementById('rules-btn').style.display='none'; 
-            document.getElementById(id).style.display='flex'; 
-        }
-        function start(){ socket.emit('requestStart'); }
-        function draw(){ socket.emit('draw'); }
-        function pass(){ socket.emit('passTurn'); }
-        function uno(){ socket.emit('sayUno'); }
-        function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
-        function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } }
-        function forceCloseChat() { const w = document.getElementById('chat-win'); w.style.display = 'none'; isChatOpen = false; document.getElementById('rules-modal').style.display='none'; }
-        function toggleRules() { const r = document.getElementById('rules-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
-
-        function pickCol(c){ 
-            document.getElementById('color-picker').style.display='none'; 
-            pendingColorForRevive = c; 
-            if(pendingGrace) socket.emit('playGraceDefense',c); 
-            else socket.emit('playCard',pendingCard,c,null); 
-        }
-        function ripResp(d){ socket.emit('ripDecision',d); }
-        function pick(c){ socket.emit('duelPick',c); }
-        function graceDef(){ pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
-        
-        let pendingReviveCardId = null;
-        socket.on('askReviveConfirmation', (data) => {
-            pendingReviveCardId = data.cardId;
-            document.getElementById('revive-name').innerText = data.name;
-            document.getElementById('revive-confirm-screen').style.display = 'block';
-        });
-        function confirmRevive(confirmed) {
-            document.getElementById('revive-confirm-screen').style.display = 'none';
-            if(pendingReviveCardId) {
-                socket.emit('confirmReviveSingle', { cardId: pendingReviveCardId, confirmed: confirmed, chosenColor: pendingColorForRevive });
-            } 
-            pendingReviveCardId = null;
-        }
-
-        socket.on('animateLibre', (data) => {
-            const alertBox = document.getElementById('main-alert');
-            alertBox.innerText = '🕊️ ' + data.playerName + ' usó LIBRE ALBEDRÍO';
-            alertBox.style.display = 'block';
-            
-            const topEl = document.getElementById('top-card');
-            let i = 0;
-            
-            function showNextCard() {
-                if (i >= data.cards.length) {
-                    setTimeout(() => alertBox.style.display = 'none', 1000);
-                    return;
-                }
-                const c = data.cards[i];
-                
-                topEl.style.transition = "transform 0.1s";
-                topEl.style.transform = "scale(1.2)";
-                
-                topEl.style.backgroundColor = getBgColor(c);
-                topEl.style.border = (c.value==='RIP'?'3px solid #666':(c.value==='GRACIA'?'3px solid gold':'3px solid white'));
-                topEl.innerText = (c.value==='RIP'?'🪦':(c.value==='GRACIA'?'❤️':(c.value==='LIBRE'?'🕊️':c.value)));
-                
-                setTimeout(() => { topEl.style.transform = "scale(1)"; }, 100);
-                
-                i++;
-                setTimeout(showNextCard, 400); 
+        function toggleSelect(id, el) {
+            if (selectedCards.includes(id)) {
+                selectedCards = selectedCards.filter(i => i !== id);
+                el.classList.remove('selected');
+            } else {
+                selectedCards.push(id);
+                el.classList.add('selected');
             }
-            showNextCard();
-        });
+            updateSelectUI();
+        }
 
-        socket.on('countdownTick',n=>{ changeScreen('game-area'); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
-        socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
+        function updateSelectUI() {
+            const active = selectedCards.length > 0;
+            document.getElementById('btn-play-multi').style.display = (selectedCards.length >= 2) ? 'block' : 'none';
+            document.getElementById('cancel-select-btn').style.display = active ? 'block' : 'none';
+            document.getElementById('selection-indicator').style.display = active ? 'block' : 'none';
+            if (!active) selectionMode = false;
+        }
+
+        function cancelSelect() {
+            selectedCards = []; selectionMode = false; updateSelectUI();
+            document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected'));
+        }
+
+        function sendMulti() { socket.emit('playMultiCards', selectedCards); cancelSelect(); }
+
+        function pickColor(c) {
+            if (currentGameState === 'libre_color') socket.emit('libreAction', {type:'color', val: c});
+            else socket.emit('playCard', pendingCardId, c); 
+            document.getElementById('color-picker').style.display = 'none';
+        }
+
+        function decision(action) {
+            if (currentGameState === 'rip_decision') socket.emit('ripDecision', action);
+            if (currentGameState === 'penalty_decision') socket.emit('penaltyDecision', action);
+        }
         
-        socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
-        socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
-        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
-        socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
+        function toggleUnoMenu() {
+            const m = document.getElementById('uno-menu');
+            m.style.display = (m.style.display === 'flex') ? 'none' : 'flex';
+        }
+        function sayUno() { socket.emit('sayUno'); toggleUnoMenu(); }
+
+        function getHex(c, dark = false) {
+            const colors = { rojo: '#e74c3c', azul: '#3498db', verde: '#2ecc71', amarillo: '#f1c40f', negro: '#2d3436' };
+            const darkColors = { rojo: '#4a1c1c', azul: '#1c2a4a', verde: '#1c4a2a', amarillo: '#4a451c', negro: '#1e272e' };
+            return (dark ? darkColors[c] : colors[c]) || '#1e272e';
+        }
         
-        socket.on('gameOver',d=>{
-            document.getElementById('action-bar').style.display = 'none';
-            document.getElementById('chat-btn').style.display = 'none';
-            document.getElementById('rules-btn').style.display = 'none';
-            document.getElementById('game-over-screen').style.display='flex'; 
-            document.getElementById('winner-name').innerText=d.winner; 
-            setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);
-        });
-        
-        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
-        socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML='✨<br>' + d.revived + ' fue resucitado por gracia divina de ' + d.savior + '<br>✨'; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
+        socket.on('notification', m => { sounds.alert.play(); alert(m); });
+        socket.on('error', m => alert(m));
+        socket.on('gameOver', d => { alert("🏆 ¡GANADOR: " + d.winner + "!"); location.reload(); });
     </script>
 </body>
 </html>
-    `;
-    res.send(htmlContent);
+    `);
 });
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+http.listen(PORT, () => console.log(`Servidor v11.5 corriendo en puerto ${PORT}`));

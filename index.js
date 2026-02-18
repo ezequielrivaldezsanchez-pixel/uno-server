@@ -432,12 +432,10 @@ io.on('connection', (socket) => {
                 advanceTurn(roomId, 1); updateAll(roomId); return; 
             }
             
-            // CORRECCIÓN 4: PARADOJA DEL AUTO-DUELO
-            // Evitar que si solo hay 2 jugadores y el otro está salteado, o por error de cálculo,
-            // el sistema asigne al propio jugador como víctima.
+            // CORRECCIÓN PARADOJA AUTO-DUELO
             const victimIdx = getNextPlayerIndex(roomId, 1);
             if (victimIdx === pIndex) {
-                 socket.emit('notification', '⛔ No puedes desafiarte a duelo a ti mismo, arroja otra carta o recoge del mazo.');
+                 socket.emit('notification', '⛔ No puedes desafiarte a duelo a ti mismo. Arroja otra carta o roba.');
                  return;
             }
 
@@ -479,7 +477,6 @@ io.on('connection', (socket) => {
                     updateAll(roomId); 
                 } else { 
                     if (room.pendingSkip > 0) {
-                        // Se aplica el Skip solo al finalizar el robo
                         io.to(roomId).emit('notification', `😓 Pierdes ${room.pendingSkip} turnos.`); 
                         const skips = room.pendingSkip; room.pendingSkip = 0;
                         advanceTurn(roomId, skips + 1);
@@ -722,10 +719,9 @@ function finalizeDuel(roomId) {
         if (!isPenaltyDuel) {
             eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
         } else {
-            // CORRECCIÓN 3: Si es castigo y pierde el defensor, se asegura de que el skip se mantenga
+            // CORRECCIÓN TURNOS: Si pierde el defensor, se mantiene el skip original del castigo.
             io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`);
-            room.pendingPenalty += 4;
-            // No reseteamos pendingSkip aquí para que al pagar el castigo, también pierda el turno si era SS
+            room.pendingPenalty += 4; 
             room.gameState = 'playing'; 
             updateAll(roomId);
         }
@@ -738,7 +734,6 @@ function finalizeDuel(roomId) {
              room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
         } else {
              io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`);
-             // Si el defensor gana, se libera de todo.
              room.pendingPenalty = 0; room.pendingSkip = 0; 
              drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
              room.gameState = 'playing';
@@ -827,7 +822,7 @@ function updateAll(roomId) {
 
 // --- CLIENTE ---
 app.get('/', (req, res) => {
-    const htmlContent = `
+    res.send(`
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1680,3 +1675,10 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
+    `);
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

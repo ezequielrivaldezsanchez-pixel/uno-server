@@ -12,7 +12,7 @@ const io = require('socket.io')(http, {
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-// Pesos para ordenamiento (Server-Side)
+// Pesos para ordenamiento
 const sortValWeights = {
     '0':0, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
     '+2': 20, 'X': 21, 'R': 22,
@@ -43,7 +43,7 @@ function initRoom(roomId) {
         direction: 1,
         activeColor: '',
         pendingPenalty: 0,
-        pendingSkip: 0, // Para Salteo Supremo
+        pendingSkip: 0,
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
@@ -66,13 +66,13 @@ function createDeck(roomId) {
             if (val !== '0') room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
-    // Especiales Negras Básicas
+    // Especiales Negras
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
     
-    // CARTAS SUPREMAS (Estrictamente 2 de cada una)
+    // CARTAS SUPREMAS (2 de cada una)
     const addSpecial = (val, count) => {
         for(let k=0; k<count; k++) room.deck.push({ color: 'negro', value: val, type: 'special', id: Math.random().toString(36) });
     };
@@ -201,7 +201,7 @@ io.on('connection', (socket) => {
 
         let isValidPlay = false;
 
-        // Escalera Integrada (2 cartas + Mesa)
+        // Escalera Integrada
         if (playCards.length === 2) {
             const topIdx = ladderOrder.indexOf(top.value);
             if (topIdx !== -1 && top.color === firstColor) {
@@ -216,7 +216,7 @@ io.on('connection', (socket) => {
                 } else { socket.emit('notification', '🚫 No conectan con la mesa.'); return; }
             } else { socket.emit('notification', '🚫 Color/Número mesa inválido.'); return; }
         } 
-        // Escalera Autónoma (3+ cartas)
+        // Escalera Autónoma
         else {
              let colorMatch = (firstColor === room.activeColor);
              let valueMatch = false;
@@ -242,7 +242,6 @@ io.on('connection', (socket) => {
         const room = rooms[roomId]; const pIndex = room.players.findIndex(p => p.id === socket.id); const player = room.players[pIndex];
 
         if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
-        // Se requieren al menos 3 cartas (1 libre, 1 regalo, 1 descarte)
         if (player.hand.length < 3) return; 
 
         // 1. Regalo
@@ -255,10 +254,10 @@ io.on('connection', (socket) => {
         const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
         io.to(target.id).emit('handUpdate', target.hand);
 
-        // 2. Descarte (SOLO 1 CARTA AHORA)
-        const dId = data.discardId; // Cambiado de array a single ID
+        // 2. Descarte
+        const dId = data.discardId; 
         const dIdx = player.hand.findIndex(c => c.id === dId);
-        if (dIdx === -1) { finishRound(roomId, player); return; } // Should not happen
+        if (dIdx === -1) { finishRound(roomId, player); return; }
         
         const lastDiscard = player.hand.splice(dIdx, 1)[0]; 
         room.discardPile.push(lastDiscard);
@@ -277,7 +276,6 @@ io.on('connection', (socket) => {
         
         setTimeout(() => {
             io.to(roomId).emit('cardPlayedEffect', { color: room.activeColor });
-            // Efectos de la carta descartada
             applyCardEffect(roomId, player, lastDiscard, data.chosenColor);
         }, 1500);
     });
@@ -354,45 +352,34 @@ io.on('connection', (socket) => {
                 } else { return; }
             }
 
-            // TURNO NORMAL O SAFF
             if (pIndex === room.currentTurn && !isSaff) {
-                // Hay castigo pendiente?
                 if (room.pendingPenalty > 0) {
-                    // DEFENSAS PERMITIDAS:
-                    // 1. GRACIA DIVINA (Siempre sirve)
-                    if (card.value === 'GRACIA') {
-                        // Pasa
-                    }
-                    // 2. LIBRE ALBEDRÍO (Solo sirve para +2, +4, +12. NO SIRVE para Salteo Supremo)
-                    else if (card.value === 'LIBRE' && room.pendingSkip === 0) {
-                        // Pasa
-                    }
-                    // 3. APILAMIENTO (+2 sobre +2, etc)
+                    // DEFENSAS
+                    if (card.value === 'GRACIA') { /* Pass */ }
+                    else if (card.value === 'LIBRE' && room.pendingSkip === 0) { /* Pass */ }
                     else {
                         const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
                         const cardVal = getVal(card.value); const topVal = getVal(top.value);
-                        if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Debes tirar un castigo igual/mayor, Gracia o Libre (si aplica).`); return; }
+                        if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Debes tirar un castigo igual/mayor, Gracia o Libre.`); return; }
                     }
                 } else {
-                    // Validar color/valor
                     let valid = (card.color === 'negro' || card.value === 'GRACIA' || card.color === room.activeColor || card.value === top.value);
                     if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
                 }
             }
         }
 
-        // --- USO DE LIBRE ALBEDRIO COMO DEFENSA ---
+        // LIBRE DEFENSIVO
         if (room.pendingPenalty > 0 && card.value === 'LIBRE' && room.pendingSkip === 0 && cardIndex !== -1) {
              player.hand.splice(cardIndex, 1); room.discardPile.push(card);
              io.to(roomId).emit('notification', `🛡️ ${player.name} usó LIBRE ALBEDRÍO para bloquear el castigo.`);
              io.to(roomId).emit('playSound', 'wild');
              room.pendingPenalty = 0;
-             // Iniciar secuencia Libre
              socket.emit('startLibreLogic', card.id);
              return;
         }
 
-        // --- USO DE GRACIA DIVINA ---
+        // GRACIA DIVINA
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
             
@@ -402,7 +389,7 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('playSound', 'divine');
                 if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                 io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`); 
-                room.pendingPenalty = 0; room.pendingSkip = 0; // Gracia limpia todo
+                room.pendingPenalty = 0; room.pendingSkip = 0;
                 checkUnoCheck(roomId, player);
                 if (player.hand.length === 0) { finishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
@@ -433,7 +420,6 @@ io.on('connection', (socket) => {
                     }
                 }
             } else { 
-                // Cambio Color Simple
                 if (cardIndex !== -1) {
                      io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
                      player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
@@ -448,7 +434,7 @@ io.on('connection', (socket) => {
 
         if (cardIndex === -1) return; 
 
-        // JUGADA NORMAL O ESPECIAL
+        // RIP
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no evita castigos.'); return; }
             if (getAlivePlayersCount(roomId) < 2) { 
@@ -468,13 +454,13 @@ io.on('connection', (socket) => {
             updateAll(roomId); return;
         }
 
-        // LIBRE ALBEDRÍO (Uso Ofensivo/Normal)
+        // LIBRE OFENSIVO
         if (card.value === 'LIBRE') {
              socket.emit('startLibreLogic', card.id);
              return;
         }
 
-        // EJECUTAR CARTA
+        // EJECUTAR CARTA NORMAL
         player.hand.splice(cardIndex, 1); room.discardPile.push(card);
         io.to(roomId).emit('cardPlayedEffect', { color: card.color });
         if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; else if (card.color !== 'negro') room.activeColor = card.color;
@@ -490,18 +476,17 @@ io.on('connection', (socket) => {
         if (pIndex === -1 || room.players[pIndex].isDead || room.players[pIndex].isSpectator) return;
         
         if (pIndex === room.currentTurn) {
-            // ROBO POR CASTIGO (MANUAL)
             if (room.pendingPenalty > 0) {
+                // Robo Manual por Castigo
                 drawCards(roomId, pIndex, 1); room.pendingPenalty--; io.to(roomId).emit('playSound', 'soft');
                 if (room.pendingPenalty > 0) { 
                     io.to(roomId).emit('notification', `😰 Faltan: ${room.pendingPenalty}`); 
                     updateAll(roomId); 
                 } else { 
-                    // Fin del castigo
                     if (room.pendingSkip > 0) {
                         io.to(roomId).emit('notification', `😓 Pierdes ${room.pendingSkip} turnos.`); 
                         const skips = room.pendingSkip; room.pendingSkip = 0;
-                        advanceTurn(roomId, skips + 1); // +1 para salir del turno actual
+                        advanceTurn(roomId, skips + 1);
                     } else {
                         io.to(roomId).emit('notification', `😓 Fin del castigo.`); 
                         advanceTurn(roomId, 1);
@@ -509,10 +494,8 @@ io.on('connection', (socket) => {
                     updateAll(roomId); 
                 }
             } else {
-                // ROBO NORMAL
                 if (!room.players[pIndex].hasDrawn) { 
                     drawCards(roomId, pIndex, 1); room.players[pIndex].hasDrawn = true; 
-                    // Reset UNO status al robar
                     room.players[pIndex].saidUno = false; room.players[pIndex].lastOneCardTime = 0;
                     io.to(roomId).emit('playSound', 'soft'); updateAll(roomId); 
                 } 
@@ -534,20 +517,17 @@ io.on('connection', (socket) => {
         if (socket.id !== room.duelState.defenderId) return;
 
         if (d === 'surrender') { 
-            // Si es RIP, muere. Si es Penalidad, acepta castigo.
             if(room.duelState.type === 'rip') {
                 eliminatePlayer(roomId, room.duelState.defenderId); checkWinCondition(roomId); 
             }
         }
         else if (d === 'accept_penalty') {
-             // Aceptar Castigo (+12 / Salteo)
              const p = room.players.find(x => x.id === socket.id);
              io.to(roomId).emit('notification', `${p.name} aceptó el castigo.`);
-             room.gameState = 'playing'; // Vuelve a playing pero con pendingPenalty > 0 (robo manual)
+             room.gameState = 'playing'; 
              updateAll(roomId);
         }
         else { 
-            // Batirse a Duelo
             io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling';
             room.duelState.narrative = `¡${room.duelState.defenderName} aceptó el duelo!`; 
             updateAll(roomId); 
@@ -567,7 +547,7 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
     
-    // --- UNO y 1/2 ---
+    // UNO y 1/2
     socket.on('sayUno', () => {
         const roomId = getRoomId(socket); if(!roomId) return;
         const room = rooms[roomId]; const p = room.players.find(x => x.id === socket.id);
@@ -589,7 +569,7 @@ io.on('connection', (socket) => {
         if (timeDiff < 2000) { socket.emit('notification', '¡Espera! Tiene tiempo de gracia (2s).'); return; }
 
         drawCards(roomId, room.players.indexOf(target), 2);
-        target.saidUno = true; // Evita loop de denuncias
+        target.saidUno = true; 
         io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Castigo: +2 cartas.`);
         updateAll(roomId);
     });
@@ -611,7 +591,6 @@ io.on('connection', (socket) => {
             if(p) {
                 p.isConnected = false;
                 if (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
-                     // Auto-surrender if disconnected during critical moment
                      if(socket.id === room.duelState.attackerId || socket.id === room.duelState.defenderId) {
                          eliminatePlayer(roomId, socket.id); checkWinCondition(roomId);
                      }
@@ -622,7 +601,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- HELPERS LOGICA ---
+// --- HELPERS ---
 
 function createPlayerObj(socketId, uuid, name, isAdmin) {
     return { id: socketId, uuid, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin, isConnected: true, saidUno: false, lastOneCardTime: 0 };
@@ -649,12 +628,9 @@ function applyCardEffect(roomId, player, card, chosenColor) {
     const room = rooms[roomId];
     let steps = 1;
     
-    // R (Reversa)
     if (card.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
-    // X (Salto)
     if (card.value === 'X') steps = 2;
     
-    // CASTIGOS
     if (['+2', '+4', '+12', 'SALTEO SUPREMO'].includes(card.value)) {
         let val = 0; let skips = 0;
         if(card.value === '+2') val=2;
@@ -669,19 +645,15 @@ function applyCardEffect(roomId, player, card, chosenColor) {
         io.to(roomId).emit('playSound', 'attack');
         if (val > 4) io.to(roomId).emit('shakeScreen');
 
-        // Si es +12 o SALTEO, ofrecer Duelo
         if (['+12', 'SALTEO SUPREMO'].includes(card.value)) {
             const nextPIdx = getNextPlayerIndex(roomId, 1);
             const victim = room.players[nextPIdx];
-            // Si la víctima no tiene cartas para responder (ya validado en cliente, pero por seguridad)
-            // iniciamos el modo decision
             room.gameState = 'penalty_decision';
             room.duelState = { 
                 attackerId: player.id, defenderId: victim.id, attackerName: player.name, defenderName: victim.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
                 turn: player.id, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty' 
             };
-            // Movemos el turno visualmente a la victima para que decida
             room.currentTurn = nextPIdx;
             updateAll(roomId);
             return;
@@ -735,29 +707,24 @@ function finalizeDuel(roomId) {
     if (attWins) { 
         io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
         if (!isPenaltyDuel) {
-            // RIP -> Muerte
             eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
         } else {
-            // Penalidad -> Aumenta
             io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`);
-            room.pendingPenalty += 4; // Se agregan 4 cartas más
-            room.gameState = 'playing'; // Pasa a modo robo manual
+            room.pendingPenalty += 4; 
+            room.gameState = 'playing'; 
             updateAll(roomId);
         }
     }
     else { 
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
         if (!isPenaltyDuel) {
-             // RIP Fallido -> Atacante roba, Defensor sigue vivo
-             drawCards(roomId, rooms[roomId].players.indexOf(att), 2); // Castigo pequeño por fallar RIP
+             drawCards(roomId, rooms[roomId].players.indexOf(att), 2); 
              room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
         } else {
-             // Penalidad -> Reflejada/Anulada
              io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`);
-             room.pendingPenalty = 0; room.pendingSkip = 0; // Limpia castigo a la victima
-             drawCards(roomId, rooms[roomId].players.indexOf(att), 4); // Atacante come 4
+             room.pendingPenalty = 0; room.pendingSkip = 0; 
+             drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
              room.gameState = 'playing';
-             // El turno salta a quien venía DESPUÉS de la víctima (porque la víctima ya "jugó" su defensa)
              advanceTurn(roomId, 1); 
              updateAll(roomId);
         }
@@ -772,7 +739,6 @@ function startCountdown(roomId) {
     const room = rooms[roomId]; if (room.players.length < 2) return;
     room.gameState = 'counting'; let count = 3; createDeck(roomId);
     let safeCard = room.deck.pop();
-    // Asegurar que la primera carta sea segura
     while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
         room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
     }
@@ -827,7 +793,7 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // Lista de jugadores denunciables (para el cliente)
+    // Lista de denunciables
     const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
 
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
@@ -844,6 +810,7 @@ function updateAll(roomId) {
 
 // --- CLIENTE ---
 app.get('/', (req, res) => {
+    // IMPORTANTE: USAR COMILLAS SIMPLES O ESCAPAR BACKTICKS EN EL CLIENTE PARA EVITAR ERRORES DE PARSEO
     const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
@@ -1089,7 +1056,6 @@ app.get('/', (req, res) => {
         let ladderMode = false; let ladderSelected = []; 
         let myUUID = localStorage.getItem('uno_uuid');
         
-        // Timer de Long Press
         let pressTimer;
         
         let pendingColorForRevive = null;
@@ -1112,8 +1078,7 @@ app.get('/', (req, res) => {
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
         
         function startLibreLogic(cardId) {
-            // Llamada desde el servidor para iniciar la UI
-            if(myHand.length < 3) return; // Validación extra
+            if(myHand.length < 3) return; 
             document.getElementById('action-bar').style.display = 'none';
             libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
             document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1);
@@ -1199,7 +1164,6 @@ app.get('/', (req, res) => {
             const me = s.players.find(p=>p.id===myId);
             const amITurning = me && me.isTurn;
             
-            // Auto cancelar modo escalera si no es mi turno
             if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
                  ladderMode = false; ladderSelected = [];
                  document.getElementById('btn-ladder-play').style.display = 'none';
@@ -1209,7 +1173,8 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'waiting') {
-                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin&&p.id!==myId?('<button class="kick-btn" onclick="kick(\''+p.id+'\')">X</button>'):'') + '</div>').join('');
+                // Se usan comillas simples dentro del HTML string para evitar romper el template string del servidor
+                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin&&p.id!==myId?('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>'):'') + '</div>').join('');
                 document.getElementById('lobby-users').innerHTML = list;
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
                 changeScreen('lobby'); 
@@ -1239,7 +1204,8 @@ app.get('/', (req, res) => {
                  if(s.reportTargets && s.reportTargets.length > 0) {
                      s.reportTargets.forEach(tid => {
                          const p = s.players.find(x=>x.id===tid);
-                         if(p) reportList.innerHTML += `<button class="btn-main" style="width:100%;font-size:12px;background:red;margin:2px;" onclick="socket.emit('reportUno','${tid}')">DENUNCIAR A ${p.name.toUpperCase()}</button>`;
+                         // Se usan comillas simples y concatenación para evitar error de sintaxis en el servidor
+                         if(p) reportList.innerHTML += '<button class="btn-main" style="width:100%;font-size:12px;background:red;margin:2px;" onclick="socket.emit(\\'reportUno\\',\\''+tid+'\\')">DENUNCIAR A ' + p.name.toUpperCase() + '</button>';
                      });
                  }
             } 
@@ -1250,7 +1216,6 @@ app.get('/', (req, res) => {
                     document.getElementById('rip-screen').style.display = 'flex'; 
                     document.getElementById('duel-screen').style.display = 'none'; 
                     
-                    // Personalización del Mensaje
                     const msgDiv = document.getElementById('rip-msg-custom');
                     const duelWarn = document.getElementById('duel-warning');
                     const btnAccept = document.getElementById('btn-accept-penalty');
@@ -1259,17 +1224,16 @@ app.get('/', (req, res) => {
                     
                     if (s.state === 'rip_decision') {
                         document.getElementById('rip-title').innerText = "💀 RIP 💀";
-                        msgDiv.innerText = `${s.duelInfo.attackerName} te retó a Duelo usando la carta RIP.`;
+                        msgDiv.innerText = s.duelInfo.attackerName + " te retó a Duelo usando la carta RIP.";
                         duelWarn.style.display = 'none';
                         btnAccept.style.display = 'none';
                         btnSurrender.style.display = 'inline-block';
                         btnDuel.style.display = 'inline-block';
                     } else {
-                        // Penalty Decision
                         document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️";
-                        msgDiv.innerText = `Has recibido un castigo de ${s.duelInfo.attackerName}.`;
+                        msgDiv.innerText = "Has recibido un castigo de " + s.duelInfo.attackerName + ".";
                         duelWarn.style.display = 'block';
-                        btnAccept.style.display = 'inline-block'; // ACEPTAR CASTIGO
+                        btnAccept.style.display = 'inline-block'; 
                         btnSurrender.style.display = 'none';
                         btnDuel.style.display = 'inline-block';
                     }
@@ -1341,14 +1305,11 @@ app.get('/', (req, res) => {
                 
                 if(c.value === '1 y 1/2') { d.style.fontSize = '16px'; d.style.padding = '0 5px'; }
                 
-                // LONG PRESS LOGIC
                 d.onmousedown = d.ontouchstart = (e) => {
-                    // if (e.type === 'touchstart') e.preventDefault(); 
                     pressTimer = setTimeout(() => {
                         if(!ladderMode) {
                             ladderMode = true;
                             if(navigator.vibrate) navigator.vibrate(50);
-                            // Simular el click para seleccionar esta carta
                             toggleLadderSelection(c, d);
                         }
                     }, 800);
@@ -1359,7 +1320,6 @@ app.get('/', (req, res) => {
                     if(ladderMode) {
                         toggleLadderSelection(c, d);
                     } else {
-                        // Normal click
                         handleCardClick(c);
                     }
                 };
@@ -1371,7 +1331,7 @@ app.get('/', (req, res) => {
             if(ladderSelected.includes(c.id)) { 
                 ladderSelected = ladderSelected.filter(id => id !== c.id); 
                 d.classList.remove('selected-ladder'); 
-                if(ladderSelected.length === 0) ladderMode = false; // Auto salir si vacio
+                if(ladderSelected.length === 0) ladderMode = false;
             } 
             else { 
                 ladderSelected.push(c.id); 
@@ -1382,7 +1342,6 @@ app.get('/', (req, res) => {
 
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'block') return;
-            // Libre se maneja en el server ahora para iniciar la UI
             if(c.value === 'LIBRE') { socket.emit('playCard', c.id, null, null); return; }
             
             if(c.value === 'GRACIA') {
@@ -1401,17 +1360,12 @@ app.get('/', (req, res) => {
 
             if(c.color==='negro' && c.value!=='GRACIA') { 
                 if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') {
-                    // Cartas que NO piden color inmediatamente si son negras de ataque, o si. 
-                    // En UNO original +4 pide color. Asumimos que negras piden color.
-                    // Excepto RIP si queremos que sea sorpresa? No, mejor pedir color.
-                    // Pero para Salteo y +12 sí pedimos.
                     if(c.value==='RIP') {
-                         socket.emit('playCard', c.id, null, null); // RIP no pide color (tematico muerte)
+                         socket.emit('playCard', c.id, null, null);
                     } else {
                          pendingCard=c.id; document.getElementById('color-picker').style.display='block'; 
                     }
                 } else { 
-                    // Wild, +4
                     pendingCard=c.id; document.getElementById('color-picker').style.display='block'; 
                 } 
             } 

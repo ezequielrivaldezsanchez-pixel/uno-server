@@ -891,12 +891,17 @@ app.get('/', (req, res) => {
         #chat-close { position: absolute; top: 5px; right: 10px; color: #aaa; cursor: pointer; font-weight: bold; font-family: monospace; }
         
         #rules-btn { position: fixed; top: 110px; left: 20px; width: 50px; height: 50px; background: #9b59b6; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
-        #rules-modal, #manual-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 500px; max-height: 80vh; background: rgba(0,0,0,0.95); border: 2px solid #9b59b6; display: none; flex-direction: column; z-index: 50001; border-radius: 10px; padding: 20px; color: white; overflow-y: auto; }
-        #rules-close, #manual-close { position: absolute; top: 10px; right: 15px; color: white; font-size: 20px; cursor: pointer; font-weight: bold; }
+        #rules-modal, #manual-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 95%; max-width: 600px; max-height: 90vh; background: rgba(15, 15, 15, 0.98); border: 2px solid #9b59b6; display: none; flex-direction: column; z-index: 50001; border-radius: 10px; padding: 20px; color: white; overflow-y: auto; box-shadow: 0 0 30px rgba(155, 89, 182, 0.5); }
+        #rules-close, #manual-close { position: absolute; top: 10px; right: 15px; color: white; font-size: 24px; cursor: pointer; font-weight: bold; z-index:10; }
         
         .rule-row { display: flex; align-items: center; margin-bottom: 15px; text-align: left; }
         .rule-badge { width: 40px; height: 56px; border-radius: 4px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-weight: bold; margin-right: 15px; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 5px black; }
         .rule-text { font-size: 14px; line-height: 1.4; }
+
+        /* Manual Styles */
+        .man-card { display: inline-flex; justify-content: center; align-items: center; width: 35px; height: 50px; border-radius: 4px; border: 2px solid white; font-weight: bold; font-size: 14px; margin: 2px; color: white; text-shadow: 1px 1px 0 #000; box-shadow: 1px 1px 3px rgba(0,0,0,0.5); vertical-align: middle; }
+        .man-example { background: rgba(255,255,255,0.1); padding: 10px; border-radius: 8px; margin: 5px 0; text-align: center; }
+        .man-arrow { font-size: 20px; color: gold; margin: 0 5px; vertical-align: middle; }
 
         #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
         .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
@@ -986,19 +991,97 @@ app.get('/', (req, res) => {
 
     <div id="manual-modal">
         <div id="manual-close" onclick="toggleManual()">X</div>
-        <h2 style="color:gold; text-align:center;">MANUAL COMPLETO</h2>
-        <div class="rule-text">
-            <p><b>OBJETIVO:</b> Quedarte sin cartas.</p>
-            <h3>MECÁNICAS</h3>
-            <p><b>Selección Múltiple:</b> Mantén presionada una carta 800ms para seleccionar varias y tirar escaleras.</p>
-            <p><b>UNO y 1/2:</b> Cuando te quede 1 carta, toca el botón Naranja. Tienes 2 segundos de inmunidad. Si no, pueden denunciarte.</p>
-            <h3>CARTAS ESPECIALES</h3>
-            <p><b>RIP:</b> Desafía a duelo al siguiente. El perdedor queda ELIMINADO.</p>
-            <p><b>SALTEO SUPREMO:</b> El siguiente pierde 4 turnos y roba 4 cartas.</p>
-            <p><b>+12:</b> El siguiente roba 12 cartas.</p>
-            <p><b>DUELOS DE CASTIGO:</b> Si te tiran +12 o Salteo, puedes desafiar a duelo. Si ganas, devuelves el castigo (el agresor roba 4). Si pierdes, ¡el castigo aumenta!</p>
-            <p><b>LIBRE ALBEDRÍO:</b> Defiende de penalidades de robo. Te permite regalar una carta a otro y descartar una.</p>
+        <h2 style="color:gold; text-align:center;">MANUAL DE JUEGO</h2>
+        
+        <div style="padding:0 10px;">
+            <h3>1. OBJETIVO</h3>
+            <p>Quedarte sin cartas antes que nadie. Debes ir descartando tu mano en la pila central.</p>
+            <p>🃏 <b>El Mazo:</b> Contiene +100 cartas, incluyendo colores (Rojo, Azul, Verde, Amarillo) y cartas Negras (Especiales). Si se acaba, ¡se regenera automáticamente!</p>
+
+            <hr style="border-color:#555;">
+
+            <h3>2. JUGADAS BÁSICAS</h3>
+            <p>En tu turno, puedes tirar una carta si coincide en <b>COLOR</b> o <b>NÚMERO</b> con la carta de la mesa.</p>
+            <div class="man-example">
+                <p>Mesa: <span class="man-card" style="background:#ff5252">5</span></p>
+                <span class="man-arrow">⬇️</span>
+                <p>Puedes tirar: <span class="man-card" style="background:#ff5252">8</span> (Color) o <span class="man-card" style="background:#448aff">5</span> (Número)</p>
+            </div>
+
+            <hr style="border-color:#555;">
+
+            <h3>3. JUGADAS MAESTRAS (MODO SELECCIÓN)</h3>
+            <p>🖐️ <b>Pulsación Larga:</b> Mantén apretada una carta para activar el "Modo Selección" y elegir varias cartas.</p>
+
+            <h4>A) Escaleras (3+ cartas)</h4>
+            <p>Si tienes una secuencia de números del <b>MISMO COLOR</b>, ¡tírala toda junta!</p>
+            <div class="man-example">
+                <span class="man-card" style="background:#69f0ae">3</span>
+                <span class="man-card" style="background:#69f0ae">4</span>
+                <span class="man-card" style="background:#69f0ae">5</span>
+                <p><i>¡Ascendente o Descendente!</i></p>
+            </div>
+            <p>💡 <b>Escalera Integrada:</b> Si en la mesa hay un <span class="man-card" style="background:#69f0ae">3</span>, puedes tirar un <span class="man-card" style="background:#69f0ae">4</span> y un <span class="man-card" style="background:#69f0ae">5</span> de tu mano.</p>
+
+            <h4>B) El Combo Matemático (1½)</h4>
+            <p>La carta "1 y 1/2" vale 1.5. Dos de estas suman 3. Puedes tirarlas juntas SOLO sobre un 3.</p>
+            <div class="man-example">
+                <p>Mesa: <span class="man-card" style="background:#448aff">3</span></p>
+                <span class="man-arrow">⬇️</span>
+                <span class="man-card" style="background:#448aff; font-size:10px">1½</span> + 
+                <span class="man-card" style="background:#448aff; font-size:10px">1½</span>
+            </div>
+
+            <hr style="border-color:#555;">
+
+            <h3>4. SAFF (ROBO DE TURNO)</h3>
+            <p>Si tienes una carta <b>IDÉNTICA</b> (mismo número y color) a la de la mesa, ¡tírala aunque no sea tu turno!</p>
+            <div class="man-example">
+                <p>Mesa: <span class="man-card" style="background:#ffd740; color:black">7</span></p>
+                <p>Tu mano: <span class="man-card" style="background:#ffd740; color:black">7</span> ¡TÍRALA YA!</p>
+            </div>
+            <p><i>Le robarás el turno a quien le tocaba.</i></p>
+
+            <hr style="border-color:#555;">
+
+            <h3>5. CARTAS DE ATAQUE</h3>
+            <p>💥 <b>+2, +4, +12:</b> Hacen que el siguiente jugador robe esa cantidad. ¡Se acumulan!</p>
+            <p>🚫 <b>X (Salto):</b> El siguiente pierde el turno.</p>
+            <p>🔄 <b>R (Reversa):</b> Cambia el sentido de la ronda.</p>
+            <p>👑 <b>SS (Salteo Supremo):</b> Carta negra. El siguiente pierde 4 turnos y roba 4 cartas.</p>
+
+            <hr style="border-color:#555;">
+
+            <h3>6. CARTAS SUPREMAS</h3>
+            <div style="display:flex; align-items:center; margin-bottom:10px;">
+                <span class="man-card" style="background:black; border-color:#666">🪦</span>
+                <div style="margin-left:10px;"><b>RIP:</b> Retas a un <b>Duelo a Muerte</b> (Piedra, Papel o Tijera elemental) al siguiente jugador. El que pierde queda <b>ELIMINADO</b> de la ronda.</div>
+            </div>
+            <div style="display:flex; align-items:center; margin-bottom:10px;">
+                <span class="man-card" style="background:white; color:red; border-color:gold">❤️</span>
+                <div style="margin-left:10px;"><b>GRACIA DIVINA:</b> La carta más poderosa. Te salva de TODO (+12, RIP, SS). También sirve para revivir a un muerto o como comodín.</div>
+            </div>
+            <div style="display:flex; align-items:center; margin-bottom:10px;">
+                <span class="man-card" style="background:black">🕊️</span>
+                <div style="margin-left:10px;"><b>LIBRE ALBEDRÍO:</b> Te defiende de robos (+2/+4/+12). Te permite regalar 1 carta a otro jugador y descartar 1 carta de tu mano.</div>
+            </div>
+
+            <hr style="border-color:#555;">
+
+            <h3>7. BOTÓN UNO Y 1/2</h3>
+            <p>Cuando te quede <b>1 sola carta</b>, ¡toca el botón naranja RÁPIDO! 📢</p>
+            <p>Si pasan 2 segundos y no lo dijiste, cualquiera te puede <b>DENUNCIAR</b> y comerás +2 cartas.</p>
+
+            <hr style="border-color:#555;">
+            
+            <h3>8. DUELOS DE CASTIGO</h3>
+            <p>Si te tiran un <b>+12</b> o un <b>Salteo Supremo</b>, puedes aceptar el castigo o... ¡Batirte a Duelo! ⚔️</p>
+            <ul>
+                <li><b>Si ganas:</b> Devuelves el castigo (el agresor come 4 cartas).</li>
+                <li><b>Si pierdes:</b> El castigo aumenta (+16 cartas o peor).</li>
+            </ul>
         </div>
+        <br><br>
     </div>
 
     <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA</h1><h2 id="winner-name"></h2></div>

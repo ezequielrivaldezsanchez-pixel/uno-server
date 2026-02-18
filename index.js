@@ -12,7 +12,7 @@ const io = require('socket.io')(http, {
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-// Pesos para ordenamiento (0 tiene prioridad absoluta negativa para ir primero)
+// Pesos para ordenamiento
 const sortValWeights = {
     '0': -1, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
     '+2': 20, 'X': 21, 'R': 22,
@@ -61,26 +61,20 @@ function createDeck(roomId) {
     const room = rooms[roomId]; if(!room) return;
     room.deck = [];
     
-    // Generación del Mazo (Total 130 cartas)
     colors.forEach(color => {
-        // El '0' debe estar 2 veces por color
         room.deck.push({ color, value: '0', type: 'normal', id: Math.random().toString(36) });
         room.deck.push({ color, value: '0', type: 'normal', id: Math.random().toString(36) });
-        
-        // El resto (1-9, especiales color) x2
         values.forEach(val => {
             room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
             room.deck.push({ color, value: val, type: 'normal', id: Math.random().toString(36) });
         });
     });
 
-    // Negras Básicas
     for (let i = 0; i < 4; i++) {
         room.deck.push({ color: 'negro', value: 'color', type: 'wild', id: Math.random().toString(36) });
         room.deck.push({ color: 'negro', value: '+4', type: 'wild', id: Math.random().toString(36) });
     }
     
-    // Negras Supremas
     const addSpecial = (val, count) => {
         for(let k=0; k<count; k++) room.deck.push({ color: 'negro', value: val, type: 'special', id: Math.random().toString(36) });
     };
@@ -91,7 +85,6 @@ function createDeck(roomId) {
     addSpecial('LIBRE', 2);
     addSpecial('SALTEO SUPREMO', 2);
     
-    // Barajar
     for (let i = room.deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]];
@@ -184,7 +177,6 @@ io.on('connection', (socket) => {
         for(let id of cardIds) { const c = tempHand.find(x => x.id === id); if(!c) return; playCards.push(c); }
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // 1. Combo 1 y 1/2
         if (playCards.length === 2 && playCards[0].value === '1 y 1/2' && playCards[1].value === '1 y 1/2') {
             const c1 = playCards[0]; const c2 = playCards[1];
             if (c1.color !== c2.color) { socket.emit('notification', '🚫 Deben ser del mismo color.'); return; }
@@ -198,7 +190,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // 2. Escaleras
         const firstColor = playCards[0].color;
         if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con color.'); return; }
         if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Mismo color requerido.'); return; }
@@ -213,7 +204,6 @@ io.on('connection', (socket) => {
 
         let isValidPlay = false;
 
-        // Escalera Integrada
         if (playCards.length === 2) {
             const topIdx = ladderOrder.indexOf(top.value);
             if (topIdx !== -1 && top.color === firstColor) {
@@ -228,7 +218,6 @@ io.on('connection', (socket) => {
                 } else { socket.emit('notification', '🚫 No conectan con la mesa.'); return; }
             } else { socket.emit('notification', '🚫 Color/Número mesa inválido.'); return; }
         } 
-        // Escalera Autónoma
         else {
              let colorMatch = (firstColor === room.activeColor);
              let valueMatch = false;
@@ -243,11 +232,8 @@ io.on('connection', (socket) => {
         if (isValidPlay) {
             removeCards(player, cardIds);
             room.discardPile.push(...playCards); room.activeColor = firstColor;
-            
-            // ANIMACION ESCALERA: Emitir evento con las cartas para que el cliente haga la animación visual
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
             io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}!`); io.to(roomId).emit('playSound', 'soft');
-            
             checkUnoCheck(roomId, player);
             if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
         }
@@ -260,7 +246,6 @@ io.on('connection', (socket) => {
         if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
         if (player.hand.length < 3) return; 
 
-        // 1. Regalo
         const libreIdx = player.hand.findIndex(c => c.id === data.cardId); if (libreIdx === -1) return;
         const libreCard = player.hand.splice(libreIdx, 1)[0]; room.discardPile.push(libreCard); 
 
@@ -270,7 +255,6 @@ io.on('connection', (socket) => {
         const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
         io.to(target.id).emit('handUpdate', target.hand);
 
-        // 2. Descarte
         const dId = data.discardId; 
         const dIdx = player.hand.findIndex(c => c.id === dId);
         if (dIdx === -1) { finishRound(roomId, player); return; }
@@ -346,7 +330,6 @@ io.on('connection', (socket) => {
         const top = room.discardPile[room.discardPile.length - 1];
 
         if (cardIndex !== -1) {
-            // Regla última carta: SOLO NUMEROS, 1y1/2 o GRACIA.
             if (player.hand.length === 1) {
                 const isStrictNumber = /^[0-9]$/.test(card.value);
                 const isUnoYMedio = card.value === '1 y 1/2';
@@ -357,7 +340,6 @@ io.on('connection', (socket) => {
             if (top.color !== 'negro') room.activeColor = top.color;
             
             let isSaff = false;
-            // SAFF
             if (pIndex !== room.currentTurn) {
                 const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
                 if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
@@ -370,7 +352,6 @@ io.on('connection', (socket) => {
 
             if (pIndex === room.currentTurn && !isSaff) {
                 if (room.pendingPenalty > 0) {
-                    // DEFENSAS
                     if (card.value === 'GRACIA') { /* Pass */ }
                     else if (card.value === 'LIBRE' && room.pendingSkip === 0) { /* Pass */ }
                     else {
@@ -385,7 +366,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // LIBRE DEFENSIVO
         if (room.pendingPenalty > 0 && card.value === 'LIBRE' && room.pendingSkip === 0 && cardIndex !== -1) {
              player.hand.splice(cardIndex, 1); room.discardPile.push(card);
              io.to(roomId).emit('notification', `🛡️ ${player.name} usó LIBRE ALBEDRÍO para bloquear el castigo.`);
@@ -395,11 +375,8 @@ io.on('connection', (socket) => {
              return;
         }
 
-        // GRACIA DIVINA
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead);
-            
-            // Defensa de Castigo
             if (room.pendingPenalty > 0 && cardIndex !== -1) {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
                 io.to(roomId).emit('playSound', 'divine');
@@ -410,8 +387,6 @@ io.on('connection', (socket) => {
                 if (player.hand.length === 0) { finishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
-            
-            // Revivir
             if (deadPlayers.length > 0) {
                 if(deadPlayers.length === 1) {
                     socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: card.id }); return; 
@@ -450,18 +425,27 @@ io.on('connection', (socket) => {
 
         if (cardIndex === -1) return; 
 
-        // RIP
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no evita castigos.'); return; }
             if (getAlivePlayersCount(roomId) < 2) { 
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
                 advanceTurn(roomId, 1); updateAll(roomId); return; 
             }
+            
+            // CORRECCIÓN 4: PARADOJA DEL AUTO-DUELO
+            // Evitar que si solo hay 2 jugadores y el otro está salteado, o por error de cálculo,
+            // el sistema asigne al propio jugador como víctima.
+            const victimIdx = getNextPlayerIndex(roomId, 1);
+            if (victimIdx === pIndex) {
+                 socket.emit('notification', '⛔ No puedes desafiarte a duelo a ti mismo, arroja otra carta o recoge del mazo.');
+                 return;
+            }
+
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
             checkUnoCheck(roomId, player);
             
             room.gameState = 'rip_decision';
-            const attacker = player; const victimIdx = getNextPlayerIndex(roomId, 1); const defender = room.players[victimIdx];
+            const attacker = player; const defender = room.players[victimIdx];
             room.duelState = { 
                 attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
@@ -470,13 +454,8 @@ io.on('connection', (socket) => {
             updateAll(roomId); return;
         }
 
-        // LIBRE OFENSIVO
-        if (card.value === 'LIBRE') {
-             socket.emit('startLibreLogic', card.id);
-             return;
-        }
+        if (card.value === 'LIBRE') { socket.emit('startLibreLogic', card.id); return; }
 
-        // EJECUTAR CARTA NORMAL
         player.hand.splice(cardIndex, 1); room.discardPile.push(card);
         io.to(roomId).emit('cardPlayedEffect', { color: card.color });
         if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; else if (card.color !== 'negro') room.activeColor = card.color;
@@ -500,6 +479,7 @@ io.on('connection', (socket) => {
                     updateAll(roomId); 
                 } else { 
                     if (room.pendingSkip > 0) {
+                        // Se aplica el Skip solo al finalizar el robo
                         io.to(roomId).emit('notification', `😓 Pierdes ${room.pendingSkip} turnos.`); 
                         const skips = room.pendingSkip; room.pendingSkip = 0;
                         advanceTurn(roomId, skips + 1);
@@ -570,7 +550,6 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     });
     
-    // UNO y 1/2
     socket.on('sayUno', () => {
         const roomId = getRoomId(socket); if(!roomId) return;
         const room = rooms[roomId]; 
@@ -743,8 +722,10 @@ function finalizeDuel(roomId) {
         if (!isPenaltyDuel) {
             eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
         } else {
+            // CORRECCIÓN 3: Si es castigo y pierde el defensor, se asegura de que el skip se mantenga
             io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`);
-            room.pendingPenalty += 4; 
+            room.pendingPenalty += 4;
+            // No reseteamos pendingSkip aquí para que al pagar el castigo, también pierda el turno si era SS
             room.gameState = 'playing'; 
             updateAll(roomId);
         }
@@ -757,6 +738,7 @@ function finalizeDuel(roomId) {
              room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId);
         } else {
              io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`);
+             // Si el defensor gana, se libera de todo.
              room.pendingPenalty = 0; room.pendingSkip = 0; 
              drawCards(roomId, rooms[roomId].players.indexOf(att), 4); 
              room.gameState = 'playing';
@@ -829,7 +811,6 @@ function updateAll(roomId) {
     const room = rooms[roomId]; if(!room) return;
     let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
     
-    // Lista de denunciables (filtrando al propio usuario en cliente, aqui enviamos IDs)
     const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
 
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
@@ -914,7 +895,6 @@ app.get('/', (req, res) => {
         .hand-card:active { transform: scale(0.95); }
         .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
         
-        /* Animacion de entrada de cartas nuevas */
         @keyframes slideUp { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .drawn-card { animation: slideUp 0.5s ease-out; border: 2px solid gold; }
 
@@ -962,11 +942,9 @@ app.get('/', (req, res) => {
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 30px; }
         
-        /* BOTÓN UNO CORREGIDO - ELEVADO PARA NO TAPAR BOTONES */
         #uno-main-btn { position: fixed; bottom: 280px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: #e67e22; border: 3px solid white; font-weight: bold; z-index: 30000; font-size: 11px; display: none; align-items: center; justify-content: center; text-align: center; box-shadow: 0 0 10px orange; cursor: pointer; }
         #uno-menu { display: none; position: fixed; bottom: 350px; right: 20px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 160px; border: 1px solid #e67e22; }
         
-        /* Animacion voladora para escalera */
         .flying-card { position: fixed; width: 70px; height: 100px; background: #fff; border-radius: 8px; z-index: 50000; transition: all 0.5s ease-in-out; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; }
     </style>
 </head>
@@ -1027,8 +1005,8 @@ app.get('/', (req, res) => {
         <div id="rules-close" onclick="toggleRules()">X</div>
         <h2 style="color:gold; text-align:center; border-bottom:1px solid #555; padding-bottom:10px;">Reglamento Rápido</h2>
         <p style="text-align:center; font-style:italic;">¡Mantén pulsada una carta para selección múltiple!</p>
-        <div class="rule-row"><div class="rule-badge" style="background:#000; color:white; border-color:#666;">🪦</div><div class="rule-text"><b>RIP:</b> Duelo a muerte. Perdedor eliminado.</div></div>
-        <div class="rule-row"><div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div><div class="rule-text"><b>GRACIA DIVINA:</b> Inmune a todo. Anula cartas negras.</div></div>
+        <div class="rule-row"><div class="rule-badge" style="background:#000; color:white; border-color:#666;">🪦</div><div class="rule-text"><b>RIP:</b> Duelo a muerte. Si atacas y pierdes, robas 4 cartas (NO te mueres).</div></div>
+        <div class="rule-row"><div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div><div class="rule-text"><b>GRACIA DIVINA:</b> Inmune a todo. Revive muertos. Única especial para cerrar.</div></div>
         <div class="rule-row"><div class="rule-badge" style="background:#000; color:white;">🕊️</div><div class="rule-text"><b>LIBRE ALBEDRÍO:</b> Defiende de +2/+4/+12. Regala 1, Descarta 1, Cambia Color.</div></div>
         <div class="rule-row"><div class="rule-badge" style="background:#000; color:purple;">SS</div><div class="rule-text"><b>SALTEO SUPREMO:</b> Rival pierde 4 turnos y roba 4 cartas.</div></div>
         <div class="rule-row"><div class="rule-badge" style="background:#e67e22;">📢</div><div class="rule-text"><b>UNO y 1/2:</b> Grita si te queda 1 carta. Si te denuncian tras 2s, +2 cartas.</div></div>
@@ -1102,7 +1080,7 @@ app.get('/', (req, res) => {
             </div>
             <div style="display:flex; align-items:center; margin-bottom:10px;">
                 <span class="man-card" style="background:white; color:red; border-color:gold">❤️</span>
-                <div style="margin-left:10px;"><b>GRACIA DIVINA:</b> La carta más poderosa. Te salva de TODO. Es la <b>única carta especial</b> que permite cerrar el juego (última carta).</div>
+                <div style="margin-left:10px;"><b>GRACIA DIVINA:</b> Poder total. Inmune a todo. Revive muertos. Única especial válida para ganar.</div>
             </div>
             <div style="display:flex; align-items:center; margin-bottom:10px;">
                 <span class="man-card" style="background:black">🕊️</span>
@@ -1320,13 +1298,11 @@ app.get('/', (req, res) => {
             const me = s.players.find(p=>p.id===myId);
             const amITurning = me && me.isTurn;
             
-            // Si el estado es de duelo o decisión, cerrar menús y botones UNO
             if(s.state === 'dueling' || s.state === 'rip_decision' || s.state === 'penalty_decision') {
                 document.getElementById('uno-main-btn').style.display = 'none';
                 document.getElementById('uno-menu').style.display = 'none';
-                forceCloseChat(); // Cierra manual, reglas y chat
+                forceCloseChat(); 
             } else if (s.state === 'playing') {
-                // Volver a mostrar el botón UNO si volvemos a jugar
                 document.getElementById('uno-main-btn').style.display = 'flex';
             }
 
@@ -1351,7 +1327,6 @@ app.get('/', (req, res) => {
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
                  document.getElementById('game-area').style.display = 'flex';
                  document.getElementById('hand-zone').style.display = 'flex';
-                 // El botón se muestra arriba, pero aquí aseguramos visibilidad si no estamos en duelo
                  if(s.state === 'playing') document.getElementById('uno-main-btn').style.display = 'flex';
                  
                  if(document.getElementById('libre-modal').style.display !== 'flex') {
@@ -1369,7 +1344,6 @@ app.get('/', (req, res) => {
                          if(tid !== myId) {
                              const p = s.players.find(x=>x.id===tid);
                              if(p) {
-                                 // MÉTODO SEGURO: Usar DOM Elements en lugar de string concatenation
                                  const btn = document.createElement('button');
                                  btn.className = 'btn-main';
                                  btn.style.width = '100%';
@@ -1480,7 +1454,6 @@ app.get('/', (req, res) => {
                 const d = document.createElement('div'); d.className = 'hand-card';
                 if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
                 
-                // Animacion de nuevas cartas (si no son las iniciales)
                 if (oldLen !== undefined && oldLen > 0 && index >= startAnimIdx) {
                     d.classList.add('drawn-card');
                 }
@@ -1707,11 +1680,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-    `;
-    res.send(htmlContent);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

@@ -575,7 +575,6 @@ io.on('connection', (socket) => {
         const roomId = getRoomId(socket); if(!roomId) return;
         const room = rooms[roomId]; 
         
-        // CORRECCIÓN CRÍTICA: Bloquear acción si hay un duelo en curso
         if (room.gameState !== 'playing') return;
 
         const p = room.players.find(x => x.id === socket.id);
@@ -590,7 +589,6 @@ io.on('connection', (socket) => {
         const roomId = getRoomId(socket); if(!roomId) return;
         const room = rooms[roomId]; 
 
-        // CORRECCIÓN CRÍTICA: Bloquear acción si hay un duelo en curso
         if (room.gameState !== 'playing') {
             socket.emit('notification', '⛔ No puedes denunciar durante un duelo/castigo.');
             return;
@@ -848,7 +846,6 @@ function updateAll(roomId) {
 
 // --- CLIENTE ---
 app.get('/', (req, res) => {
-    // IMPORTANTE: USAR COMILLAS SIMPLES O ESCAPAR BACKTICKS EN EL CLIENTE PARA EVITAR ERRORES DE PARSEO
     const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
@@ -1371,7 +1368,18 @@ app.get('/', (req, res) => {
                      s.reportTargets.forEach(tid => {
                          if(tid !== myId) {
                              const p = s.players.find(x=>x.id===tid);
-                             if(p) reportList.innerHTML += '<button class="btn-main" style="width:100%;font-size:12px;background:red;margin:2px;" onclick="socket.emit(\\'reportUno\\',\\''+tid+'\\')">DENUNCIAR A ' + p.name.toUpperCase() + '</button>';
+                             if(p) {
+                                 // MÉTODO SEGURO: Usar DOM Elements en lugar de string concatenation
+                                 const btn = document.createElement('button');
+                                 btn.className = 'btn-main';
+                                 btn.style.width = '100%';
+                                 btn.style.fontSize = '12px';
+                                 btn.style.background = '#c0392b';
+                                 btn.style.margin = '2px';
+                                 btn.innerText = 'DENUNCIAR A ' + p.name.toUpperCase();
+                                 btn.onclick = function() { socket.emit('reportUno', tid); };
+                                 reportList.appendChild(btn);
+                             }
                          }
                      });
                  }
@@ -1598,7 +1606,6 @@ app.get('/', (req, res) => {
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
         
         function toggleUnoMenu() { 
-            // Bloqueo de cliente por si acaso
             if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
             const m = document.getElementById('uno-menu'); 
             m.style.display = (m.style.display==='flex'?'none':'flex'); 
@@ -1653,7 +1660,6 @@ app.get('/', (req, res) => {
         });
 
         socket.on('ladderAnimate', (data) => {
-            // Animacion visual de la escalera
             data.cards.forEach((c, i) => {
                 setTimeout(() => {
                     const el = document.createElement('div');
@@ -1661,13 +1667,10 @@ app.get('/', (req, res) => {
                     el.style.backgroundColor = getBgColor(c);
                     el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white';
                     el.innerText = getCardText(c);
-                    // Empieza abajo
                     el.style.bottom = '150px';
                     el.style.left = '50%';
                     el.style.transform = 'translateX(-50%)';
                     document.body.appendChild(el);
-                    
-                    // Vuela hacia la pila (arriba)
                     setTimeout(() => {
                         el.style.bottom = '50%';
                         el.style.opacity = '0';
@@ -1675,7 +1678,7 @@ app.get('/', (req, res) => {
                     }, 50);
 
                     setTimeout(() => el.remove(), 600);
-                }, i * 200); // Retraso entre cartas
+                }, i * 200);
             });
         });
 
@@ -1704,3 +1707,11 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
+    `;
+    res.send(htmlContent);
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

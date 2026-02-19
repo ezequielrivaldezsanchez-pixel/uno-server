@@ -948,13 +948,13 @@ function updateAll(roomId) {
     
     const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
 
-    const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
-
     // Leaderboard for client
     const leaderboard = Object.keys(room.scores).map(uid => {
              const pl = room.players.find(x => x.uuid === uid);
              return { name: pl ? pl.name : '???', score: room.scores[uid] };
     }).sort((a,b) => b.score - a.score);
+
+    const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
 
     const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard };
     room.players.forEach(p => {
@@ -1376,15 +1376,15 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             
-            // Render Leaderboard in Modal
+            // CORRECCION DE SINTAXIS: Uso de comillas simples para evitar romper el string del servidor
             if(s.leaderboard) {
                 const slist = document.getElementById('score-list');
-                slist.innerHTML = s.leaderboard.map((u, i) => 
-                    `<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;">
-                        <span>${i+1}. ${u.name}</span>
-                        <span style="color:gold; font-weight:bold;">${parseFloat(u.score).toFixed(1)}</span>
-                    </div>`
-                ).join('');
+                slist.innerHTML = s.leaderboard.map(function(u, i) {
+                    return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;">' +
+                        '<span>' + (i+1) + '. ' + u.name + '</span>' +
+                        '<span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span>' +
+                    '</div>';
+                }).join('');
             }
 
             if(s.state === 'waiting' || s.state === 'playing') {

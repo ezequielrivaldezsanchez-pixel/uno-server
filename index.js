@@ -853,20 +853,21 @@ app.get('/', (req, res) => {
         .libre-step { display: none; width: 100%; text-align: center; }
         .libre-step.active { display: block; }
         
-        .hud-btn { position: fixed; width: 55px; height: 55px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 24px; cursor: pointer; transition: all 0.2s; }
+        /* BOTONES HUD: Se les quita el top fijo por CSS, se maneja por JS */
+        .hud-btn { position: fixed; width: 55px; height: 55px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 24px; cursor: pointer; transition: transform 0.2s, top 0.3s ease-out; }
         .hud-btn:active { transform: scale(0.9); }
         
-        #score-btn { top: 20px; left: 20px; background: gold; color: black; }
-        #rules-btn { top: 90px; left: 20px; background: #9b59b6; color: white; }
-        #uno-main-btn { top: 20px; right: 20px; background: #e67e22; font-size: 11px; font-weight: bold; text-align: center; line-height: 1.2; }
-        #chat-btn { top: 90px; right: 20px; background: #3498db; }
+        #score-btn { left: 20px; background: gold; color: black; }
+        #rules-btn { left: 20px; background: #9b59b6; color: white; }
+        #uno-main-btn { right: 20px; background: #e67e22; font-size: 11px; font-weight: bold; text-align: center; line-height: 1.2; }
+        #chat-btn { right: 20px; background: #3498db; }
 
-        #players-zone { flex: 0 0 auto; padding: 30px 10px 10px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; }
+        #players-zone { flex: 0 0 auto; padding: 30px 10px 10px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; position: relative; }
         .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
         
-        #alert-zone { position: fixed; top: 160px; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; }
+        #alert-zone { position: fixed; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; transition: top 0.3s ease-out; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; pointer-events: auto; }
         
@@ -884,7 +885,7 @@ app.get('/', (req, res) => {
         #btn-sort { background: #34495e; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #2c3e50; }
 
         #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; }
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: all 0.2s; white-space: nowrap; }
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: transform 0.2s; white-space: nowrap; }
         .hand-card:active { transform: scale(0.95); }
         .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
         
@@ -895,7 +896,7 @@ app.get('/', (req, res) => {
         .color-circle { width: 70px; height: 70px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 4px solid #fff; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         
-        #chat-win { position: fixed; top: 160px; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; }
+        #chat-win { position: fixed; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; transition: top 0.3s ease-out; }
         #chat-badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: none; justify-content: center; align-items: center; font-weight: bold; border: 2px solid white; }
         
         /* Estilos Miniaturas para Manual */
@@ -929,7 +930,7 @@ app.get('/', (req, res) => {
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 30px; }
         
-        #uno-menu { display: none; position: fixed; top: 90px; right: 80px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 160px; border: 1px solid #e67e22; }
+        #uno-menu { display: none; position: fixed; right: 80px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 160px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
         
         .flying-card { position: fixed; width: 70px; height: 100px; background: #fff; border-radius: 8px; z-index: 50000; transition: all 0.5s ease-in-out; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; }
     </style>
@@ -1122,6 +1123,24 @@ app.get('/', (req, res) => {
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
+        // --- FUNCIÓN DINÁMICA DE POSICIONAMIENTO HUD ---
+        function repositionHUD() {
+            const pZone = document.getElementById('players-zone');
+            if (!pZone || pZone.offsetHeight === 0) return;
+            const rect = pZone.getBoundingClientRect();
+            const baseTop = rect.bottom + 15; // 15px de margen
+            
+            const upperElements = ['score-btn', 'uno-main-btn'];
+            upperElements.forEach(function(id) { const el = document.getElementById(id); if(el) el.style.top = baseTop + 'px'; });
+            
+            const lowerElements = ['rules-btn', 'chat-btn', 'uno-menu', 'chat-win'];
+            lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) el.style.top = (baseTop + 65) + 'px'; });
+
+            const alertZone = document.getElementById('alert-zone');
+            if(alertZone) alertZone.style.top = (baseTop + 40) + 'px';
+        }
+        window.addEventListener('resize', repositionHUD);
+
         socket.on('connect', () => { 
             document.getElementById('reconnect-overlay').style.display = 'none';
             myId = socket.id; 
@@ -1222,8 +1241,6 @@ app.get('/', (req, res) => {
             document.body.className = ''; 
             if(s.state === 'playing') {
                  changeScreen('game-area'); 
-                 // RE-SHOW HUD BUTTONS SAFELY
-                 document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  
                  document.body.classList.add('playing-state'); 
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
@@ -1232,6 +1249,13 @@ app.get('/', (req, res) => {
                  if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
+                 // Renderizar nombres de jugadores
+                 document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
+                 
+                 // Mostrar y Reposicionar HUD (Esperando a que la caja tome su nueva altura)
+                 document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
+                 requestAnimationFrame(repositionHUD);
+
                  const reportList = document.getElementById('report-list'); reportList.innerHTML = '';
                  if(s.reportTargets && s.reportTargets.length > 0) {
                      s.reportTargets.forEach(tid => {
@@ -1273,7 +1297,6 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'playing') {
-                document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
                 if(s.topCard) {
                     const tc = s.topCard; const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white')); el.innerText = getCardText(tc);
                     if(tc.value === '1 y 1/2') { el.style.fontSize = '20px'; el.style.padding = '0 5px'; } else { el.style.fontSize = '24px'; el.style.padding = '0'; }
@@ -1371,7 +1394,6 @@ app.get('/', (req, res) => {
         socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
         
-        // --- ANIMACIÓN CINEMATOGRÁFICA FIN DE RONDA ---
         socket.on('roundOver', async d => {
             document.getElementById('action-bar').style.display='none';
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
@@ -1379,7 +1401,6 @@ app.get('/', (req, res) => {
             document.getElementById('stage-ranking').style.display = 'none';
             document.getElementById('round-overlay').style.display = 'flex';
 
-            // FASE 1
             document.getElementById('stage-collection').style.display = 'flex';
             document.getElementById('r-winner-name').innerText = d.winner;
             const wPtsEl = document.getElementById('r-winner-pts');
@@ -1423,7 +1444,6 @@ app.get('/', (req, res) => {
             
             await new Promise(r => setTimeout(r, 2000)); 
 
-            // FASE 2
             document.getElementById('stage-collection').style.display = 'none';
             document.getElementById('stage-ranking').style.display = 'flex';
             const rankList = document.getElementById('ranking-list');

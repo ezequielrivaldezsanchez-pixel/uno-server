@@ -1021,7 +1021,7 @@ app.get('/', (req, res) => {
     <div id="login" class="screen" style="display:flex;"><h1 style="font-size:60px; margin:0;">UNO y 1/2</h1><input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15"><button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button><button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button></div>
     <div id="join-menu" class="screen"><h1>Unirse</h1><input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;"><button class="btn-main" onclick="joinRoom()">Entrar</button><button class="btn-main" onclick="backToLogin()">Volver</button></div>
     <div id="lobby" class="screen">
-        <button onclick="toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer;">📖 MANUAL</button>
+        <button onclick="toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
         <h1>Sala: <span id="lobby-code" style="color:gold;"></span></h1>
         <div id="lobby-link-container"><button onclick="copyLink()">🔗 Link</button></div>
         <div id="lobby-users"></div>
@@ -1515,9 +1515,17 @@ app.get('/', (req, res) => {
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
             document.getElementById(id).style.display='flex'; 
             
-            // Mostrar chat en Lobby y Juego
-            if (id === 'lobby' || id === 'game-area') {
-                document.getElementById('chat-btn').style.display = 'flex';
+            // Mostrar chat en Lobby y Juego con posiciones específicas
+            if (id === 'lobby') {
+                const cb = document.getElementById('chat-btn');
+                cb.style.display = 'flex';
+                cb.style.top = '65px'; // Debajo del manual
+                cb.style.right = '10px'; // Alineado a la derecha
+            } else if (id === 'game-area') {
+                const cb = document.getElementById('chat-btn');
+                cb.style.display = 'flex';
+                cb.style.right = '20px'; // Margen original del juego
+                requestAnimationFrame(repositionHUD);
             }
         }
         
@@ -1552,7 +1560,21 @@ app.get('/', (req, res) => {
         }
 
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
-        function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } }
+        function toggleChat(){ 
+            const w = document.getElementById('chat-win'); 
+            if(isChatOpen) { 
+                w.style.display = 'none'; isChatOpen = false; 
+            } else { 
+                w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; 
+                
+                // Validar posición de la ventana de chat si estamos en el lobby
+                const pZone = document.getElementById('players-zone');
+                if (!pZone || pZone.offsetHeight === 0) {
+                    w.style.top = '130px';
+                    w.style.right = '10px';
+                }
+            } 
+        }
         function forceCloseChat() { 
             document.getElementById('chat-win').style.display = 'none'; isChatOpen = false; 
             document.getElementById('uno-menu').style.display = 'none';

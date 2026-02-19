@@ -1000,9 +1000,10 @@ app.get('/', (req, res) => {
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-        body.state-dueling #game-area, body.state-dueling #hand-zone, body.state-dueling #action-bar { display: none !important; }
+        /* BLOQUEO ABSOLUTO DE CHAT Y BOTONES EN DUELOS / RIP */
+        body.state-dueling #game-area, body.state-dueling #hand-zone, body.state-dueling #action-bar, body.state-dueling .hud-btn, body.state-dueling #chat-win { display: none !important; }
         body.state-dueling #duel-screen { display: flex !important; }
-        body.state-rip #game-area, body.state-rip #hand-zone, body.state-rip #action-bar { display: none !important; }
+        body.state-rip #game-area, body.state-rip #hand-zone, body.state-rip #action-bar, body.state-rip .hud-btn, body.state-rip #chat-win { display: none !important; }
         body.state-rip #rip-screen { display: flex !important; } 
 
         .lobby-row { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 300px; margin-bottom: 10px; background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 5px; }
@@ -1613,6 +1614,7 @@ app.get('/', (req, res) => {
 
         // Evento de Inicio de Ronda
         socket.on('roundStarted', data => {
+            forceCloseChat(); // Cierre forzado por si acaso al iniciar ronda real
             const banner = document.getElementById('round-start-banner');
             document.getElementById('rsb-round').innerText = "RONDA " + data.round;
             document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
@@ -1627,7 +1629,7 @@ app.get('/', (req, res) => {
             }, 3000);
         });
 
-        socket.on('countdownTick',n=>{ changeScreen('game-area'); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
+        socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseChat(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
         
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});

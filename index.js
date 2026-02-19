@@ -27,7 +27,7 @@ const values = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X
 setInterval(() => {
     const now = Date.now();
     Object.keys(rooms).forEach(roomId => {
-        if (now - rooms[roomId].lastActivity > 7200000) delete rooms[roomId];
+        if (now - rooms[roomId].lastActivity > 7200000) delete rooms[roomId]; // 2 horas
     });
 }, 60000 * 5); 
 
@@ -44,6 +44,8 @@ function initRoom(roomId) {
         activeColor: '',
         pendingPenalty: 0,
         pendingSkip: 0,
+        scores: {}, // Almacena puntajes por UUID { 'uuid-xyz': 150.5 }
+        roundCount: 1,
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
@@ -100,6 +102,17 @@ function recycleDeck(roomId) {
     io.to(roomId).emit('notification', '♻️ Barajando descartes...');
 }
 
+// --- LOGICA DE PUNTUACIÓN ---
+function getCardPoints(card) {
+    if (card.value === 'RIP') return 100;
+    if (['+12', 'SALTEO SUPREMO', 'LIBRE'].includes(card.value)) return 80;
+    if (['+4', 'color'].includes(card.value)) return 40; // color es cambio de color
+    if (['+2', 'R', 'X'].includes(card.value)) return 20;
+    if (card.value === '1 y 1/2') return 1.5;
+    const val = parseInt(card.value);
+    return isNaN(val) ? 0 : val;
+}
+
 // --- SOCKETS ---
 io.on('connection', (socket) => {
     
@@ -118,6 +131,7 @@ io.on('connection', (socket) => {
     socket.on('createRoom', (data) => {
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase(); initRoom(roomId);
         const player = createPlayerObj(socket.id, data.uuid, data.name, true);
+        rooms[roomId].scores[data.uuid] = 0; // Init score
         rooms[roomId].players.push(player); socket.join(roomId); 
         socket.emit('roomCreated', { roomId, name: data.name }); 
         updateAll(roomId);
@@ -128,10 +142,14 @@ io.on('connection', (socket) => {
         if (!room) { socket.emit('error', 'Sala no encontrada.'); return; }
         touchRoom(roomId);
         const existing = room.players.find(p => p.uuid === data.uuid);
-        if (existing) { existing.id = socket.id; existing.name = data.name; existing.isConnected = true; socket.join(roomId); socket.emit('roomJoined', { roomId }); }
+        if (existing) { 
+            existing.id = socket.id; existing.name = data.name; existing.isConnected = true; 
+            socket.join(roomId); socket.emit('roomJoined', { roomId }); 
+        }
         else {
             const player = createPlayerObj(socket.id, data.uuid, data.name, (room.players.length === 0));
             player.isSpectator = (room.gameState !== 'waiting');
+            if(room.scores[data.uuid] === undefined) room.scores[data.uuid] = 0;
             room.players.push(player); socket.join(roomId); socket.emit('roomJoined', { roomId });
             io.to(roomId).emit('notification', `👋 ${player.name} entró.`);
         }
@@ -186,7 +204,7 @@ io.on('connection', (socket) => {
             room.discardPile.push(...playCards); room.activeColor = c1.color; 
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! (1.5 + 1.5 = 3)`); io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
-            if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
+            if(player.hand.length === 0) { calculateAndFinishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
             return;
         }
 
@@ -235,7 +253,7 @@ io.on('connection', (socket) => {
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
             io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}!`); io.to(roomId).emit('playSound', 'soft');
             checkUnoCheck(roomId, player);
-            if(player.hand.length === 0) { finishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
+            if(player.hand.length === 0) { calculateAndFinishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
         }
     });
 
@@ -257,7 +275,7 @@ io.on('connection', (socket) => {
 
         const dId = data.discardId; 
         const dIdx = player.hand.findIndex(c => c.id === dId);
-        if (dIdx === -1) { finishRound(roomId, player); return; }
+        if (dIdx === -1) { calculateAndFinishRound(roomId, player); return; }
         
         const lastDiscard = player.hand.splice(dIdx, 1)[0]; 
         room.discardPile.push(lastDiscard);
@@ -266,7 +284,7 @@ io.on('connection', (socket) => {
 
         if (player.hand.length === 0) {
             const isLegal = /^[0-9]$/.test(lastDiscard.value) || lastDiscard.value === '1 y 1/2' || lastDiscard.value === 'GRACIA';
-            if (isLegal) { finishRound(roomId, player); return; } else { drawCards(roomId, pIndex, 1); io.to(roomId).emit('notification', `🚫 Cierre Ilegal. Robas 1.`); io.to(player.id).emit('handUpdate', player.hand); }
+            if (isLegal) { calculateAndFinishRound(roomId, player); return; } else { drawCards(roomId, pIndex, 1); io.to(roomId).emit('notification', `🚫 Cierre Ilegal. Robas 1.`); io.to(player.id).emit('handUpdate', player.hand); }
         } else {
             checkUnoCheck(roomId, player);
         }
@@ -304,7 +322,7 @@ io.on('connection', (socket) => {
              io.to(roomId).emit('playSound', 'divine');
              
              if (data.chosenColor) room.activeColor = data.chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-             if (player.hand.length === 0) { finishRound(roomId, player); return; }
+             if (player.hand.length === 0) { calculateAndFinishRound(roomId, player); return; }
              checkUnoCheck(roomId, player);
              advanceTurn(roomId, 1); updateAll(roomId);
         } else {
@@ -316,13 +334,11 @@ io.on('connection', (socket) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; 
         
-        // CORRECCIÓN 1: Permitir jugar carta si es penalty_decision Y la carta es GRACIA o LIBRE
         if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision') return;
         
         const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator) return;
 
-        // Si es penalty_decision, solo puede jugar quien tiene el turno (la víctima)
         if (room.gameState === 'penalty_decision' && pIndex !== room.currentTurn) return;
 
         let cardIndex = player.hand.findIndex(c => c.id === cardId); 
@@ -343,18 +359,15 @@ io.on('connection', (socket) => {
                 if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                 io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`);
                 room.pendingPenalty = 0; room.pendingSkip = 0;
-                room.gameState = 'playing'; // Volver a jugar
+                room.gameState = 'playing'; 
                 checkUnoCheck(roomId, player);
-                if (player.hand.length === 0) { finishRound(roomId, player); return; }
+                if (player.hand.length === 0) { calculateAndFinishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             } 
             else if (card.value === 'LIBRE') {
                 socket.emit('startLibreLogic', card.id); return;
             }
-            else {
-                // No se puede jugar otra cosa durante la decisión de castigo
-                return; 
-            }
+            else { return; }
         }
 
         // LOGICA NORMAL DE JUEGO
@@ -413,7 +426,7 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`); 
                 room.pendingPenalty = 0; room.pendingSkip = 0;
                 checkUnoCheck(roomId, player);
-                if (player.hand.length === 0) { finishRound(roomId, player); return; }
+                if (player.hand.length === 0) { calculateAndFinishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
             if (deadPlayers.length > 0) {
@@ -434,7 +447,7 @@ io.on('connection', (socket) => {
                             }
                             io.to(roomId).emit('playSound', 'divine');
                             checkUnoCheck(roomId, player);
-                            if (player.hand.length === 0) { finishRound(roomId, player); return; }
+                            if (player.hand.length === 0) { calculateAndFinishRound(roomId, player); return; }
                             advanceTurn(roomId, 1); updateAll(roomId); return;
                         }
                     }
@@ -446,7 +459,7 @@ io.on('connection', (socket) => {
                      io.to(roomId).emit('playSound', 'divine'); 
                      if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                      checkUnoCheck(roomId, player);
-                     if (player.hand.length === 0) { finishRound(roomId, player); return; }
+                     if (player.hand.length === 0) { calculateAndFinishRound(roomId, player); return; }
                      advanceTurn(roomId, 1); updateAll(roomId); return;
                 }
             }
@@ -701,7 +714,7 @@ function applyCardEffect(roomId, player, card, chosenColor) {
     }
 
     if (card.color === 'negro') io.to(roomId).emit('playSound', 'wild'); else io.to(roomId).emit('playSound', 'soft');
-    if (player.hand.length === 0) finishRound(roomId, player);
+    if (player.hand.length === 0) calculateAndFinishRound(roomId, player);
     else { advanceTurn(roomId, steps); updateAll(roomId); }
 }
 
@@ -747,8 +760,6 @@ function finalizeDuel(roomId) {
         if (!isPenaltyDuel) {
             eliminatePlayer(roomId, def.id); checkWinCondition(roomId); 
         } else {
-            // CORRECCIÓN: Defensor pierde duelo de castigo. Se le suma 4 al castigo pendiente.
-            // NO se resetea pendingSkip (si venía de SS, pierde turnos).
             io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`);
             room.pendingPenalty += 4; 
             room.gameState = 'playing'; 
@@ -759,7 +770,6 @@ function finalizeDuel(roomId) {
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
         if (!isPenaltyDuel) {
              io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y pierde 4 cartas!`);
-             // CORRECCIÓN ROBO MANUAL: Asignar castigo al atacante y darle el turno
              room.pendingPenalty = 4;
              room.pendingSkip = 0;
              room.currentTurn = room.players.indexOf(att);
@@ -767,15 +777,10 @@ function finalizeDuel(roomId) {
              updateAll(roomId);
         } else {
              io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`);
-             // CORRECCIÓN ROBO MANUAL: Defensor se salva (0), Atacante recibe el castigo (4)
-             // El atacante NO hereda el Skip del defensor, solo la penalidad de cartas por perder duelo
-             room.pendingPenalty = 0; room.pendingSkip = 0; // Limpia al defensor
-             
-             // Asigna penalidad al atacante
-             room.players.forEach(p => p.hasDrawn = false); // Reset draws
+             room.pendingPenalty = 0; room.pendingSkip = 0; 
+             room.players.forEach(p => p.hasDrawn = false);
              room.currentTurn = room.players.indexOf(att);
-             room.pendingPenalty = 4; // Solo las 4 del duelo perdido
-             
+             room.pendingPenalty = 4; 
              room.gameState = 'playing';
              updateAll(roomId);
         }
@@ -794,7 +799,14 @@ function startCountdown(roomId) {
         room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
     }
     room.discardPile = [safeCard]; room.activeColor = safeCard.color; room.currentTurn = 0; room.pendingPenalty = 0; room.pendingSkip = 0;
-    room.players.forEach(p => { p.hand = []; p.hasDrawn = false; p.isDead = false; p.saidUno = false; if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } });
+    
+    // Reset round-specific flags
+    room.players.forEach(p => { 
+        p.hand = []; p.hasDrawn = false; p.isDead = false; p.saidUno = false; 
+        if(room.gameState !== 'waiting') p.isSpectator = false; // Everyone comes back to life on reset
+        if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } 
+    });
+    
     io.to(roomId).emit('countdownTick', 3);
     let count = 3;
     room.countdownInterval = setInterval(() => {
@@ -821,23 +833,112 @@ function advanceTurn(roomId, steps) {
     if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
 }
 
-function getNextPlayerIndex(roomId, steps) {
-    const room = rooms[roomId]; let next = room.currentTurn; let attempts = 0;
-    while (steps > 0 && attempts < room.players.length * 2) {
-        next = (next + room.direction + room.players.length) % room.players.length;
-        if (!room.players[next].isDead && !room.players[next].isSpectator) steps--; attempts++;
-    } return next;
+function calculateAndFinishRound(roomId, winner) {
+    const room = rooms[roomId];
+    if(!room) return;
+
+    let pointsAccumulated = 0;
+    let losersDetails = [];
+
+    // Check last played card for bonus
+    const lastCard = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null;
+    let bonus = 0;
+    if (lastCard && lastCard.value === 'GRACIA') bonus = 50;
+
+    room.players.forEach(p => {
+        if (p.uuid !== winner.uuid && !p.isSpectator) { // Include dead players? "isSpectator" is set on death. Need to check original roster.
+            // Actually, dead players have 0 cards usually, but let's check everyone except winner.
+            // Logic: dead players (RIP) discard hand? No, "Robas 4 cartas". They keep hand if they lose duel? No, they are "Eliminated".
+            // Elimination clears hand? Logic "eliminatePlayer": p.isDead=true. Hand is not cleared in code.
+            // So if dead, they have cards.
+            // GRACIA check for losers:
+            const hasGrace = p.hand.some(c => c.value === 'GRACIA');
+            let pPoints = 0;
+            
+            if (hasGrace) {
+                pPoints = 0; // Gracia annuls points
+            } else {
+                pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0);
+            }
+            
+            if(pPoints > 0) {
+                pointsAccumulated += pPoints;
+                losersDetails.push({ name: p.name, points: pPoints });
+            }
+        }
+    });
+
+    pointsAccumulated += bonus;
+    if(bonus > 0) losersDetails.push({ name: "BONUS (Cierre Gracia)", points: 50 });
+
+    // Update Scores
+    if(room.scores[winner.uuid] === undefined) room.scores[winner.uuid] = 0;
+    room.scores[winner.uuid] += pointsAccumulated;
+
+    const winnerTotal = room.scores[winner.uuid];
+
+    // Check Win Condition (800)
+    if (winnerTotal >= 800) {
+         room.gameState = 'waiting';
+         io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); 
+         io.to(roomId).emit('playSound', 'win');
+         setTimeout(() => { delete rooms[roomId]; }, 10000);
+    } else {
+         // Round Over
+         room.gameState = 'round_over';
+         room.roundCount++;
+         
+         const leaderboard = Object.keys(room.scores).map(uid => {
+             const pl = room.players.find(x => x.uuid === uid);
+             return { name: pl ? pl.name : '???', score: room.scores[uid] };
+         }).sort((a,b) => b.score - a.score);
+
+         io.to(roomId).emit('roundOver', { 
+             winner: winner.name, 
+             roundPoints: pointsAccumulated, 
+             losersDetails: losersDetails, 
+             leaderboard: leaderboard,
+             nextRound: room.roundCount
+         });
+         io.to(roomId).emit('playSound', 'win');
+
+         setTimeout(() => {
+             resetRound(roomId);
+         }, 10000); // 10 seconds to next round
+    }
 }
 
-function finishRound(roomId, w) {
-    const room = rooms[roomId]; room.gameState = 'waiting';
-    io.to(roomId).emit('gameOver', { winner: w.name }); io.to(roomId).emit('playSound', 'win');
-    setTimeout(() => { delete rooms[roomId]; }, 5000);
+function resetRound(roomId) {
+    const room = rooms[roomId]; if(!room) return;
+    // Reset Deck & Hands
+    createDeck(roomId);
+    let safeCard = room.deck.pop();
+    while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
+        room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
+    }
+    room.discardPile = [safeCard]; room.activeColor = safeCard.color; 
+    
+    // Reset Game State
+    room.currentTurn = 0; room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0;
+    room.gameState = 'playing';
+
+    // Reset Players (Revive everyone)
+    room.players.forEach(p => { 
+        p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; 
+        // Redeal
+        for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); 
+    });
+
+    io.to(roomId).emit('playSound', 'start');
+    updateAll(roomId);
 }
 
 function checkWinCondition(roomId) {
     const room = rooms[roomId];
-    if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { const winner = room.players.find(p => !p.isDead && !p.isSpectator); if (winner) finishRound(roomId, winner); } 
+    if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { 
+        const winner = room.players.find(p => !p.isDead && !p.isSpectator); 
+        if (winner) calculateAndFinishRound(roomId, winner); 
+    } 
     else { room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
 }
 
@@ -849,7 +950,13 @@ function updateAll(roomId) {
 
     const duelInfo = (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
 
-    const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers };
+    // Leaderboard for client
+    const leaderboard = Object.keys(room.scores).map(uid => {
+             const pl = room.players.find(x => x.uuid === uid);
+             return { name: pl ? pl.name : '???', score: room.scores[uid] };
+    }).sort((a,b) => b.score - a.score);
+
+    const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard };
     room.players.forEach(p => {
         if(p.isConnected) {
             const mp = JSON.parse(JSON.stringify(pack)); mp.iamAdmin = p.isAdmin;
@@ -879,7 +986,10 @@ app.get('/', (req, res) => {
         
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; }
         
-        #revive-screen, #revive-confirm-screen, #grace-color-modal { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 10500; display: none; text-align: center; width: 90%; max-width: 400px; box-shadow: 0 0 20px gold; }
+        #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
+        .point-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 1s ease-in-out; }
+
+        #score-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 400px; background: rgba(10, 10, 10, 0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 60000; display: none; flex-direction: column; text-align: center; box-shadow: 0 0 20px gold; }
         
         #reconnect-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:90000; display:none; justify-content:center; align-items:center; color:white; font-size:20px; flex-direction:column; }
         .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom:15px; }
@@ -945,6 +1055,8 @@ app.get('/', (req, res) => {
         #chat-close { position: absolute; top: 5px; right: 10px; color: #aaa; cursor: pointer; font-weight: bold; font-family: monospace; }
         
         #rules-btn { position: fixed; top: 110px; left: 20px; width: 50px; height: 50px; background: #9b59b6; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
+        #score-btn { position: fixed; top: 170px; left: 20px; width: 50px; height: 50px; background: gold; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; color: black; }
+
         #rules-modal, #manual-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 95%; max-width: 600px; max-height: 90vh; background: rgba(15, 15, 15, 0.98); border: 2px solid #9b59b6; display: none; flex-direction: column; z-index: 50001; border-radius: 10px; padding: 20px; color: white; overflow-y: auto; box-shadow: 0 0 30px rgba(155, 89, 182, 0.5); }
         #rules-close, #manual-close { position: absolute; top: 10px; right: 15px; color: white; font-size: 24px; cursor: pointer; font-weight: bold; z-index:10; }
         
@@ -1034,16 +1146,24 @@ app.get('/', (req, res) => {
     </div>
     
     <div id="rules-btn" onclick="toggleRules()">❓</div>
+    <div id="score-btn" onclick="toggleScores()">🏆</div>
     
+    <div id="score-modal">
+        <h2 style="color:gold;">PUNTAJES</h2>
+        <div id="score-list" style="text-align:left; color:white; font-size:16px;"></div>
+        <button class="btn-main" onclick="toggleScores()" style="margin-top:20px;">CERRAR</button>
+    </div>
+
     <div id="rules-modal">
         <div id="rules-close" onclick="toggleRules()">X</div>
         <h2 style="color:gold; text-align:center; border-bottom:1px solid #555; padding-bottom:10px;">Reglamento Rápido</h2>
         <p style="text-align:center; font-style:italic;">¡Mantén pulsada una carta para selección múltiple!</p>
         <div class="rule-row"><div class="rule-badge" style="background:#000; color:white; border-color:#666;">🪦</div><div class="rule-text"><b>RIP:</b> Duelo a muerte. Si atacas y pierdes, robas 4 cartas (NO te mueres).</div></div>
-        <div class="rule-row"><div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div><div class="rule-text"><b>GRACIA DIVINA:</b> Inmune a todo. Revive muertos. Única especial para cerrar.</div></div>
+        <div class="rule-row"><div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div><div class="rule-text"><b>GRACIA DIVINA:</b> Inmune a todo. Revive muertos. Única especial para cerrar (+50pts). Anula puntos de perdedor.</div></div>
         <div class="rule-row"><div class="rule-badge" style="background:#000; color:white;">🕊️</div><div class="rule-text"><b>LIBRE ALBEDRÍO:</b> Defiende de +2/+4/+12. Regala 1, Descarta 1, Cambia Color.</div></div>
         <div class="rule-row"><div class="rule-badge" style="background:#000; color:purple;">SS</div><div class="rule-text"><b>SALTEO SUPREMO:</b> Rival pierde 4 turnos y roba 4 cartas.</div></div>
         <div class="rule-row"><div class="rule-badge" style="background:#e67e22;">📢</div><div class="rule-text"><b>UNO y 1/2:</b> Grita si te queda 1 carta. Si te denuncian tras 2s, +2 cartas.</div></div>
+        <div class="rule-row"><div class="rule-badge" style="background:gold; color:black;">🏆</div><div class="rule-text"><b>PARTIDA:</b> Se juega a 800 puntos. Los perdedores suman el valor de sus manos al ganador de la ronda.</div></div>
     </div>
 
     <div id="manual-modal">
@@ -1051,107 +1171,39 @@ app.get('/', (req, res) => {
         <h2 style="color:gold; text-align:center;">MANUAL DE JUEGO</h2>
         
         <div style="padding:0 10px;">
-            <h3>1. COMPOSICIÓN DEL MAZO (130 Cartas)</h3>
-            <p>El juego utiliza un mazo especial con 4 colores (Rojo, Azul, Verde, Amarillo) y cartas Negras.</p>
-            <ul>
-                <li><b>Cartas Numéricas (0-9):</b> 80 cartas (2 de cada número por color).</li>
-                <li><b>Cartas "1 y 1/2":</b> 8 cartas (2 por color).</li>
-                <li><b>Cartas de Acción (+2, Salto, Reversa):</b> 24 cartas (2 de cada una por color).</li>
-                <li><b>Cartas Negras Básicas:</b> 4 Comodines Color y 4 Comodines +4.</li>
-                <li><b>CARTAS SUPREMAS (10):</b> 2 RIP, 2 Gracia Divina, 2 +12, 2 Libre Albedrío, 2 Salteo Supremo.</li>
-            </ul>
-
+            <h3>OBJETIVO</h3>
+            <p>Acumular 800 puntos ganando rondas. El ganador de la ronda se lleva los puntos de las manos de los perdedores.</p>
+            <p><b>Valores:</b> Numéricas (Valor), 1y1/2 (1.5), Acción (20), Wild (40), Supremas (80), RIP (100).</p>
             <hr style="border-color:#555;">
-
-            <h3>2. JUGADAS BÁSICAS</h3>
+            <h3>1. JUGADAS BÁSICAS</h3>
             <p>En tu turno, puedes tirar una carta si coincide en <b>COLOR</b> o <b>NÚMERO</b> con la carta de la mesa.</p>
-            <div class="man-example">
-                <p>Mesa: <span class="man-card" style="background:#ff5252">5</span></p>
-                <span class="man-arrow">⬇️</span>
-                <p>Puedes tirar: <span class="man-card" style="background:#ff5252">8</span> (Color) o <span class="man-card" style="background:#448aff">5</span> (Número)</p>
-            </div>
-
-            <hr style="border-color:#555;">
-
-            <h3>3. JUGADAS MAESTRAS (MODO SELECCIÓN)</h3>
+            <h3>2. JUGADAS MAESTRAS</h3>
             <p>🖐️ <b>Pulsación Larga:</b> Mantén apretada una carta para activar el "Modo Selección".</p>
-
             <h4>A) Escaleras (3+ cartas)</h4>
-            <p>Si tienes una secuencia de números del <b>MISMO COLOR</b>, ¡tírala toda junta!</p>
-            <div class="man-example">
-                <span class="man-card" style="background:#69f0ae">3</span>
-                <span class="man-card" style="background:#69f0ae">4</span>
-                <span class="man-card" style="background:#69f0ae">5</span>
-                <p><i>¡Ascendente o Descendente!</i></p>
-            </div>
-            <p>💡 <b>Escalera Integrada:</b> Si en la mesa hay un <span class="man-card" style="background:#69f0ae">3</span>, puedes tirar un <span class="man-card" style="background:#69f0ae">4</span> y un <span class="man-card" style="background:#69f0ae">5</span> de tu mano.</p>
-
+            <p>Secuencia de números del <b>MISMO COLOR</b> (ej: 3, 4, 5). Ascendente o Descendente.</p>
             <h4>B) El Combo Matemático (1½)</h4>
-            <p>La carta "1 y 1/2" vale 1.5. Dos de estas suman 3. Puedes tirarlas juntas SOLO sobre un 3.</p>
-            <div class="man-example">
-                <p>Mesa: <span class="man-card" style="background:#448aff">3</span></p>
-                <span class="man-arrow">⬇️</span>
-                <span class="man-card" style="background:#448aff; font-size:10px">1½</span> + 
-                <span class="man-card" style="background:#448aff; font-size:10px">1½</span>
-            </div>
-
+            <p>Dos "1 y 1/2" suman 3. Puedes tirarlas juntas SOLO sobre un 3.</p>
             <hr style="border-color:#555;">
-
-            <h3>4. SAFF (ROBO DE TURNO)</h3>
-            <p>Si tienes una carta <b>IDÉNTICA</b> (mismo número y color) a la de la mesa, ¡tírala aunque no sea tu turno!</p>
-            <p><i>Le robarás el turno a quien le tocaba.</i></p>
-
+            <h3>3. SAFF</h3>
+            <p>Carta <b>IDÉNTICA</b> a la mesa? ¡Tírala fuera de turno!</p>
             <hr style="border-color:#555;">
-
-            <h3>5. CARTAS SUPREMAS</h3>
-            <div style="display:flex; align-items:center; margin-bottom:10px;">
-                <span class="man-card" style="background:black; border-color:#666">🪦</span>
-                <div style="margin-left:10px;">
-                    <b>RIP (Duelo a Muerte):</b> Retas al siguiente. 
-                    <br>- Si tú ganas: El rival queda <b>ELIMINADO</b>.
-                    <br>- Si tú pierdes: Robas <b>4 CARTAS</b> (no mueres).
-                </div>
-            </div>
-            <div style="display:flex; align-items:center; margin-bottom:10px;">
-                <span class="man-card" style="background:white; color:red; border-color:gold">❤️</span>
-                <div style="margin-left:10px;"><b>GRACIA DIVINA:</b> Poder total. Inmune a todo. Revive muertos. Única especial válida para ganar.</div>
-            </div>
-            <div style="display:flex; align-items:center; margin-bottom:10px;">
-                <span class="man-card" style="background:black">🕊️</span>
-                <div style="margin-left:10px;">
-                    <b>LIBRE ALBEDRÍO:</b>
-                    <br><b>Ofensivo (tu turno):</b> Te permite limpiar tu mano. 1. Regalas una carta molesta a otro. 2. Descartas otra. 3. Eliges color.
-                    <br><b>Defensivo (respuesta):</b> Anula robos (+2/+4/+12). Haces el mismo proceso (Regalar -> Descartar -> Color).
-                </div>
-            </div>
-
-            <hr style="border-color:#555;">
-            
-            <h3>6. DUELOS DE CASTIGO</h3>
-            <p>Cuando alguien te lanza un <b>+12</b> o un <b>Salteo Supremo</b>, no tienes por qué aceptarlo sumisamente. ¡Puedes desafiar a DUELO al agresor!</p>
-            <p><b>Ejemplo:</b> Juan te tira un +12.</p>
-            <ul>
-                <li><b>Opción A (Aceptar):</b> Robas las 12 cartas y pierdes el turno.</li>
-                <li><b>Opción B (Duelar):</b> Se juega un duelo (Fuego/Hielo/Agua).
-                    <ul>
-                        <li><b>Si ganas (Defensa Exitosa):</b> No robas nada. Juan (el agresor) roba 4 cartas.</li>
-                        <li><b>Si pierdes (Defensa Fallida):</b> ¡El castigo empeora! Robarás las 12 originales + 4 extra por perder el duelo (Total 16).</li>
-                    </ul>
-                </li>
-            </ul>
-
-            <hr style="border-color:#555;">
-
-            <h3>7. BOTÓN UNO Y 1/2</h3>
-            <p>Cuando te quede <b>1 sola carta</b>, ¡toca el botón naranja RÁPIDO! 📢</p>
-            <p>Si pasan 2 segundos y no lo dijiste, cualquiera te puede <b>DENUNCIAR</b> y comerás +2 cartas.</p>
-
+            <h3>4. CARTAS SUPREMAS</h3>
+            <p><b>RIP:</b> Duelo. Si pierdes, robas 4.</p>
+            <p><b>GRACIA DIVINA:</b> Inmune. Revive. Cierre (+50 pts). Si la tienes al perder, sumas 0.</p>
+            <p><b>LIBRE ALBEDRÍO:</b> Defensa total. Regala, descarta, color.</p>
         </div>
         <br><br>
     </div>
 
-    <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA</h1><h2 id="winner-name"></h2></div>
+    <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA SUPREMA</h1><h2 id="winner-name"></h2><h3 id="final-score"></h3></div>
     
+    <div id="round-overlay">
+        <h1 style="color:gold; margin-bottom: 20px;">RONDA FINALIZADA</h1>
+        <h2 id="round-winner-name" style="color: #2ecc71;"></h2>
+        <div id="round-points-container" style="position:relative; height: 150px; width: 100%;"></div>
+        <h3>Próxima ronda en breve...</h3>
+    </div>
+
     <div id="rip-screen" class="screen">
         <h1 style="color:red;" id="rip-title">💀 RIP 💀</h1>
         <h3 id="rip-msg-custom" style="text-align:center; padding:10px;"></h3>
@@ -1324,6 +1376,17 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             
+            // Render Leaderboard in Modal
+            if(s.leaderboard) {
+                const slist = document.getElementById('score-list');
+                slist.innerHTML = s.leaderboard.map((u, i) => 
+                    `<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;">
+                        <span>${i+1}. ${u.name}</span>
+                        <span style="color:gold; font-weight:bold;">${parseFloat(u.score).toFixed(1)}</span>
+                    </div>`
+                ).join('');
+            }
+
             if(s.state === 'waiting' || s.state === 'playing') {
                 const lc = document.getElementById('lobby-code');
                 if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
@@ -1363,11 +1426,14 @@ app.get('/', (req, res) => {
                  document.getElementById('hand-zone').style.display = 'flex';
                  if(s.state === 'playing') document.getElementById('uno-main-btn').style.display = 'flex';
                  
+                 document.getElementById('round-overlay').style.display = 'none'; // Hide round overlay on start
+
                  if(document.getElementById('libre-modal').style.display !== 'flex') {
                     document.getElementById('action-bar').style.display = 'flex';
                  }
                  document.getElementById('chat-btn').style.display = 'flex';
                  document.getElementById('rules-btn').style.display = 'flex';
+                 document.getElementById('score-btn').style.display = 'flex';
                  document.getElementById('duel-screen').style.display = 'none';
                  document.getElementById('rip-screen').style.display = 'none';
                  
@@ -1557,7 +1623,6 @@ app.get('/', (req, res) => {
                 const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
                 const isDecisionPhase = (document.body.classList.contains('state-rip'));
 
-                // Si estamos en decision de castigo, usar directamente para salvarse
                 if(isDecisionPhase) {
                     socket.emit('playCard', c.id, null, null);
                     return;
@@ -1606,6 +1671,7 @@ app.get('/', (req, res) => {
             document.getElementById('action-bar').style.display='none'; 
             document.getElementById('chat-btn').style.display='none'; 
             document.getElementById('rules-btn').style.display='none'; 
+            document.getElementById('score-btn').style.display='none'; 
             document.getElementById('uno-main-btn').style.display='none';
             document.getElementById(id).style.display='flex'; 
         }
@@ -1630,8 +1696,9 @@ app.get('/', (req, res) => {
         
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
         function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } }
-        function forceCloseChat() { const w = document.getElementById('chat-win'); w.style.display = 'none'; isChatOpen = false; document.getElementById('rules-modal').style.display='none'; document.getElementById('manual-modal').style.display='none'; }
+        function forceCloseChat() { const w = document.getElementById('chat-win'); w.style.display = 'none'; isChatOpen = false; document.getElementById('rules-modal').style.display='none'; document.getElementById('score-modal').style.display='none'; document.getElementById('manual-modal').style.display='none'; }
         function toggleRules() { const r = document.getElementById('rules-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
+        function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
         function toggleManual() { const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
 
         function pickCol(c){ 
@@ -1709,14 +1776,46 @@ app.get('/', (req, res) => {
         socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
         
+        socket.on('roundOver', d => {
+            document.getElementById('round-overlay').style.display = 'flex';
+            document.getElementById('round-winner-name').innerText = 'GANADOR: ' + d.winner;
+            const container = document.getElementById('round-points-container');
+            container.innerHTML = '';
+            
+            d.losersDetails.forEach((l, i) => {
+                const el = document.createElement('div');
+                el.className = 'point-flyer';
+                el.innerText = l.name + ': ' + l.points + ' pts';
+                el.style.top = (i * 30) + 'px';
+                el.style.left = '10%';
+                container.appendChild(el);
+                
+                setTimeout(() => {
+                    el.style.left = '50%';
+                    el.style.top = '-50px';
+                    el.style.opacity = 0;
+                    el.style.transform = 'scale(0.5)';
+                }, 1000 + (i * 500));
+            });
+            
+            setTimeout(() => {
+                document.getElementById('round-winner-name').innerText += ' (Total acumulado: ' + d.roundPoints + ')';
+            }, 3000);
+        });
+
         socket.on('gameOver',d=>{
             document.getElementById('action-bar').style.display = 'none';
             document.getElementById('chat-btn').style.display = 'none';
             document.getElementById('rules-btn').style.display = 'none';
+            document.getElementById('score-btn').style.display = 'none';
             document.getElementById('uno-main-btn').style.display='none';
+            document.getElementById('round-overlay').style.display='none';
+            
             document.getElementById('game-over-screen').style.display='flex'; 
             document.getElementById('winner-name').innerText=d.winner; 
-            setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},5000);
+            document.getElementById('final-score').innerText="Puntaje Final: " + parseFloat(d.totalScore).toFixed(1);
+
+            setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},10000);
         });
         
         socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});

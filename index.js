@@ -50,7 +50,7 @@ function initRoom(roomId) {
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
             attackerChoice: null, defenderChoice: null, history: [], turn: null, narrative: '',
-            type: 'rip' 
+            type: 'rip', originalPenalty: 0, originalSkip: 0
         },
         chatHistory: [],
         lastActivity: Date.now()
@@ -453,7 +453,7 @@ io.on('connection', (socket) => {
             room.duelState = { 
                 attackerId: attacker.uuid, defenderId: defender.uuid, attackerName: attacker.name, defenderName: defender.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip' 
+                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0 
             };
             updateAll(roomId); return;
         }
@@ -481,8 +481,12 @@ io.on('connection', (socket) => {
                 } else { 
                     if (room.pendingSkip > 0) {
                         io.to(roomId).emit('notification', `😓 Pierdes ${room.pendingSkip} turnos.`); 
-                        const skips = room.pendingSkip; room.pendingSkip = 0; advanceTurn(roomId, skips + 1);
-                    } else { io.to(roomId).emit('notification', `😓 Fin del castigo.`); advanceTurn(roomId, 1); }
+                        room.players[pIndex].missedTurns += room.pendingSkip;
+                        room.pendingSkip = 0;
+                    } else { 
+                        io.to(roomId).emit('notification', `😓 Fin del castigo.`); 
+                    }
+                    advanceTurn(roomId, 1);
                     updateAll(roomId); 
                 }
             } else {
@@ -590,7 +594,7 @@ io.on('connection', (socket) => {
 // --- HELPERS ---
 
 function createPlayerObj(socketId, uuid, name, isAdmin) {
-    return { id: socketId, uuid, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin, isConnected: true, saidUno: false, lastOneCardTime: 0 };
+    return { id: socketId, uuid, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin, isConnected: true, saidUno: false, lastOneCardTime: 0, missedTurns: 0 };
 }
 
 function checkUnoCheck(roomId, player) {
@@ -622,7 +626,7 @@ function applyCardEffect(roomId, player, card, chosenColor) {
             room.duelState = { 
                 attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty' 
+                turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty', originalPenalty: val, originalSkip: skips 
             };
             room.currentTurn = nextPIdx; updateAll(roomId); return;
         }
@@ -671,13 +675,25 @@ function finalizeDuel(roomId) {
         else { io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); }
     } else { 
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
-        if (!isPenaltyDuel) { io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y pierde 4 cartas!`); room.pendingPenalty = 4; room.pendingSkip = 0; room.currentTurn = room.players.indexOf(att); room.gameState = 'playing'; updateAll(roomId); } 
-        else { io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`); room.pendingPenalty = 0; room.pendingSkip = 0; room.players.forEach(p => p.hasDrawn = false); room.currentTurn = room.players.indexOf(att); room.pendingPenalty = 4; room.gameState = 'playing'; updateAll(roomId); }
+        if (!isPenaltyDuel) { 
+            io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y pierde 4 cartas!`); 
+            room.pendingPenalty = 4; room.pendingSkip = 0; room.currentTurn = room.players.indexOf(att); room.gameState = 'playing'; updateAll(roomId); 
+        } 
+        else { 
+            io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el castigo a ${att.name}!`); 
+            const retPen = room.duelState.originalPenalty || 4; const retSkip = room.duelState.originalSkip || 0;
+            room.pendingPenalty = 0; room.pendingSkip = 0; 
+            room.players.forEach(p => p.hasDrawn = false); 
+            room.currentTurn = room.players.indexOf(att); 
+            room.pendingPenalty = retPen; room.pendingSkip = retSkip; 
+            room.gameState = 'playing'; updateAll(roomId); 
+        }
     }
 }
 
 function eliminatePlayer(roomId, uuid) { const room = rooms[roomId]; if(!room) return; const p = room.players.find(p => p.uuid === uuid); if (p) { p.isDead = true; p.isSpectator = true; } }
 function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator).length; }
+
 function getNextPlayerIndex(roomId, step) {
     const room = rooms[roomId]; let current = room.currentTurn;
     for(let i=0; i<room.players.length; i++) {
@@ -685,6 +701,30 @@ function getNextPlayerIndex(roomId, step) {
         if(!room.players[current].isDead && !room.players[current].isSpectator) return current;
     }
     return current;
+}
+
+function advanceTurn(roomId, steps) {
+    const room = rooms[roomId]; if (room.players.length === 0) return;
+    if (getAlivePlayersCount(roomId) <= 1) return; // Protección anti loop infinito
+    
+    room.players.forEach(p => p.hasDrawn = false);
+    
+    let safeLoop = 0;
+    while (steps > 0 && safeLoop < 100) {
+        safeLoop++;
+        room.currentTurn = (room.currentTurn + room.direction + room.players.length) % room.players.length;
+        let cp = room.players[room.currentTurn];
+        
+        if (!cp.isDead && !cp.isSpectator) {
+            if (cp.missedTurns > 0) {
+                cp.missedTurns--;
+                io.to(roomId).emit('notification', `⏭️ Turno de ${cp.name} salteado por castigo.`);
+            } else {
+                steps--; 
+            }
+        }
+    }
+    if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
 }
 
 function startCountdown(roomId) {
@@ -697,7 +737,7 @@ function startCountdown(roomId) {
     room.discardPile = [safeCard]; room.activeColor = safeCard.color; room.currentTurn = 0; room.pendingPenalty = 0; room.pendingSkip = 0;
     
     room.players.forEach(p => { 
-        p.hand = []; p.hasDrawn = false; p.isDead = false; p.saidUno = false; 
+        p.hand = []; p.hasDrawn = false; p.isDead = false; p.saidUno = false; p.missedTurns = 0;
         if(room.gameState !== 'waiting') p.isSpectator = false; 
         if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } 
     });
@@ -714,16 +754,6 @@ function drawCards(roomId, pid, n) {
     const room = rooms[roomId]; if (pid < 0 || pid >= room.players.length) return; 
     for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); if (room.deck.length > 0) room.players[pid].hand.push(room.deck.pop()); } 
     checkUnoCheck(roomId, room.players[pid]);
-}
-
-function advanceTurn(roomId, steps) {
-    const room = rooms[roomId]; if (room.players.length === 0) return;
-    room.players.forEach(p => p.hasDrawn = false); let attempts = 0;
-    while (steps > 0 && attempts < room.players.length * 2) {
-        room.currentTurn = (room.currentTurn + room.direction + room.players.length) % room.players.length;
-        if (!room.players[room.currentTurn].isDead && !room.players[room.currentTurn].isSpectator) { steps--; } attempts++;
-    }
-    if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
 }
 
 function calculateAndFinishRound(roomId, winner) {
@@ -780,7 +810,7 @@ function resetRound(roomId) {
     room.currentTurn = 0; room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.gameState = 'playing';
 
     room.players.forEach(p => { 
-        p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; 
+        p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; p.missedTurns = 0;
         for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); 
     });
 
@@ -853,7 +883,7 @@ app.get('/', (req, res) => {
         .libre-step { display: none; width: 100%; text-align: center; }
         .libre-step.active { display: block; }
         
-        /* BOTONES HUD: Se les quita el top fijo por CSS, se maneja por JS */
+        /* BOTONES HUD */
         .hud-btn { position: fixed; width: 55px; height: 55px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 24px; cursor: pointer; transition: transform 0.2s, top 0.3s ease-out; }
         .hud-btn:active { transform: scale(0.9); }
         
@@ -1123,12 +1153,11 @@ app.get('/', (req, res) => {
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
-        // --- FUNCIÓN DINÁMICA DE POSICIONAMIENTO HUD ---
         function repositionHUD() {
             const pZone = document.getElementById('players-zone');
             if (!pZone || pZone.offsetHeight === 0) return;
             const rect = pZone.getBoundingClientRect();
-            const baseTop = rect.bottom + 15; // 15px de margen
+            const baseTop = rect.bottom + 15;
             
             const upperElements = ['score-btn', 'uno-main-btn'];
             upperElements.forEach(function(id) { const el = document.getElementById(id); if(el) el.style.top = baseTop + 'px'; });
@@ -1249,10 +1278,8 @@ app.get('/', (req, res) => {
                  if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
-                 // Renderizar nombres de jugadores
                  document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
                  
-                 // Mostrar y Reposicionar HUD (Esperando a que la caja tome su nueva altura)
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  requestAnimationFrame(repositionHUD);
 
@@ -1334,25 +1361,56 @@ app.get('/', (req, res) => {
         }
 
         function cancelLadder() { ladderMode = false; ladderSelected = []; document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected-ladder')); updateLadderUI(); }
-        function updateLadderUI() { const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none'; }
+        
+        function updateLadderUI() { 
+            const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; 
+            document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; 
+            document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none'; 
+        }
 
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'flex') return;
+
+            // BLOQUEO DE UX CONTRA CASTIGOS
+            const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
+            if (hasPenalty) {
+                if (c.value !== 'GRACIA' && c.value !== 'LIBRE') {
+                    const isPenaltyCard = ['+2', '+4', '+12', 'SALTEO SUPREMO'].includes(c.value);
+                    if (!isPenaltyCard) {
+                        const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Cumple el castigo, acumúlalo o defiéndete!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); 
+                        return;
+                    }
+                }
+            }
+
             if(c.value === 'LIBRE') { socket.emit('playCard', c.id, null, null); return; }
             if(c.value === 'GRACIA') {
-                const hasZombies = currentPlayers.some(p => p.isDead); const hasPenalty = (document.getElementById('penalty-display').style.display === 'block'); const isDecisionPhase = (document.body.classList.contains('state-rip'));
+                const hasZombies = currentPlayers.some(p => p.isDead); const isDecisionPhase = (document.body.classList.contains('state-rip'));
                 if(isDecisionPhase) { socket.emit('playCard', c.id, null, null); return; }
                 if(!hasZombies && !hasPenalty) { showGraceModal(); pendingCard = c.id; return; }
             }
             if(c.color==='negro' && c.value!=='GRACIA') { 
-                if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') { if(c.value==='RIP') { socket.emit('playCard', c.id, null, null); } else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } } 
+                if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') { 
+                    if(c.value==='RIP') { socket.emit('playCard', c.id, null, null); } 
+                    else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
+                } 
                 else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
             } else socket.emit('playCard', c.id, null, null);
         }
 
         function showGraceModal() { document.getElementById('grace-color-modal').style.display = 'flex'; }
         function confirmGraceColor(confirmed) { document.getElementById('grace-color-modal').style.display = 'none'; if (confirmed) { pendingColorForRevive = null; pendingGrace = false; document.getElementById('color-picker').style.display='flex'; } else { pendingCard = null; } }
-        function submitLadder() { if(ladderSelected.length < 2) return; socket.emit('playMultiCards', ladderSelected); cancelLadder(); }
+        
+        function submitLadder() { 
+            const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
+            if(hasPenalty) {
+                const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); 
+                cancelLadder();
+                return;
+            }
+            if(ladderSelected.length < 2) return; 
+            socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
+        }
 
         function changeScreen(id) { 
             document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById('action-bar').style.display='none'; 

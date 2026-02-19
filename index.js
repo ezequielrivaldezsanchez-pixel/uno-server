@@ -44,7 +44,7 @@ function initRoom(roomId) {
         activeColor: '',
         pendingPenalty: 0,
         pendingSkip: 0,
-        scores: {}, // Almacena puntajes por UUID { 'uuid-xyz': 150.5 }
+        scores: {}, 
         roundCount: 1,
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
@@ -106,7 +106,7 @@ function recycleDeck(roomId) {
 function getCardPoints(card) {
     if (card.value === 'RIP') return 100;
     if (['+12', 'SALTEO SUPREMO', 'LIBRE'].includes(card.value)) return 80;
-    if (['+4', 'color'].includes(card.value)) return 40; // color es cambio de color
+    if (['+4', 'color'].includes(card.value)) return 40;
     if (['+2', 'R', 'X'].includes(card.value)) return 20;
     if (card.value === '1 y 1/2') return 1.5;
     const val = parseInt(card.value);
@@ -131,7 +131,7 @@ io.on('connection', (socket) => {
     socket.on('createRoom', (data) => {
         const roomId = Math.random().toString(36).substring(2, 6).toUpperCase(); initRoom(roomId);
         const player = createPlayerObj(socket.id, data.uuid, data.name, true);
-        rooms[roomId].scores[data.uuid] = 0; // Init score
+        rooms[roomId].scores[data.uuid] = 0; 
         rooms[roomId].players.push(player); socket.join(roomId); 
         socket.emit('roomCreated', { roomId, name: data.name }); 
         updateAll(roomId);
@@ -270,8 +270,10 @@ io.on('connection', (socket) => {
         const target = room.players.find(p => p.id === data.targetPlayerId);
         const giftIdx = player.hand.findIndex(c => c.id === data.giftCardId);
         if (!target || giftIdx === -1) return; 
-        const giftCard = player.hand.splice(giftIdx, 1)[0]; target.hand.push(giftCard);
-        io.to(target.id).emit('handUpdate', target.hand);
+        
+        // Transfiere carta
+        const giftCard = player.hand.splice(giftIdx, 1)[0]; 
+        target.hand.push(giftCard);
 
         const dId = data.discardId; 
         const dIdx = player.hand.findIndex(c => c.id === dId);
@@ -279,9 +281,14 @@ io.on('connection', (socket) => {
         
         const lastDiscard = player.hand.splice(dIdx, 1)[0]; 
         room.discardPile.push(lastDiscard);
+        
         io.to(roomId).emit('animateLibre', { playerName: player.name, cards: [lastDiscard] });
         io.to(roomId).emit('playSound', 'wild');
 
+        // Notificar mano actualizada al target
+        io.to(target.id).emit('handUpdate', target.hand);
+        
+        // Manejar cierre o continuar
         if (player.hand.length === 0) {
             const isLegal = /^[0-9]$/.test(lastDiscard.value) || lastDiscard.value === '1 y 1/2' || lastDiscard.value === 'GRACIA';
             if (isLegal) { calculateAndFinishRound(roomId, player); return; } else { drawCards(roomId, pIndex, 1); io.to(roomId).emit('notification', `🚫 Cierre Ilegal. Robas 1.`); io.to(player.id).emit('handUpdate', player.hand); }
@@ -295,6 +302,9 @@ io.on('connection', (socket) => {
         setTimeout(() => {
             io.to(roomId).emit('cardPlayedEffect', { color: room.activeColor });
             applyCardEffect(roomId, player, lastDiscard, data.chosenColor);
+            
+            // IMPORTANTE: Actualizar a todos después de Libre Albedrio para reflejar cambio de cartas
+            updateAll(roomId);
         }, 1500);
     });
 
@@ -846,17 +856,12 @@ function calculateAndFinishRound(roomId, winner) {
     if (lastCard && lastCard.value === 'GRACIA') bonus = 50;
 
     room.players.forEach(p => {
-        if (p.uuid !== winner.uuid && !p.isSpectator) { // Include dead players? "isSpectator" is set on death. Need to check original roster.
-            // Actually, dead players have 0 cards usually, but let's check everyone except winner.
-            // Logic: dead players (RIP) discard hand? No, "Robas 4 cartas". They keep hand if they lose duel? No, they are "Eliminated".
-            // Elimination clears hand? Logic "eliminatePlayer": p.isDead=true. Hand is not cleared in code.
-            // So if dead, they have cards.
-            // GRACIA check for losers:
+        if (p.uuid !== winner.uuid && !p.isSpectator) { 
             const hasGrace = p.hand.some(c => c.value === 'GRACIA');
             let pPoints = 0;
             
             if (hasGrace) {
-                pPoints = 0; // Gracia annuls points
+                pPoints = 0; 
             } else {
                 pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0);
             }
@@ -986,16 +991,16 @@ app.get('/', (req, res) => {
         
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; }
         
-        #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
+        #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
         .point-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 1s ease-in-out; }
 
-        #score-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 400px; background: rgba(10, 10, 10, 0.95); border: 2px solid gold; padding: 20px; border-radius: 15px; z-index: 60000; display: none; flex-direction: column; text-align: center; box-shadow: 0 0 20px gold; }
+        #score-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 140000; display: none; flex-direction: column; justify-content: center; align-items: center; }
         
         #reconnect-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:90000; display:none; justify-content:center; align-items:center; color:white; font-size:20px; flex-direction:column; }
         .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom:15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 60000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
+        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 99999; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
         .libre-step { display: none; width: 90%; text-align: center; }
         .libre-step.active { display: block; }
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
@@ -1043,8 +1048,8 @@ app.get('/', (req, res) => {
         .drawn-card { animation: slideUp 0.5s ease-out; border: 2px solid gold; }
 
         body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
-        #color-picker { position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; display: none; text-align: center; box-shadow: 0 0 50px black; }
-        .color-circle { width: 60px; height: 60px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 3px solid #ddd; }
+        #color-picker { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 99999; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        .color-circle { width: 80px; height: 80px; border-radius: 50%; display: inline-block; margin: 15px; cursor: pointer; border: 4px solid #fff; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
         #revival-text { color: white; font-size: 30px; font-weight: bold; text-shadow: 0 0 20px gold; padding: 20px; border: 3px solid gold; border-radius: 15px; background: rgba(50,50,0,0.3); max-width: 90%; animation: pop 0.5s ease-out; }
@@ -1057,8 +1062,8 @@ app.get('/', (req, res) => {
         #rules-btn { position: fixed; top: 110px; left: 20px; width: 50px; height: 50px; background: #9b59b6; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; }
         #score-btn { position: fixed; top: 170px; left: 20px; width: 50px; height: 50px; background: gold; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; transition: all 0.3s; color: black; }
 
-        #rules-modal, #manual-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 95%; max-width: 600px; max-height: 90vh; background: rgba(15, 15, 15, 0.98); border: 2px solid #9b59b6; display: none; flex-direction: column; z-index: 50001; border-radius: 10px; padding: 20px; color: white; overflow-y: auto; box-shadow: 0 0 30px rgba(155, 89, 182, 0.5); }
-        #rules-close, #manual-close { position: absolute; top: 10px; right: 15px; color: white; font-size: 24px; cursor: pointer; font-weight: bold; z-index:10; }
+        #rules-modal, #manual-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 15, 15, 0.98); z-index: 160000; display: none; flex-direction: column; justify-content: center; align-items: center; padding: 20px; color: white; overflow-y: auto; }
+        #rules-close, #manual-close { position: absolute; top: 20px; right: 20px; color: white; font-size: 30px; cursor: pointer; font-weight: bold; z-index:10; }
         
         .rule-row { display: flex; align-items: center; margin-bottom: 15px; text-align: left; }
         .rule-badge { width: 40px; height: 56px; border-radius: 4px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-weight: bold; margin-right: 15px; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 5px black; }
@@ -1217,16 +1222,16 @@ app.get('/', (req, res) => {
     <div id="duel-screen" class="screen"><h1 style="color:gold;">⚔️ DUELO ⚔️</h1><h3 id="duel-narrative">Cargando duelo...</h3><h2 id="duel-names">... vs ...</h2><h3 id="duel-sc">0 - 0</h3><p id="duel-turn-msg"></p><div id="duel-opts"><button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button><button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button><button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button></div></div>
     
     <div id="color-picker"><h3>Elige Color</h3><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div>
-    <div id="revive-screen"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div><div id="revival-overlay"><div id="revival-text"></div></div>
+    <div id="revive-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99999; display:none; flex-direction:column; justify-content:center; align-items:center;"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div><div id="revival-overlay"><div id="revival-text"></div></div>
     
-    <div id="grace-color-modal">
+    <div id="grace-color-modal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99999; display:none; flex-direction:column; justify-content:center; align-items:center;">
         <h2 style="color:gold;">❤️ GRACIA DIVINA ❤️</h2>
-        <p>¿Quieres usarla como cambio de color?</p>
+        <p style="color:white; font-size:20px;">¿Quieres usarla como cambio de color?</p>
         <button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button>
         <button class="btn-main" onclick="confirmGraceColor(false)" style="background:#e74c3c">CANCELAR</button>
     </div>
 
-    <div id="revive-confirm-screen">
+    <div id="revive-confirm-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99999; display:none; flex-direction:column; justify-content:center; align-items:center;">
         <h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2>
         <button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button>
         <button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button>
@@ -1376,7 +1381,7 @@ app.get('/', (req, res) => {
         socket.on('updateState', s => {
             currentPlayers = s.players;
             
-            // CORRECCION DE SINTAXIS: Uso de comillas simples para evitar romper el string del servidor
+            // CORRECCION DE SINTAXIS: Uso de comillas simples
             if(s.leaderboard) {
                 const slist = document.getElementById('score-list');
                 slist.innerHTML = s.leaderboard.map(function(u, i) {
@@ -1403,10 +1408,12 @@ app.get('/', (req, res) => {
                 document.getElementById('uno-main-btn').style.display = 'flex';
             }
 
+            // CRUCIAL: No cerrar modal de Libre Albedrio si está activo
             if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
-                 cancelLadder();
-                 document.getElementById('libre-modal').style.display = 'none';
-                 libreState = { active: false };
+                 if (document.getElementById('libre-modal').style.display !== 'flex') {
+                    cancelLadder();
+                    libreState = { active: false };
+                 }
             }
 
             if(s.state === 'waiting') {
@@ -1426,7 +1433,7 @@ app.get('/', (req, res) => {
                  document.getElementById('hand-zone').style.display = 'flex';
                  if(s.state === 'playing') document.getElementById('uno-main-btn').style.display = 'flex';
                  
-                 document.getElementById('round-overlay').style.display = 'none'; // Hide round overlay on start
+                 document.getElementById('round-overlay').style.display = 'none'; 
 
                  if(document.getElementById('libre-modal').style.display !== 'flex') {
                     document.getElementById('action-bar').style.display = 'flex';
@@ -1614,7 +1621,7 @@ app.get('/', (req, res) => {
         }
 
         function handleCardClick(c) {
-            if(document.getElementById('color-picker').style.display === 'block') return;
+            if(document.getElementById('color-picker').style.display === 'flex') return;
             if(c.value === 'LIBRE') { socket.emit('playCard', c.id, null, null); return; }
             
             // LOGICA GRACIA DIVINA DEFENSIVA
@@ -1640,24 +1647,24 @@ app.get('/', (req, res) => {
                     if(c.value==='RIP') {
                          socket.emit('playCard', c.id, null, null);
                     } else {
-                         pendingCard=c.id; document.getElementById('color-picker').style.display='block'; 
+                         pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; 
                     }
                 } else { 
-                    pendingCard=c.id; document.getElementById('color-picker').style.display='block'; 
+                    pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; 
                 } 
             } 
             else socket.emit('playCard', c.id, null, null);
         }
 
         function showGraceModal() {
-            document.getElementById('grace-color-modal').style.display = 'block';
+            document.getElementById('grace-color-modal').style.display = 'flex';
         }
         function confirmGraceColor(confirmed) {
             document.getElementById('grace-color-modal').style.display = 'none';
             if (confirmed) {
                  pendingColorForRevive = null; 
                  pendingGrace = false; 
-                 document.getElementById('color-picker').style.display='block';
+                 document.getElementById('color-picker').style.display='flex';
             } else {
                 pendingCard = null;
             }
@@ -1709,13 +1716,13 @@ app.get('/', (req, res) => {
         }
         function ripResp(d){ socket.emit('ripDecision',d); }
         function pick(c){ socket.emit('duelPick',c); }
-        function graceDef(){ pendingGrace=true; document.getElementById('color-picker').style.display='block'; }
+        function graceDef(){ pendingGrace=true; document.getElementById('color-picker').style.display='flex'; }
         
         let pendingReviveCardId = null;
         socket.on('askReviveConfirmation', (data) => {
             pendingReviveCardId = data.cardId;
             document.getElementById('revive-name').innerText = data.name;
-            document.getElementById('revive-confirm-screen').style.display = 'block';
+            document.getElementById('revive-confirm-screen').style.display = 'flex';
         });
         function confirmRevive(confirmed) {
             document.getElementById('revive-confirm-screen').style.display = 'none';
@@ -1818,15 +1825,8 @@ app.get('/', (req, res) => {
             setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},10000);
         });
         
-        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='block';});
+        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id);}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='flex';});
         socket.on('playerRevived',d=>{ const o=document.getElementById('revival-overlay'); document.getElementById('revival-text').innerHTML='✨<br>' + d.revived + ' fue resucitado por gracia divina de ' + d.savior + '<br>✨'; o.style.display='flex'; setTimeout(()=>o.style.display='none',4000);});
     </script>
 </body>
 </html>
-    `);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

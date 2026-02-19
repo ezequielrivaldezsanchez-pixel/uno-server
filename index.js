@@ -12,7 +12,6 @@ const io = require('socket.io')(http, {
 const rooms = {}; 
 const ladderOrder = ['0', '1', '1 y 1/2', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-// Pesos para ordenamiento
 const sortValWeights = {
     '0': -1, '1':1, '1 y 1/2':1.5, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
     '+2': 20, 'X': 21, 'R': 22,
@@ -23,7 +22,6 @@ const sortColWeights = { 'rojo':1, 'azul':2, 'verde':3, 'amarillo':4, 'negro':5 
 const colors = ['rojo', 'azul', 'verde', 'amarillo'];
 const values = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '1 y 1/2', '+2', 'X', 'R'];
 
-// Limpieza automática segura
 setInterval(() => {
     try {
         const now = Date.now();
@@ -114,11 +112,8 @@ function getCardPoints(card) {
     return isNaN(val) ? 0 : val;
 }
 
-// --- WRAPPER ANTI-CRASH ---
 const safe = (fn) => {
-    return (...args) => {
-        try { fn(...args); } catch (err) { console.error("Socket Error Prevenido:", err); }
-    };
+    return (...args) => { try { fn(...args); } catch (err) { console.error("Socket Error Prevenido:", err); } };
 };
 
 // --- SOCKETS ---
@@ -456,9 +451,9 @@ io.on('connection', (socket) => {
             room.gameState = 'rip_decision';
             const attacker = player; const defender = room.players[victimIdx];
             room.duelState = { 
-                attackerId: attacker.id, defenderId: defender.id, attackerName: attacker.name, defenderName: defender.name, 
+                attackerId: attacker.uuid, defenderId: defender.uuid, attackerName: attacker.name, defenderName: defender.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: attacker.id, narrative: `💀 ${attacker.name} te retó a Duelo usando la carta RIP!`, type: 'rip' 
+                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip' 
             };
             updateAll(roomId); return;
         }
@@ -511,13 +506,15 @@ io.on('connection', (socket) => {
     socket.on('ripDecision', safe((d) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'rip_decision' && room.gameState !== 'penalty_decision') return;
-        if (socket.id !== room.duelState.defenderId) return;
+        
+        const myUUID = room.players.find(x => x.id === socket.id)?.uuid;
+        if (myUUID !== room.duelState.defenderId) return;
 
         if (d === 'surrender') { 
             if(room.duelState.type === 'rip') { eliminatePlayer(roomId, room.duelState.defenderId); checkWinCondition(roomId); }
         }
         else if (d === 'accept_penalty') {
-             const p = room.players.find(x => x.id === socket.id);
+             const p = room.players.find(x => x.uuid === myUUID);
              io.to(roomId).emit('notification', `${p.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId);
         }
         else { 
@@ -531,12 +528,15 @@ io.on('connection', (socket) => {
     socket.on('duelPick', safe((c) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'dueling') return;
-        if (socket.id !== room.duelState.turn) return;
-        if (socket.id === room.duelState.attackerId) { 
+        
+        const myUUID = room.players.find(x => x.id === socket.id)?.uuid;
+        if (myUUID !== room.duelState.turn) return;
+
+        if (myUUID === room.duelState.attackerId) { 
             room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId;
             room.duelState.narrative = `⚔️ ${room.duelState.attackerName} eligió. Turno de ${room.duelState.defenderName}...`;
         } 
-        else if (socket.id === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId); return; }
+        else if (myUUID === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId); return; }
         updateAll(roomId);
     }));
     
@@ -576,8 +576,8 @@ io.on('connection', (socket) => {
                 if(p) {
                     p.isConnected = false;
                     if (room.gameState === 'dueling' || room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
-                        if(socket.id === room.duelState.attackerId || socket.id === room.duelState.defenderId) {
-                            eliminatePlayer(roomId, socket.id); checkWinCondition(roomId);
+                        if(p.uuid === room.duelState.attackerId || p.uuid === room.duelState.defenderId) {
+                            eliminatePlayer(roomId, p.uuid); checkWinCondition(roomId);
                         }
                     }
                     updateAll(roomId);
@@ -620,9 +620,9 @@ function applyCardEffect(roomId, player, card, chosenColor) {
             const nextPIdx = getNextPlayerIndex(roomId, 1); const victim = room.players[nextPIdx];
             room.gameState = 'penalty_decision';
             room.duelState = { 
-                attackerId: player.id, defenderId: victim.id, attackerName: player.name, defenderName: victim.name, 
+                attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: player.id, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty' 
+                turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty' 
             };
             room.currentTurn = nextPIdx; updateAll(roomId); return;
         }
@@ -661,13 +661,13 @@ function resolveDuelRound(roomId) {
 }
 
 function finalizeDuel(roomId) {
-    const room = rooms[roomId]; const att = room.players.find(p => p.id === room.duelState.attackerId); const def = room.players.find(p => p.id === room.duelState.defenderId);
+    const room = rooms[roomId]; const att = room.players.find(p => p.uuid === room.duelState.attackerId); const def = room.players.find(p => p.uuid === room.duelState.defenderId);
     if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
     const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; const isPenaltyDuel = room.duelState.type === 'penalty';
 
     if (attWins) { 
         io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
-        if (!isPenaltyDuel) { eliminatePlayer(roomId, def.id); checkWinCondition(roomId); } 
+        if (!isPenaltyDuel) { eliminatePlayer(roomId, def.uuid); checkWinCondition(roomId); } 
         else { io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); }
     } else { 
         io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
@@ -676,7 +676,7 @@ function finalizeDuel(roomId) {
     }
 }
 
-function eliminatePlayer(roomId, id) { const room = rooms[roomId]; if(!room) return; const p = room.players.find(p => p.id === id); if (p) { p.isDead = true; p.isSpectator = true; } }
+function eliminatePlayer(roomId, uuid) { const room = rooms[roomId]; if(!room) return; const p = room.players.find(p => p.uuid === uuid); if (p) { p.isDead = true; p.isSpectator = true; } }
 function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator).length; }
 function getNextPlayerIndex(roomId, step) {
     const room = rooms[roomId]; let current = room.currentTurn;
@@ -762,7 +762,6 @@ function calculateAndFinishRound(roomId, winner) {
             io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal });
             io.to(roomId).emit('playSound', 'win');
 
-            // Cálculo dinámico del tiempo de la animación antes de reiniciar
             const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 4000;
             setTimeout(() => { if(rooms[roomId]) resetRound(roomId); }, animationDelay);
         }
@@ -808,7 +807,7 @@ function updateAll(roomId) {
         room.players.forEach(p => {
             if(p.isConnected) {
                 const mp = JSON.parse(JSON.stringify(pack)); mp.iamAdmin = p.isAdmin;
-                if (mp.duelInfo) { if (p.id === room.duelState.attackerId) mp.duelInfo.myChoice = room.duelState.attackerChoice; if (p.id === room.duelState.defenderId) mp.duelInfo.myChoice = room.duelState.defenderChoice; }
+                if (mp.duelInfo) { if (p.uuid === room.duelState.attackerId) mp.duelInfo.myChoice = room.duelState.attackerChoice; if (p.uuid === room.duelState.defenderId) mp.duelInfo.myChoice = room.duelState.defenderChoice; }
                 io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand); io.to(p.id).emit('chatHistory', room.chatHistory);
             }
         });
@@ -835,18 +834,15 @@ app.get('/', (req, res) => {
         #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; }
         
-        /* OVERLAY RONDA (Capa transparente, no oscurece todo si no queremos, pero el diseño pide inmersión aquí) */
         #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
         .round-stage { display: none; flex-direction: column; align-items: center; width: 100%; }
         .active-stage { display: flex; animation: fadeIn 0.5s; }
         .score-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 0.6s ease-in-out; text-shadow: 0 0 10px black; z-index: 160000; }
 
-        /* RANKING TABLE */
         .rank-row { display: flex; justify-content: space-between; width: 80%; max-width: 400px; padding: 15px; margin: 8px 0; background: rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transform: translateY(20px); transition: all 0.5s; font-size: 22px; }
         .rank-row.visible { opacity: 1; transform: translateY(0); }
         .rank-gold { border: 2px solid gold; background: rgba(255, 215, 0, 0.2); }
 
-        /* MODALES FLOTANTES (AHORA FLOTAN, NO TAPAN TODO) */
         .floating-window { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-width: 95%; max-height: 85vh; background: #2c3e50; border: 3px solid #ecf0f1; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.9); z-index: 100000; display: none; flex-direction: column; padding: 20px; color: white; overflow-y: auto; text-align: center; }
         .modal-close { position: absolute; top: 10px; right: 15px; font-size: 28px; cursor: pointer; color: #aaa; font-weight: bold; }
         
@@ -857,15 +853,11 @@ app.get('/', (req, res) => {
         .libre-step { display: none; width: 100%; text-align: center; }
         .libre-step.active { display: block; }
         
-        /* UI BUTTONS (SIMETRIA ESPEJO) */
         .hud-btn { position: fixed; width: 55px; height: 55px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 24px; cursor: pointer; transition: all 0.2s; }
         .hud-btn:active { transform: scale(0.9); }
         
-        /* Izquierda */
         #score-btn { top: 20px; left: 20px; background: gold; color: black; }
         #rules-btn { top: 90px; left: 20px; background: #9b59b6; color: white; }
-        
-        /* Derecha */
         #uno-main-btn { top: 20px; right: 20px; background: #e67e22; font-size: 11px; font-weight: bold; text-align: center; line-height: 1.2; }
         #chat-btn { top: 90px; right: 20px; background: #3498db; }
 
@@ -906,18 +898,22 @@ app.get('/', (req, res) => {
         #chat-win { position: fixed; top: 160px; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; }
         #chat-badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: none; justify-content: center; align-items: center; font-weight: bold; border: 2px solid white; }
         
-        .rule-row { display: flex; align-items: center; margin-bottom: 15px; text-align: left; }
-        .rule-badge { width: 40px; height: 56px; border-radius: 4px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-weight: bold; margin-right: 15px; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 5px black; }
-        .rule-text { font-size: 14px; line-height: 1.4; }
+        /* Estilos Miniaturas para Manual */
+        .min-c { display:inline-block; width:22px; height:32px; border-radius:3px; border:1px solid white; text-align:center; line-height:32px; font-weight:bold; font-size:12px; color:white; vertical-align:middle; margin:0 2px; }
+        .mc-rojo { background:#ff5252; } .mc-azul { background:#448aff; } .mc-verde { background:#69f0ae; color:black; } .mc-amarillo { background:#ffd740; color:black; } .mc-negro { background:#212121; }
+        .mc-rip { background:black; font-size:10px; line-height:12px; display:inline-flex; align-items:center; justify-content:center; }
+        .mc-gra { background:white; color:red; }
 
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
         .mini-card.selected { border-color: gold; transform: scale(1.1); background: #666; }
 
         #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
-        .duel-btn { font-size:40px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; }
+        #duel-opts { display:flex; justify-content:center; gap:20px; margin-top:20px; width:100%; }
+        .duel-btn { font-size:50px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; padding:10px; }
         .duel-btn:hover { opacity: 0.8; }
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
+        
         input { padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:10px 0; }
         .btn-main { padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer; margin: 10px; }
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
@@ -1000,26 +996,49 @@ app.get('/', (req, res) => {
 
     <div id="rules-modal" class="floating-window">
         <div class="modal-close" onclick="toggleRules()">X</div>
-        <h2 style="color:gold;">Reglamento Rápido</h2>
-        <div class="rule-row"><div class="rule-badge" style="background:#000; color:white; border-color:#666;">🪦</div><div class="rule-text"><b>RIP:</b> Duelo a muerte. Si atacas y pierdes, robas 4 cartas.</div></div>
-        <div class="rule-row"><div class="rule-badge" style="background:white; color:red; border-color:gold;">❤️</div><div class="rule-text"><b>GRACIA DIVINA:</b> Inmune a todo. Revive muertos. Única para cerrar (+50pts).</div></div>
-        <div class="rule-row"><div class="rule-badge" style="background:#000; color:white;">🕊️</div><div class="rule-text"><b>LIBRE ALBEDRÍO:</b> Defiende. Regala 1, Descarta 1, Cambia Color.</div></div>
-        <div class="rule-row"><div class="rule-badge" style="background:#000; color:purple;">SS</div><div class="rule-text"><b>SALTEO SUPREMO:</b> Rival pierde 4 turnos y roba 4 cartas.</div></div>
-        <div class="rule-row"><div class="rule-badge" style="background:#e67e22;">📢</div><div class="rule-text"><b>UNO y 1/2:</b> Grita si te queda 1 carta.</div></div>
+        <h2 style="color:gold;">Reglas Rápidas</h2>
+        <div style="text-align:left; font-size:14px;">
+            <p><b>Puntos:</b> Número=Cara | 1y1/2=1.5 | +2/Reversa/Salteo=20 | Color/+4=40 | +12/Libre/SS=80 | RIP=100.</p>
+            <p>💀 <b>RIP:</b> Desafía a duelo a muerte. Si atacas y pierdes, robas 4.</p>
+            <p>❤️ <b>GRACIA:</b> Inmune a castigos. Revive. Usada como última carta para ganar da un Bonus de +50pts.</p>
+            <p>🕊️ <b>LIBRE ALBEDRÍO:</b> Defiende castigo. Regalas 1, descartas 1 y eliges color.</p>
+            <p>🪜 <b>ESCALERA:</b> 3 o más cartas consecutivas del mismo color (ej. <span class="min-c mc-azul">3</span> <span class="min-c mc-azul">4</span> <span class="min-c mc-azul">5</span>). Manten apretada una carta para seleccionar varias.</p>
+            <p>✨ <b>SAFF:</b> Tira fuera de turno si tu carta es EXACTAMENTE igual en número y color a la de la mesa.</p>
+        </div>
     </div>
 
-    <div id="manual-modal" class="floating-window">
+    <div id="manual-modal" class="floating-window" style="width:80%; max-width:600px;">
         <div class="modal-close" onclick="toggleManual()">X</div>
-        <h2 style="color:gold;">MANUAL DE JUEGO</h2>
-        <div style="padding:0 10px; text-align:left;">
-            <h3>OBJETIVO</h3>
-            <p>Acumular 800 puntos. El ganador se lleva los puntos de las manos de los perdedores.</p>
-            <h3>JUGADAS MAESTRAS</h3>
-            <p>🖐️ <b>Pulsación Larga:</b> Selección Múltiple.</p>
-            <h4>A) Escaleras</h4>
-            <p>Secuencia numérica del <b>MISMO COLOR</b> (3, 4, 5).</p>
-            <h4>B) Combo Matemático</h4>
-            <p>Dos "1 y 1/2" suman 3. Tíralas juntas sobre un 3.</p>
+        <h1 style="color:gold; font-size:28px;">📖 MANUAL COMPLETO</h1>
+        <div style="padding:0 10px; text-align:left; line-height:1.6;">
+            <h3>1. EL OBJETIVO Y PUNTUACIÓN</h3>
+            <p>El juego se gana al alcanzar los <b>800 puntos</b>. El jugador que se queda sin cartas (gana la ronda) recolecta el valor de las manos de todos los perdedores.</p>
+            <ul>
+                <li>Numéricas (0-9): Su valor.</li>
+                <li><span class="min-c mc-rojo">1 ½</span> Vale 1.5 puntos.</li>
+                <li><span class="min-c mc-verde">+2</span> <span class="min-c mc-amarillo">⮂</span> <span class="min-c mc-azul">⊘</span> Valen 20 puntos.</li>
+                <li><span class="min-c mc-negro">C</span> <span class="min-c mc-negro">+4</span> Valen 40 puntos.</li>
+                <li><span class="min-c mc-negro">SS</span> <span class="min-c mc-negro">+12</span> <span class="min-c mc-negro">🕊️</span> Valen 80 puntos.</li>
+                <li><span class="min-c mc-rip">🪦</span> Vale 100 puntos.</li>
+                <li><span class="min-c mc-gra">❤️</span> Vale 0 si pierdes con ella en mano. Si cierras la partida tirando esta carta, ganas +50 puntos de Bonus.</li>
+            </ul>
+
+            <h3>2. CARTAS DEL MAZO (130 Totales)</h3>
+            <p>Cada color (Rojo, Azul, Verde, Amarillo) tiene: dos 0, dos 1-9, dos 1y1/2, dos +2, dos Reversa, dos Salteo. <br>Especiales negras: 4 Cambios Color, 4 Mas Cuatro, 2 RIP, 2 Gracia Divina, 2 +12, 2 Libre Albedrío, 2 Salteo Supremo.</p>
+
+            <h3>3. JUGADAS MAESTRAS (Selección Múltiple)</h3>
+            <p>Mantén presionada una carta para iniciar la Selección Múltiple y elige varias para hacer combinaciones.</p>
+            <p><b>A) ESCALERAS (Mínimo 3 cartas):</b> Deben ser consecutivas numéricamente y del <b>MISMO COLOR</b>. Puedes tirarlas siempre que la primera encaje con la mesa. Ej: Mesa tiene <span class="min-c mc-rojo">2</span>. Seleccionas <span class="min-c mc-rojo">3</span> <span class="min-c mc-rojo">4</span> <span class="min-c mc-rojo">5</span>.</p>
+            <p><b>B) EL COMBO 1 ½:</b> Dos cartas <span class="min-c mc-azul">1 ½</span> suman 3. Si la mesa tiene un <span class="min-c mc-azul">3</span>, seleccionas ambas 1y1/2 del mismo color y las tiras al mismo tiempo.</p>
+
+            <h3>4. EL MOVIMIENTO S.A.F.F.</h3>
+            <p>No tienes que esperar tu turno si tienes una carta <b>IDÉNTICA</b> a la de la mesa (Mismo Número Y Mismo Color). Tírala rápido. El juego saltará directamente a ti.</p>
+
+            <h3>5. CARTAS SUPREMAS Y DUELOS</h3>
+            <p><span class="min-c mc-rip">🪦</span> <b>RIP:</b> Seleccionas a tu víctima y comienza un duelo a muerte (Fuego gana a Hielo, Hielo a Agua, Agua a Fuego). Al mejor de 3. Si el atacante gana, la víctima muere (no juega, no tira) hasta ser revivido. Si la víctima se defiende y gana, el atacante roba 4 cartas de penalidad.</p>
+            <p><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), la tiras y lo resucitas. Al resucitar alguien, decides el color de la mesa.</p>
+            <p><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Bloquea castigos numéricos (+2,+4,+12). Cuando la usas te abre una ventana para: 1) Regalar una carta de tu mano a un rival. 2) Descartar una carta a la mesa. 3) Elegir el color final.</p>
+            <p><span class="min-c mc-negro">SS</span> <b>SALTEO SUPREMO:</b> El siguiente jugador pierde el turno y se le acumulan +4 cartas para robar. Si no se defiende (con Libre o Gracia), sufre ambos efectos en un solo golpe.</p>
         </div>
     </div>
 
@@ -1045,11 +1064,22 @@ app.get('/', (req, res) => {
         <button id="btn-accept-penalty" onclick="ripResp('accept_penalty')" class="btn-main" style="background:#34495e; display:none;">ACEPTAR CASTIGO</button>
         <button id="btn-duel-start" onclick="ripResp('duel')" class="btn-main" style="background:red; border:3px solid gold;">BATIRSE A DUELO</button>
         <button id="btn-surrender" onclick="ripResp('surrender')" class="btn-main">RENDIRSE</button>
-        <p id="duel-warning" style="font-size:12px; color:#aaa; display:none;">Nota: batirse a duelo y perder implicará una penalidad extra para ti.</p>
+        <p id="duel-warning" style="font-size:12px; color:#aaa; display:none;">Nota: batirse a duelo y perder implicará una penalidad extra.</p>
         <div id="grace-btn" style="display:none;"><button onclick="showGraceModal()" class="btn-main" style="background:white; color:red;">USAR GRACIA</button></div>
     </div>
 
-    <div id="duel-screen" class="screen"><h1 style="color:gold;">⚔️ DUELO ⚔️</h1><h3 id="duel-narrative">Cargando duelo...</h3><h2 id="duel-names">... vs ...</h2><h3 id="duel-sc">0 - 0</h3><p id="duel-turn-msg"></p><div id="duel-opts"><button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button><button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button><button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button></div></div>
+    <div id="duel-screen" class="screen">
+        <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
+        <h3 id="duel-narrative">Cargando duelo...</h3>
+        <h2 id="duel-names">... vs ...</h2>
+        <h3 id="duel-sc">0 - 0</h3>
+        <p id="duel-turn-msg"></p>
+        <div id="duel-opts">
+            <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
+            <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
+            <button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button>
+        </div>
+    </div>
     
     <div id="color-picker" class="floating-window"><h3>Elige Color</h3><div style="display:flex; flex-wrap:wrap; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div></div>
     <div id="revive-screen" class="floating-window"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div>
@@ -1070,27 +1100,10 @@ app.get('/', (req, res) => {
     <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:6000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
 
     <div id="libre-modal" class="floating-window" style="width: 380px;">
-        <div id="step-1" class="libre-step active">
-            <h2 style="color: gold;">¿A quién regalas 1 carta?</h2>
-            <div id="libre-targets"></div>
-        </div>
-        <div id="step-2" class="libre-step">
-            <h2 style="color: gold;">Elige qué carta regalar</h2>
-            <div id="libre-gift-hand" style="max-height: 200px; overflow-y: auto;"></div>
-        </div>
-        <div id="step-3" class="libre-step">
-            <h2 style="color: gold;">Elige 1 carta a descartar</h2>
-            <div id="libre-discard-hand" style="max-height: 200px; overflow-y: auto;"></div>
-        </div>
-        <div id="step-color" class="libre-step">
-            <h2 style="color: gold;">Elige Color</h2>
-            <div style="display:flex; flex-wrap:wrap; justify-content:center;">
-                <div class="color-circle" style="background:#ff5252;" onclick="finishLibre('rojo')"></div>
-                <div class="color-circle" style="background:#448aff;" onclick="finishLibre('azul')"></div>
-                <div class="color-circle" style="background:#69f0ae;" onclick="finishLibre('verde')"></div>
-                <div class="color-circle" style="background:#ffd740;" onclick="finishLibre('amarillo')"></div>
-            </div>
-        </div>
+        <div id="step-1" class="libre-step active"><h2 style="color: gold;">¿A quién regalas 1 carta?</h2><div id="libre-targets"></div></div>
+        <div id="step-2" class="libre-step"><h2 style="color: gold;">Elige qué carta regalar</h2><div id="libre-gift-hand" style="max-height: 200px; overflow-y: auto;"></div></div>
+        <div id="step-3" class="libre-step"><h2 style="color: gold;">Elige 1 carta a descartar</h2><div id="libre-discard-hand" style="max-height: 200px; overflow-y: auto;"></div></div>
+        <div id="step-color" class="libre-step"><h2 style="color: gold;">Elige Color</h2><div style="display:flex; flex-wrap:wrap; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="finishLibre('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="finishLibre('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="finishLibre('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="finishLibre('amarillo')"></div></div></div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -1127,7 +1140,7 @@ app.get('/', (req, res) => {
             document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1);
             const div = document.getElementById('libre-targets'); div.innerHTML = '';
             currentPlayers.forEach(p => {
-                if(p.id !== myId && !p.isSpectator && !p.isDead) {
+                if(p.uuid !== myUUID && !p.isSpectator && !p.isDead) {
                     const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name;
                     b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); };
                     div.appendChild(b);
@@ -1152,10 +1165,7 @@ app.get('/', (req, res) => {
                 if(c.id === libreState.cardId || c.id === libreState.giftId) return;
                 const b = document.createElement('div'); b.className = 'mini-card';
                 b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { 
-                    libreState.discardId = c.id; 
-                    if(c.color === 'negro') { showLibreStep('color'); } else { finishLibre(null); }
-                };
+                b.onclick = () => { libreState.discardId = c.id; if(c.color === 'negro') { showLibreStep('color'); } else { finishLibre(null); } };
                 pool.appendChild(b);
             });
         }
@@ -1168,116 +1178,97 @@ app.get('/', (req, res) => {
         }
         function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); if(n==='color') document.getElementById('step-color').classList.add('active'); else document.getElementById('step-'+n).classList.add('active'); }
         
-        function getCardText(c) {
-             if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value;
-        }
-
-        function getBgColor(c) { 
-            const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; 
-            if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50';
-            return map[c.color] || '#444'; 
-        }
+        function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
+        function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
         function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
         function showJoin() { changeScreen('join-menu'); }
         function backToLogin() { changeScreen('login'); }
         function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
-        
-        function copyLink() { 
-            const code = document.getElementById('lobby-code').innerText;
-            const url = window.location.origin + '/?room=' + code;
-            if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(url).then(() => { alert('¡Link copiado!'); }).catch(err => { prompt("Copia:", url); }); } 
-            else { prompt("Copia:", url); }
-        }
-
+        function copyLink() { const code = document.getElementById('lobby-code').innerText; const url = window.location.origin + '/?room=' + code; if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(url).then(() => { alert('¡Link copiado!'); }).catch(err => { prompt("Copia:", url); }); } else { prompt("Copia:", url); } }
         function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
 
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
+        
         socket.on('updateState', s => {
             currentPlayers = s.players;
             
-            // Leaderboard 
             if(s.leaderboard) {
                 const slist = document.getElementById('score-list');
                 slist.innerHTML = s.leaderboard.map(function(u, i) {
-                    return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;">' +
-                        '<span>' + (i+1) + '. ' + u.name + '</span>' +
-                        '<span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span>' +
-                    '</div>';
+                    return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span></div>';
                 }).join('');
             }
 
             if(s.state === 'waiting' || s.state === 'playing') {
-                const lc = document.getElementById('lobby-code');
-                if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
+                const lc = document.getElementById('lobby-code'); if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
             }
 
-            const me = s.players.find(p=>p.id===myId);
-            const amITurning = me && me.isTurn;
+            const me = s.players.find(p=>p.uuid===myUUID); const amITurning = me && me.isTurn;
             
-            if(s.state === 'dueling' || s.state === 'rip_decision' || s.state === 'penalty_decision') {
-                document.getElementById('uno-menu').style.display = 'none';
-                document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
-                forceCloseChat(); 
-            } else if (s.state === 'playing') {
-                document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
-            }
-
             if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
                  if (document.getElementById('libre-modal').style.display !== 'flex') { cancelLadder(); libreState = { active: false }; }
             }
 
             if(s.state === 'waiting') {
-                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin&&p.id!==myId?('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>'):'') + '</div>').join('');
+                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin&&p.uuid!==myUUID?('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>'):'') + '</div>').join('');
                 document.getElementById('lobby-users').innerHTML = list;
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
-                changeScreen('lobby'); return;
+                changeScreen('lobby'); 
+                return;
             }
             
             document.body.className = ''; 
             if(s.state === 'playing') {
-                 changeScreen('game-area'); document.body.classList.add('playing-state'); 
-                 if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
-                 document.getElementById('game-area').style.display = 'flex';
-                 document.getElementById('hand-zone').style.display = 'flex';
-                 document.getElementById('round-overlay').style.display = 'none'; 
-
-                 if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
+                 changeScreen('game-area'); 
+                 // RE-SHOW HUD BUTTONS SAFELY
+                 document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  
+                 document.body.classList.add('playing-state'); 
+                 if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
+                 document.getElementById('game-area').style.display = 'flex'; document.getElementById('hand-zone').style.display = 'flex';
+                 document.getElementById('round-overlay').style.display = 'none'; 
+                 if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
                  const reportList = document.getElementById('report-list'); reportList.innerHTML = '';
                  if(s.reportTargets && s.reportTargets.length > 0) {
                      s.reportTargets.forEach(tid => {
-                         if(tid !== myId) {
-                             const p = s.players.find(x=>x.id===tid);
-                             if(p) {
-                                 const btn = document.createElement('button'); btn.className = 'btn-main'; btn.style.width = '100%'; btn.style.fontSize = '12px'; btn.style.background = '#c0392b'; btn.style.margin = '2px'; btn.innerText = 'DENUNCIAR A ' + p.name.toUpperCase();
-                                 btn.onclick = function() { socket.emit('reportUno', tid); }; reportList.appendChild(btn);
-                             }
+                         const p = s.players.find(x=>x.id===tid);
+                         if(p && p.uuid !== myUUID) {
+                             const btn = document.createElement('button'); btn.className = 'btn-main'; btn.style.width = '100%'; btn.style.fontSize = '12px'; btn.style.background = '#c0392b'; btn.style.margin = '2px'; btn.innerText = 'DENUNCIAR A ' + p.name.toUpperCase();
+                             btn.onclick = function() { socket.emit('reportUno', tid); }; reportList.appendChild(btn);
                          }
                      });
                  }
             } 
             else if (s.state === 'rip_decision' || s.state === 'penalty_decision') {
                 changeScreen('game-area'); forceCloseChat(); document.body.classList.add('state-rip');
-                if(s.duelInfo.defenderId === myId) { 
+                
+                if(s.duelInfo.defenderId === myUUID) { 
                     document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; 
                     const msgDiv = document.getElementById('rip-msg-custom'); const duelWarn = document.getElementById('duel-warning'); const btnAccept = document.getElementById('btn-accept-penalty'); const btnSurrender = document.getElementById('btn-surrender'); const btnDuel = document.getElementById('btn-duel-start');
                     if (s.state === 'rip_decision') { document.getElementById('rip-title').innerText = "💀 RIP 💀"; msgDiv.innerText = s.duelInfo.attackerName + " te retó a Duelo."; duelWarn.style.display = 'none'; btnAccept.style.display = 'none'; btnSurrender.style.display = 'inline-block'; btnDuel.style.display = 'inline-block'; } 
                     else { document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; msgDiv.innerText = "Castigo de " + s.duelInfo.attackerName + "."; duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; }
-                } 
-                else { document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; }
+                } else { 
+                    document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
+                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; 
+                }
             }
             else if (s.state === 'dueling') {
                 changeScreen('game-area'); forceCloseChat(); document.body.classList.add('state-dueling');
                 document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex';
                 document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
-                const amFighter = (myId === s.duelInfo.attackerId || myId === s.duelInfo.defenderId); document.getElementById('duel-opts').style.display = amFighter ? 'block' : 'none';
+                
+                const amFighter = (myUUID === s.duelInfo.attackerId || myUUID === s.duelInfo.defenderId); 
+                document.getElementById('duel-opts').style.display = amFighter ? 'flex' : 'none';
+                
                 if(amFighter) {
-                    const isTurn = s.duelInfo.turn === myId; document.getElementById('duel-turn-msg').innerText = isTurn ? "¡TU TURNO! Elige..." : "Esperando al oponente..."; document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
-                    if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).className = 'duel-btn selected'; } else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
+                    const isTurn = (s.duelInfo.turn === myUUID); 
+                    document.getElementById('duel-turn-msg').innerText = isTurn ? "¡TU TURNO! Elige un ataque:" : "Esperando al oponente..."; 
+                    document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
+                    if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).classList.add('selected'); } else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
                 } else { document.getElementById('duel-turn-msg').innerText = ""; }
             }
 
@@ -1320,10 +1311,7 @@ app.get('/', (req, res) => {
         }
 
         function cancelLadder() { ladderMode = false; ladderSelected = []; document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected-ladder')); updateLadderUI(); }
-
-        function updateLadderUI() {
-             const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none';
-        }
+        function updateLadderUI() { const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none'; }
 
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'flex') return;
@@ -1344,8 +1332,11 @@ app.get('/', (req, res) => {
         function submitLadder() { if(ladderSelected.length < 2) return; socket.emit('playMultiCards', ladderSelected); cancelLadder(); }
 
         function changeScreen(id) { 
-            document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); document.getElementById(id).style.display='flex'; 
+            document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById('action-bar').style.display='none'; 
+            document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
+            document.getElementById(id).style.display='flex'; 
         }
+        
         function start(){ socket.emit('requestStart'); } function draw(){ socket.emit('draw'); } function pass(){ socket.emit('passTurn'); }
         function trySayUno() { if(myHand.length > 2) { const b=document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes anunciar si no es verdad!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); toggleUnoMenu(); return; } sayUno(); }
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
@@ -1419,7 +1410,7 @@ app.get('/', (req, res) => {
                 const destRect = wPtsEl.getBoundingClientRect();
                 flyer.style.top = destRect.top + 'px'; flyer.style.left = destRect.left + 'px'; flyer.style.opacity = '0';
                 
-                await new Promise(r => setTimeout(r, 600)); // Vuelo
+                await new Promise(r => setTimeout(r, 600)); 
                 flyer.remove();
                 
                 acumuladoRonda += loser.points;
@@ -1430,7 +1421,7 @@ app.get('/', (req, res) => {
                 lDiv.style.opacity = '0.3';
             }
             
-            await new Promise(r => setTimeout(r, 2000)); // Pausa apreciativa total ronda
+            await new Promise(r => setTimeout(r, 2000)); 
 
             // FASE 2
             document.getElementById('stage-collection').style.display = 'none';
@@ -1450,8 +1441,6 @@ app.get('/', (req, res) => {
                 await new Promise(r => setTimeout(r, 600));
                 row.classList.add('visible');
             }
-
-            // Esperar mientras el server lanza el Countdown
         });
 
         socket.on('gameOver',d=>{

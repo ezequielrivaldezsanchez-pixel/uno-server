@@ -296,7 +296,6 @@ io.on('connection', (socket) => {
 
         let isLibreDiscard = false;
 
-        // RESOLUCIÓN DEL CONTEXTO DE LIBRE ALBEDRÍO ANTES DE EVALUAR LA CARTA DE DESCARTE
         if (libreContext) {
             const lIdx = player.hand.findIndex(c => c.id === libreContext.libreId);
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
@@ -312,11 +311,9 @@ io.on('connection', (socket) => {
             }
             io.to(roomId).emit('playSound', 'wild');
 
-            // Sacamos Libre y la metemos al mazo
             player.hand.splice(lIdx, 1);
             room.discardPile.push({ color: 'negro', value: 'LIBRE', type: 'special', id: libreContext.libreId });
 
-            // Regalamos la carta
             const realGIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
             const giftCard = player.hand.splice(realGIdx, 1)[0];
             target.hand.push(giftCard);
@@ -325,7 +322,6 @@ io.on('connection', (socket) => {
             isLibreDiscard = true;
         }
 
-        // EVALUACIÓN DE LA CARTA (Puede ser un descarte normal o el descarte provocado por Libre)
         let cardIndex = player.hand.findIndex(c => c.id === cardId); 
         let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
         if (!card && reviveTargetId) {
@@ -739,7 +735,16 @@ function startCountdown(roomId) {
     }
     room.discardPile = [safeCard]; room.activeColor = safeCard.color; 
     
-    room.currentTurn = room.roundStarterIndex % room.players.length; 
+    // Validación Anti-Ausentes para el arranque
+    let nextStarter = room.roundStarterIndex % room.players.length;
+    let safeLoop = 0;
+    while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator) && safeLoop < room.players.length) {
+        nextStarter = (nextStarter + 1) % room.players.length;
+        safeLoop++;
+    }
+    room.roundStarterIndex = nextStarter;
+    room.currentTurn = room.roundStarterIndex; 
+    
     room.direction = 1;
     room.pendingPenalty = 0; room.pendingSkip = 0;
     
@@ -753,7 +758,17 @@ function startCountdown(roomId) {
     room.countdownInterval = setInterval(() => {
         if (!rooms[roomId]) return clearInterval(room.countdownInterval);
         io.to(roomId).emit('countdownTick', count); io.to(roomId).emit('playSound', 'soft');
-        if (count <= 0) { clearInterval(room.countdownInterval); room.gameState = 'playing'; io.to(roomId).emit('playSound', 'start'); updateAll(roomId); } count--;
+        if (count <= 0) { 
+            clearInterval(room.countdownInterval); 
+            room.gameState = 'playing'; 
+            io.to(roomId).emit('playSound', 'start'); 
+            updateAll(roomId); 
+            
+            // Disparar banner de Nueva Ronda
+            const starterName = room.players[room.currentTurn] ? room.players[room.currentTurn].name : "???";
+            io.to(roomId).emit('roundStarted', { round: room.roundCount, starterName: starterName });
+        } 
+        count--;
     }, 1000);
 }
 
@@ -808,8 +823,17 @@ function calculateAndFinishRound(roomId, winner) {
 function resetRound(roomId) {
     const room = rooms[roomId]; if(!room) return;
     
-    // Avanzar el índice matemático para quién inicia la nueva ronda
+    // Avanzar el índice matemático base para la nueva ronda
     room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
+
+    // Validación Anti-Ausentes para el reset
+    let nextStarter = room.roundStarterIndex;
+    let safeLoop = 0;
+    while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator) && safeLoop < room.players.length) {
+        nextStarter = (nextStarter + 1) % room.players.length;
+        safeLoop++;
+    }
+    room.roundStarterIndex = nextStarter;
 
     createDeck(roomId);
     let safeCard = room.deck.pop();
@@ -884,6 +908,16 @@ app.get('/', (req, res) => {
         .active-stage { display: flex; animation: fadeIn 0.5s; }
         .score-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 0.6s ease-in-out; text-shadow: 0 0 10px black; z-index: 160000; }
 
+        /* CARTEL INICIO DE RONDA */
+        #round-start-banner {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0);
+            background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px;
+            color: white; padding: 30px; text-align: center; z-index: 200000;
+            box-shadow: 0 0 30px gold; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none;
+        }
+        #round-start-banner.show { transform: translate(-50%, -50%) scale(1); }
+
         .rank-row { display: flex; justify-content: space-between; width: 80%; max-width: 400px; padding: 15px; margin: 8px 0; background: rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transform: translateY(20px); transition: all 0.5s; font-size: 22px; }
         .rank-row.visible { opacity: 1; transform: translateY(0); }
         .rank-gold { border: 2px solid gold; background: rgba(255, 215, 0, 0.2); }
@@ -915,7 +949,6 @@ app.get('/', (req, res) => {
         #alert-zone { position: fixed; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; transition: top 0.3s ease-out; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
         
-        /* CAJA DE CASTIGO REDISEÑADA Y MÁS PEQUEÑA */
         #penalty-display { font-size: 20px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 5px; background: rgba(0,0,0,0.9); padding: 10px 15px; border-radius: 8px; border: 2px solid red; pointer-events: auto; width: 85%; max-width: 320px; text-align: center; line-height: 1.3; transform: translateY(-30px); animation: pulseRed 1s infinite alternate; }
         @keyframes pulseRed { from { box-shadow: 0 0 10px red; } to { box-shadow: 0 0 25px red; } }
         
@@ -947,7 +980,6 @@ app.get('/', (req, res) => {
         #chat-win { position: fixed; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; transition: top 0.3s ease-out; }
         #chat-badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: none; justify-content: center; align-items: center; font-weight: bold; border: 2px solid white; }
         
-        /* Estilos Miniaturas para Manual */
         .min-c { display:inline-block; width:22px; height:32px; border-radius:3px; border:1px solid white; text-align:center; line-height:32px; font-weight:bold; font-size:12px; color:white; vertical-align:middle; margin:0 2px; }
         .mc-rojo { background:#ff5252; } .mc-azul { background:#448aff; } .mc-verde { background:#69f0ae; color:black; } .mc-amarillo { background:#ffd740; color:black; } .mc-negro { background:#212121; }
         .mc-rip { background:black; font-size:10px; line-height:12px; display:inline-flex; align-items:center; justify-content:center; }
@@ -1002,6 +1034,11 @@ app.get('/', (req, res) => {
         <div id="table-zone">
             <div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">📦</div><div id="top-card" class="card-pile"></div></div>
         </div>
+    </div>
+
+    <div id="round-start-banner">
+        <h1 id="rsb-round" style="color: gold; font-size: 50px; margin: 0; text-shadow: 2px 2px 5px black;">RONDA 1</h1>
+        <h2 id="rsb-starter" style="font-size: 24px; margin-top: 10px;">Comienza Fulanito</h2>
     </div>
 
     <div id="alert-zone">
@@ -1492,7 +1529,7 @@ app.get('/', (req, res) => {
             if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return; 
             const m = document.getElementById('uno-menu'); 
             m.style.display = (m.style.display==='flex'?'none':'flex'); 
-            closeDenounceList(); // Resetea sub-menú siempre
+            closeDenounceList(); 
         }
         
         function showDenounceList() {
@@ -1550,6 +1587,22 @@ app.get('/', (req, res) => {
 
         socket.on('ladderAnimate', (data) => {
             data.cards.forEach((c, i) => { setTimeout(() => { const el = document.createElement('div'); el.className = 'flying-card'; el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; el.innerText = getCardText(c); el.style.bottom = '150px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%)'; document.body.appendChild(el); setTimeout(() => { el.style.bottom = '50%'; el.style.opacity = '0'; el.style.transform = 'translate(-50%, -50%) scale(0.5)'; }, 50); setTimeout(() => el.remove(), 600); }, i * 200); });
+        });
+
+        // Evento de Inicio de Ronda
+        socket.on('roundStarted', data => {
+            const banner = document.getElementById('round-start-banner');
+            document.getElementById('rsb-round').innerText = "RONDA " + data.round;
+            document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
+            
+            banner.style.display = 'flex';
+            void banner.offsetWidth; // Force reflow para disparar la transición CSS
+            banner.classList.add('show');
+            
+            setTimeout(() => {
+                banner.classList.remove('show');
+                setTimeout(() => banner.style.display = 'none', 500);
+            }, 3000);
         });
 
         socket.on('countdownTick',n=>{ changeScreen('game-area'); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });

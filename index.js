@@ -476,15 +476,16 @@ io.on('connection', (socket) => {
         if (pIndex === room.currentTurn) {
             if (room.pendingPenalty > 0) {
                 drawCards(roomId, pIndex, 1); room.pendingPenalty--; io.to(roomId).emit('playSound', 'soft');
+                
                 if (room.pendingPenalty > 0) { 
-                    io.to(roomId).emit('notification', `😰 Faltan: ${room.pendingPenalty}`); updateAll(roomId); 
+                    updateAll(roomId); 
                 } else { 
                     if (room.pendingSkip > 0) {
-                        io.to(roomId).emit('notification', `😓 Pierdes ${room.pendingSkip} turnos.`); 
+                        io.to(roomId).emit('notification', `⛔ ¡${room.players[pIndex].name} PIERDE ${room.pendingSkip} TURNOS!`); 
                         room.players[pIndex].missedTurns += room.pendingSkip;
                         room.pendingSkip = 0;
                     } else { 
-                        io.to(roomId).emit('notification', `😓 Fin del castigo.`); 
+                        io.to(roomId).emit('notification', `✅ Fin del castigo.`); 
                     }
                     advanceTurn(roomId, 1);
                     updateAll(roomId); 
@@ -495,7 +496,7 @@ io.on('connection', (socket) => {
                     room.players[pIndex].saidUno = false; room.players[pIndex].lastOneCardTime = 0;
                     io.to(roomId).emit('playSound', 'soft'); updateAll(roomId); 
                 } 
-                else { socket.emit('notification', 'Ya robaste.'); }
+                else { socket.emit('notification', 'Ya robaste. Debes jugar o pasar.'); }
             }
         }
     }));
@@ -705,7 +706,7 @@ function getNextPlayerIndex(roomId, step) {
 
 function advanceTurn(roomId, steps) {
     const room = rooms[roomId]; if (room.players.length === 0) return;
-    if (getAlivePlayersCount(roomId) <= 1) return; // Protección anti loop infinito
+    if (getAlivePlayersCount(roomId) <= 1) return; 
     
     room.players.forEach(p => p.hasDrawn = false);
     
@@ -833,7 +834,7 @@ function updateAll(roomId) {
         const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
         const duelInfo = (['dueling','rip_decision','penalty_decision'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
 
-        const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers };
+        const pack = { state: room.gameState, roomId: roomId, players: room.players.map((p, i) => ({ name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && i === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected })), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers };
         room.players.forEach(p => {
             if(p.isConnected) {
                 const mp = JSON.parse(JSON.stringify(pack)); mp.iamAdmin = p.isAdmin;
@@ -899,7 +900,10 @@ app.get('/', (req, res) => {
         
         #alert-zone { position: fixed; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; transition: top 0.3s ease-out; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
-        #penalty-display { font-size: 30px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 10px; border: 1px solid red; pointer-events: auto; }
+        
+        /* CAJA DE CASTIGO REDISEÑADA */
+        #penalty-display { font-size: 24px; color: #ff4757; text-shadow: 0 0 5px red; display: none; margin-bottom: 10px; background: rgba(0,0,0,0.9); padding: 15px; border-radius: 10px; border: 2px solid red; pointer-events: auto; width: 90%; max-width: 400px; text-align: center; line-height: 1.4; animation: pulseRed 1s infinite alternate; }
+        @keyframes pulseRed { from { box-shadow: 0 0 10px red; } to { box-shadow: 0 0 30px red; } }
         
         #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
@@ -986,7 +990,10 @@ app.get('/', (req, res) => {
         </div>
     </div>
 
-    <div id="alert-zone"><div id="penalty-display">CASTIGO: +<span id="pen-num">0</span></div><div id="main-alert" class="alert-box"></div></div>
+    <div id="alert-zone">
+        <div id="penalty-display">⚠️ DEBES RECOGER <span id="pen-num">0</span> CARTAS<br><small style="color:white; font-size:14px; font-weight:normal;">(Toca el mazo rojo para robar)</small></div>
+        <div id="main-alert" class="alert-box"></div>
+    </div>
 
     <div id="action-bar">
         <div id="uno-btn-area">
@@ -1260,7 +1267,7 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'waiting') {
-                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin&&p.uuid!==myUUID?('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>'):'') + '</div>').join('');
+                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin && p.uuid !== myUUID ? ('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>') : '') + '</div>').join('');
                 document.getElementById('lobby-users').innerHTML = list;
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
                 changeScreen('lobby'); 
@@ -1278,8 +1285,10 @@ app.get('/', (req, res) => {
                  if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
+                 // Renderizar nombres de jugadores
                  document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
                  
+                 // Mostrar y Reposicionar HUD 
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  requestAnimationFrame(repositionHUD);
 
@@ -1328,8 +1337,21 @@ app.get('/', (req, res) => {
                     const tc = s.topCard; const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white')); el.innerText = getCardText(tc);
                     if(tc.value === '1 y 1/2') { el.style.fontSize = '20px'; el.style.padding = '0 5px'; } else { el.style.fontSize = '24px'; el.style.padding = '0'; }
                 }
-                document.getElementById('btn-pass').style.display = (me && me.isTurn && me.hasDrawn && s.pendingPenalty===0) ? 'inline-block' : 'none';
-                if(me && me.isTurn && s.pendingPenalty>0) { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText=s.pendingPenalty; } else document.getElementById('penalty-display').style.display='none';
+                
+                // Mostrar Botón de Pasar si corresponde
+                if (me && me.isTurn && me.hasDrawn && s.pendingPenalty === 0) {
+                    document.getElementById('btn-pass').style.display = 'inline-block';
+                } else {
+                    document.getElementById('btn-pass').style.display = 'none';
+                }
+
+                // Manejo de la Caja de Castigo
+                if(me && me.isTurn && s.pendingPenalty > 0) { 
+                    document.getElementById('penalty-display').style.display='block'; 
+                    document.getElementById('pen-num').innerText = s.pendingPenalty; 
+                } else { 
+                    document.getElementById('penalty-display').style.display='none'; 
+                }
             }
         });
 

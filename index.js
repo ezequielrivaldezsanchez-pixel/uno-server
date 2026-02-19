@@ -991,7 +991,7 @@ app.get('/', (req, res) => {
         
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; }
         
-        #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
+        #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
         .point-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 1s ease-in-out; }
 
         #score-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 140000; display: none; flex-direction: column; justify-content: center; align-items: center; }
@@ -1000,7 +1000,7 @@ app.get('/', (req, res) => {
         .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom:15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 99999; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
+        #libre-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 200000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; }
         .libre-step { display: none; width: 90%; text-align: center; }
         .libre-step.active { display: block; }
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
@@ -1048,7 +1048,7 @@ app.get('/', (req, res) => {
         .drawn-card { animation: slideUp 0.5s ease-out; border: 2px solid gold; }
 
         body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
-        #color-picker { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 99999; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        #color-picker { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 200000; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
         .color-circle { width: 80px; height: 80px; border-radius: 50%; display: inline-block; margin: 15px; cursor: pointer; border: 4px solid #fff; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         #revival-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: all; }
@@ -1222,16 +1222,16 @@ app.get('/', (req, res) => {
     <div id="duel-screen" class="screen"><h1 style="color:gold;">⚔️ DUELO ⚔️</h1><h3 id="duel-narrative">Cargando duelo...</h3><h2 id="duel-names">... vs ...</h2><h3 id="duel-sc">0 - 0</h3><p id="duel-turn-msg"></p><div id="duel-opts"><button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button><button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button><button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button></div></div>
     
     <div id="color-picker"><h3>Elige Color</h3><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div>
-    <div id="revive-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99999; display:none; flex-direction:column; justify-content:center; align-items:center;"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div><div id="revival-overlay"><div id="revival-text"></div></div>
+    <div id="revive-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:200000; display:none; flex-direction:column; justify-content:center; align-items:center;"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div><div id="revival-overlay"><div id="revival-text"></div></div>
     
-    <div id="grace-color-modal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99999; display:none; flex-direction:column; justify-content:center; align-items:center;">
+    <div id="grace-color-modal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:200000; display:none; flex-direction:column; justify-content:center; align-items:center;">
         <h2 style="color:gold;">❤️ GRACIA DIVINA ❤️</h2>
         <p style="color:white; font-size:20px;">¿Quieres usarla como cambio de color?</p>
         <button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button>
         <button class="btn-main" onclick="confirmGraceColor(false)" style="background:#e74c3c">CANCELAR</button>
     </div>
 
-    <div id="revive-confirm-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99999; display:none; flex-direction:column; justify-content:center; align-items:center;">
+    <div id="revive-confirm-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:200000; display:none; flex-direction:column; justify-content:center; align-items:center;">
         <h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2>
         <button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button>
         <button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button>
@@ -1830,3 +1830,10 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
+    `);
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

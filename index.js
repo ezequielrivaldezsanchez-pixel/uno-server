@@ -236,6 +236,16 @@ io.on('connection', (socket) => {
         }
         if (foundRoomId && foundPlayer) {
             foundPlayer.id = socket.id; foundPlayer.isConnected = true;
+            // NUEVO: Quitar estado fantasma al reconectar
+            if (foundPlayer.hasLeft) {
+                foundPlayer.hasLeft = false;
+                if (rooms[foundRoomId].gameState === 'waiting') {
+                    foundPlayer.isDead = false; foundPlayer.isSpectator = false;
+                } else {
+                    foundPlayer.isSpectator = true;
+                }
+                io.to(foundRoomId).emit('notification', `👋 ${foundPlayer.name} se ha reconectado.`);
+            }
             socket.join(foundRoomId); touchRoom(foundRoomId); updateAll(foundRoomId);
         } else { socket.emit('requireLogin'); }
     }));
@@ -256,6 +266,16 @@ io.on('connection', (socket) => {
         const existing = room.players.find(p => p.uuid === data.uuid);
         if (existing) { 
             existing.id = socket.id; existing.name = data.name; existing.isConnected = true; 
+            // NUEVO: Quitar estado fantasma si había abandonado previamente
+            if (existing.hasLeft) {
+                existing.hasLeft = false;
+                if (room.gameState === 'waiting') {
+                    existing.isDead = false; existing.isSpectator = false;
+                } else {
+                    existing.isSpectator = true; // Si el juego ya empezó, se queda de espectador
+                }
+                io.to(roomId).emit('notification', `👋 ${existing.name} regresó a la sala.`);
+            }
             socket.join(roomId); socket.emit('roomJoined', { roomId }); 
         } else {
             const player = createPlayerObj(socket.id, data.uuid, data.name, (room.players.length === 0));
@@ -1033,7 +1053,6 @@ function checkWinCondition(roomId) {
     const room = rooms[roomId];
     if (!room) return;
 
-    // GUARDIA DE LOBBY: Si la sala está en espera, no calculamos victoria, solo actualizamos la interfaz.
     if (room.gameState === 'waiting') {
         updateAll(roomId);
         return;
@@ -1042,9 +1061,8 @@ function checkWinCondition(roomId) {
     if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { 
         const winner = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft); 
         if (winner) {
-            room.gameState = 'game_over'; // Frenamos cualquier otra interacción
+            room.gameState = 'game_over'; 
             
-            // Pausamos 3 segundos para que se alcance a leer el cartel de abandono antes del Game Over
             setTimeout(() => {
                 if (!rooms[roomId]) return;
                 io.to(roomId).emit('gameOver', { 
@@ -1488,7 +1506,16 @@ app.get('/', (req, res) => {
         });
         
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
-        socket.on('requireLogin', () => { document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); document.getElementById('global-leave-btn').style.display = 'none'; });
+        
+        // REFINAMIENTO DE LIMPIEZA VISUAL AL SER EXPULSADO/ABANDONAR
+        socket.on('requireLogin', () => { 
+            document.getElementById('reconnect-overlay').style.display = 'none'; 
+            changeScreen('login'); 
+            document.getElementById('global-leave-btn').style.display = 'none';
+            // Vaciamos los contenedores visuales para no tener datos "fantasma"
+            document.getElementById('lobby-users').innerHTML = ''; 
+            document.getElementById('players-zone').innerHTML = '';
+        });
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
         
@@ -1884,7 +1911,6 @@ app.get('/', (req, res) => {
             for (let row of rows) { await new Promise(r => setTimeout(r, 600)); row.classList.add('visible'); }
         });
 
-        // NUEVA LÓGICA DE GAME OVER (Recibe parámetro "reason")
         socket.on('gameOver', d => {
             document.getElementById('action-bar').style.display = 'none'; 
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 

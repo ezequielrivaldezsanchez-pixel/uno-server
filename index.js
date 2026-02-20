@@ -327,7 +327,7 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('roomCancelled');
             } else {
                 io.to(roomId).emit('notification', `⚠️ El anfitrión finalizó la partida para todos.`);
-                io.to(roomId).emit('gameOver', { winner: 'Partida Cancelada', totalScore: 0 });
+                io.to(roomId).emit('gameOver', { winner: 'Partida Cancelada', totalScore: 0, reason: 'cancelled' });
             }
             if (room.actionTimer) clearTimeout(room.actionTimer);
             setTimeout(() => { delete rooms[roomId]; }, 3000);
@@ -349,7 +349,8 @@ io.on('connection', (socket) => {
         socket.leave(roomId); socket.emit('requireLogin');
 
         if (getAlivePlayersCount(roomId) <= 1) {
-            io.to(roomId).emit('notification', msg); checkWinCondition(roomId);
+            io.to(roomId).emit('notification', msg); 
+            checkWinCondition(roomId);
         } else {
             const oldState = room.gameState;
             if (oldState === 'playing' || oldState === 'waiting') {
@@ -992,7 +993,6 @@ function calculateAndFinishRound(roomId, winner) {
             io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal });
             io.to(roomId).emit('playSound', 'win');
 
-            // --- REDUCCIÓN DE 1 SEGUNDO EN EL RANKING (cambiado de 4000 a 3000 ms) ---
             const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 3000;
             setTimeout(() => { if(rooms[roomId]) resetRound(roomId); }, animationDelay);
         }
@@ -1031,11 +1031,33 @@ function resetRound(roomId) {
 
 function checkWinCondition(roomId) {
     const room = rooms[roomId];
+    if (!room) return;
+
+    // GUARDIA DE LOBBY: Si la sala está en espera, no calculamos victoria, solo actualizamos la interfaz.
+    if (room.gameState === 'waiting') {
+        updateAll(roomId);
+        return;
+    }
+
     if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { 
         const winner = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft); 
-        if (winner) calculateAndFinishRound(roomId, winner); 
+        if (winner) {
+            room.gameState = 'game_over'; // Frenamos cualquier otra interacción
+            
+            // Pausamos 3 segundos para que se alcance a leer el cartel de abandono antes del Game Over
+            setTimeout(() => {
+                if (!rooms[roomId]) return;
+                io.to(roomId).emit('gameOver', { 
+                    winner: winner.name, 
+                    totalScore: room.scores[winner.uuid] || 0,
+                    reason: 'desertion' 
+                });
+                io.to(roomId).emit('playSound', 'win');
+                if (room.actionTimer) clearTimeout(room.actionTimer);
+                setTimeout(() => { delete rooms[roomId]; }, 10000);
+            }, 3000);
+        } 
     } 
-    else { room.gameState = 'playing'; advanceTurn(roomId, 1); updateAll(roomId); }
 }
 
 function updateAll(roomId) {
@@ -1342,7 +1364,11 @@ app.get('/', (req, res) => {
         <button class="btn-main" onclick="closeLeaveModals()" style="background:#34495e;">CANCELAR</button>
     </div>
 
-    <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA SUPREMA</h1><h2 id="winner-name"></h2><h3 id="final-score"></h3></div>
+    <div id="game-over-screen" class="screen">
+        <h1 style="color:gold;">VICTORIA SUPREMA</h1>
+        <h2 id="winner-name"></h2>
+        <h3 id="final-score"></h3>
+    </div>
     
     <div id="pause-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; justify-content:center; align-items:center; flex-direction:column; color:white; text-align:center; padding: 20px;">
         <h1 style="color:gold; font-size:50px; margin-bottom: 10px;">⏸️ PAUSA</h1>
@@ -1858,9 +1884,23 @@ app.get('/', (req, res) => {
             for (let row of rows) { await new Promise(r => setTimeout(r, 600)); row.classList.add('visible'); }
         });
 
-        socket.on('gameOver',d=>{
-            document.getElementById('action-bar').style.display = 'none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); document.getElementById('round-overlay').style.display='none';
-            document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText=d.winner; document.getElementById('final-score').innerText="Puntaje Final: " + parseFloat(d.totalScore).toFixed(1);
+        // NUEVA LÓGICA DE GAME OVER (Recibe parámetro "reason")
+        socket.on('gameOver', d => {
+            document.getElementById('action-bar').style.display = 'none'; 
+            document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
+            document.getElementById('round-overlay').style.display='none';
+            document.getElementById('game-over-screen').style.display='flex'; 
+            document.getElementById('winner-name').innerText = d.winner; 
+            
+            const fs = document.getElementById('final-score');
+            if (d.reason === 'desertion') {
+                fs.innerText = "¡Ganaste por deserción de tu oponente!";
+            } else if (d.reason === 'cancelled') {
+                fs.innerText = "El anfitrión terminó la partida.";
+            } else {
+                fs.innerText = "Puntaje Final: " + parseFloat(d.totalScore).toFixed(1);
+            }
+            
             setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},10000);
         });
         

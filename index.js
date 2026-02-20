@@ -236,11 +236,18 @@ io.on('connection', (socket) => {
         }
         if (foundRoomId && foundPlayer) {
             foundPlayer.id = socket.id; foundPlayer.isConnected = true;
-            // NUEVO: Quitar estado fantasma al reconectar
+            // NUEVO: Quitar estado fantasma al reconectar y mandarlo al final si está en el lobby
             if (foundPlayer.hasLeft) {
                 foundPlayer.hasLeft = false;
-                if (rooms[foundRoomId].gameState === 'waiting') {
+                const room = rooms[foundRoomId];
+                if (room.gameState === 'waiting') {
                     foundPlayer.isDead = false; foundPlayer.isSpectator = false;
+                    // Mandar al jugador al final de la fila
+                    const idx = room.players.indexOf(foundPlayer);
+                    if (idx !== -1) {
+                        room.players.splice(idx, 1);
+                        room.players.push(foundPlayer);
+                    }
                 } else {
                     foundPlayer.isSpectator = true;
                 }
@@ -266,11 +273,17 @@ io.on('connection', (socket) => {
         const existing = room.players.find(p => p.uuid === data.uuid);
         if (existing) { 
             existing.id = socket.id; existing.name = data.name; existing.isConnected = true; 
-            // NUEVO: Quitar estado fantasma si había abandonado previamente
+            // NUEVO: Quitar estado fantasma y mandarlo al final si había abandonado
             if (existing.hasLeft) {
                 existing.hasLeft = false;
                 if (room.gameState === 'waiting') {
                     existing.isDead = false; existing.isSpectator = false;
+                    // Mandar al jugador al final de la fila
+                    const idx = room.players.indexOf(existing);
+                    if (idx !== -1) {
+                        room.players.splice(idx, 1);
+                        room.players.push(existing);
+                    }
                 } else {
                     existing.isSpectator = true; // Si el juego ya empezó, se queda de espectador
                 }

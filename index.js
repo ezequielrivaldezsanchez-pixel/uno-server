@@ -190,7 +190,7 @@ function executeCowardKick(roomId, targetUuid) {
             if (isPenaltyDuel) {
                 const nextIdx = getNextPlayerFrom(roomId, targetIdx);
                 const nextPlayer = room.players[nextIdx];
-                room.pendingPenalty += 4; // Penalidad extra por perder el duelo
+                room.pendingPenalty += 4; 
                 room.gameState = 'playing';
                 room.currentTurn = nextIdx;
                 io.to(roomId).emit('notification', `¡${player.name} huyó del duelo! ${nextPlayer.name} hereda TODO el castigo.`);
@@ -323,8 +323,12 @@ io.on('connection', (socket) => {
         const player = room.players[pIndex];
 
         if (choice === 'leave_host_end' && player.isAdmin) {
-            io.to(roomId).emit('notification', `⚠️ El anfitrión finalizó la partida para todos.`);
-            io.to(roomId).emit('gameOver', { winner: 'Partida Cancelada', totalScore: 0 });
+            if (room.gameState === 'waiting') {
+                io.to(roomId).emit('roomCancelled');
+            } else {
+                io.to(roomId).emit('notification', `⚠️ El anfitrión finalizó la partida para todos.`);
+                io.to(roomId).emit('gameOver', { winner: 'Partida Cancelada', totalScore: 0 });
+            }
             if (room.actionTimer) clearTimeout(room.actionTimer);
             setTimeout(() => { delete rooms[roomId]; }, 3000);
             return;
@@ -988,7 +992,8 @@ function calculateAndFinishRound(roomId, winner) {
             io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal });
             io.to(roomId).emit('playSound', 'win');
 
-            const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 4000;
+            // --- REDUCCIÓN DE 1 SEGUNDO EN EL RANKING (cambiado de 4000 a 3000 ms) ---
+            const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 3000;
             setTimeout(() => { if(rooms[roomId]) resetRound(roomId); }, animationDelay);
         }
     } catch(e) { console.error("Error en calc round:", e); if(rooms[roomId]) resetRound(roomId); }
@@ -1060,7 +1065,7 @@ function updateAll(roomId) {
             }
         });
         
-        checkPenaltyTimer(roomId); // Disparador inteligente del cronómetro
+        checkPenaltyTimer(roomId); 
     } catch(e) { console.error("Error UpdateAll:", e); }
 }
 
@@ -1082,7 +1087,7 @@ app.get('/', (req, res) => {
         #login, #join-menu, #lobby { background: #2c3e50; z-index: 2000; }
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); }
         #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
-        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; }
+        #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; flex-direction: column; justify-content: center; align-items: center; }
         
         #round-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 150000; display: none; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
         .round-stage { display: none; flex-direction: column; align-items: center; width: 100%; }
@@ -1793,6 +1798,17 @@ app.get('/', (req, res) => {
             document.getElementById('pause-msg').innerText = data.message;
             document.getElementById('pause-overlay').style.display = 'flex';
             setTimeout(() => { document.getElementById('pause-overlay').style.display = 'none'; }, data.duration);
+        });
+
+        // --- MANEJO DE CANCELACIÓN DE SALA EN EL LOBBY ---
+        socket.on('roomCancelled', () => {
+            document.getElementById('action-bar').style.display = 'none';
+            document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
+            document.getElementById('round-overlay').style.display = 'none';
+            const goScreen = document.getElementById('game-over-screen');
+            goScreen.style.display = 'flex';
+            goScreen.innerHTML = '<h1 style="color:#e74c3c;">SALA CERRADA</h1><h2 style="color:white; margin-top:20px;">EL ANFITRIÓN ELIMINÓ ESTA PARTIDA</h2>';
+            setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 4000);
         });
 
         socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseChat(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });

@@ -405,7 +405,7 @@ io.on('connection', (socket) => {
         for(let id of cardIds) { const c = tempHand.find(x => x.id === id); if(!c) return; playCards.push(c); }
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // LÓGICA DE COMBO 1 Y 1/2
+        // LÓGICA DE COMBO 1 Y 1/2 REVISADA
         const isAll15 = playCards.every(c => c.value === '1 y 1/2');
         if (isAll15) {
             const count = playCards.length;
@@ -428,11 +428,9 @@ io.on('connection', (socket) => {
             room.discardPile.push(...playCards); 
             room.activeColor = finalColor; 
 
-            // --- ANIMACIÓN Y CARTELITO ---
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO de ${player.name}! Formó un ${targetVal} ${finalColor}.`); 
             io.to(roomId).emit('playSound', 'divine'); 
-            
             checkUnoCheck(roomId, player);
             
             if(player.hand.length === 0) { calculateAndFinishRound(roomId, player); } 
@@ -1315,7 +1313,7 @@ app.get('/', (req, res) => {
     </div>
     
     <div id="score-btn" class="hud-btn" onclick="toggleScores()">🏆</div>
-    <div id="rules-btn" class="hud-btn" onclick="toggleRules()">❓</div>
+    <div id="rules-btn" class="hud-btn" onclick="toggleManual()">📖</div>
     <div id="uno-main-btn" class="hud-btn" onclick="toggleUnoMenu()">UNO<br>y 1/2</div>
     <div id="chat-btn" class="hud-btn" onclick="toggleChat()">💬<div id="chat-badge">0</div></div>
 
@@ -1349,20 +1347,6 @@ app.get('/', (req, res) => {
         <div id="score-list" style="text-align:left; color:white; font-size:16px;"></div>
     </div>
 
-    <div id="rules-modal" class="floating-window">
-        <div class="modal-close" onclick="toggleRules()">X</div>
-        <h2 style="color:gold;">Reglas Rápidas</h2>
-        <div style="text-align:left; font-size:14px; margin-bottom: 20px;">
-            <p><b>Puntos:</b> Número=Cara | 1y1/2=1.5 | +2/Reversa/Salteo=20 | Color/+4=40 | +12/Libre/SS=80 | RIP=100.</p>
-            <p>💀 <b>RIP:</b> Desafía a duelo a muerte. Si atacas y pierdes, robas 4.</p>
-            <p>❤️ <b>GRACIA:</b> Inmune a castigos. Revive. Usada como última carta para ganar da un Bonus de +50pts.</p>
-            <p>🕊️ <b>LIBRE ALBEDRÍO:</b> Defiende castigo. Regalas 1 y descartas la que quieras para definir el juego.</p>
-            <p>🪜 <b>ESCALERA:</b> 3 o más cartas consecutivas del mismo color. Manten apretada una carta para seleccionar varias.</p>
-            <p>✨ <b>SAFF:</b> Tira fuera de turno si tu carta es EXACTAMENTE igual en número y color a la de la mesa.</p>
-        </div>
-        <button class="btn-main" onclick="toggleManual()" style="width: 100%; margin: 0; background: #8e44ad; font-size: 16px;">📖 CONSULTAR MANUAL COMPLETO</button>
-    </div>
-
     <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 800px; max-height: 90vh;">
         <div class="modal-close" onclick="toggleManual()">X</div>
         <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
@@ -1378,15 +1362,15 @@ app.get('/', (req, res) => {
             <p>Al iniciar, cada jugador recibe 7 cartas. En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta que se encuentra en el tope de la mesa. Si no tienes una carta válida (o no quieres jugarla), debes tocar el mazo central para robar una carta. Si la carta robada te sirve, puedes tirarla en ese mismo instante; de lo contrario, debes presionar "PASAR" para ceder el turno.</p>
             <p><b>JUGADAS ESPECIALES DE DESCARTE:</b> (Se logran manteniendo presionada una carta para activar la Selección Múltiple)</p>
             <ul>
-                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente, pero <b>tienen que ser todas del mismo color</b> (ej. <span class="min-c mc-azul">3</span> <span class="min-c mc-azul">4</span> <span class="min-c mc-azul">5</span>). Para jugarlas, la primera carta de tu secuencia debe coincidir con la de la mesa.</li>
-                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta <span class="min-c mc-rojo">1 ½</span> permite sumas. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2" (no importa de qué color sean). Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9". <b>Condición estricta:</b> El número que formes DEBE coincidir con el número que ya está en la mesa (Ej: dos "1 y 1/2" solo se pueden tirar sobre un "3"). El color que quedará activo en la mesa será el de la <i>última</i> carta "1 y 1/2" que hayas tocado.</li>
-                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta <b>EXACTAMENTE IGUAL</b> (Mismo número y mismo color), no tienes que esperar a que sea tu turno. Arrójala inmediatamente y el juego saltará automáticamente a ti, robándole el turno al resto.</li>
+                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente, pero <b>tienen que ser todas del mismo color</b> (ej. <span class="min-c mc-azul">3</span> <span class="min-c mc-azul">4</span> <span class="min-c mc-azul">5</span>). También puedes hacer una escalera usando la carta del tope de la mesa como base, descartando solo 2 cartas consecutivas de tu mano que conecten con ella.</li>
+                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta <span class="min-c mc-rojo">1 ½</span> permite sumas. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2" (no importa de qué color sean). Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9". <b>Condición estricta:</b> El número que formes DEBE coincidir con el número que ya está en la mesa. El color que quedará activo en la mesa será el de la <i>última</i> carta "1 y 1/2" que hayas tocado.</li>
+                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica (del 0 al 9 o "1 y 1/2") <b>EXACTAMENTE IGUAL</b> (Mismo número y mismo color), no tienes que esperar a que sea tu turno. Arrójala inmediatamente y el juego saltará automáticamente a ti, robándole el turno al resto. (No aplica para cartas especiales ni supremas).</li>
             </ul>
 
             <h3 style="color:#2ecc71;">4. CARTAS ESPECIALES (Básicas)</h3>
             <p>Tienen colores y solo pueden jugarse si el color coincide, o si el símbolo de la mesa es el mismo.</p>
             <ul>
-                <li><span class="min-c mc-verde">+2</span> <b>Más Dos:</b> El siguiente jugador recibe 2 cartas de castigo y pierde su turno, a menos que se defienda tirando otro castigo igual o mayor (+2, +4, +12, Gracia o Libre). Los castigos se acumulan.</li>
+                <li><span class="min-c mc-verde">+2</span> <b>Más Dos:</b> El siguiente jugador recibe 2 cartas de castigo y pierde su turno, a menos que se defienda tirando otro castigo igual o mayor (+2, +4, +12, GRACIA DIVINA o LIBRE ALBEDRÍO). Los castigos se acumulan.</li>
                 <li><span class="min-c mc-amarillo">⮂</span> <b>Reversa:</b> Cambia la dirección en la que giran los turnos.</li>
                 <li><span class="min-c mc-azul">⊘</span> <b>Salteo:</b> El siguiente jugador pierde su turno automáticamente.</li>
             </ul>
@@ -1401,26 +1385,26 @@ app.get('/', (req, res) => {
             <h3 style="color:#2ecc71;">6. CARTAS SUPREMAS</h3>
             <p>Cartas únicas de fondo negro o blanco, con reglas destructivas o salvadoras.</p>
             <ul>
-                <li><span class="min-c mc-negro">+12</span> <b>Más Doce:</b> Aplica un castigo masivo de 12 cartas. El jugador que lo recibe entra en fase de "Decisión de Castigo": puede batirse a duelo para salvarse o huir.</li>
-                <li><span class="min-c mc-negro">SS</span> <b>Salteo Supremo:</b> El siguiente jugador recibe 4 cartas de castigo y además, la ronda salta a los siguientes 4 jugadores. (No se puede usar para defender castigos previos).</li>
-                <li><span class="min-c mc-negro">🕊️</span> <b>Libre Albedrío:</b> Sirve para defender castigos numéricos. Abre una ventana donde: 1) Regalas 1 carta a cualquier jugador. 2) Eliges la carta que quieras de tu mano para descartar y definir cómo sigue el juego (sin importar el color previo).</li>
-                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> Eliges a una víctima y comienza un Duelo a Muerte (Piedra/Papel/Tijera elemental: Fuego/Hielo/Agua). Quien pierde el duelo es eliminado (zombie) y ya no juega en esta ronda, a menos que alguien lo reviva. Si el atacante pierde, la víctima se salva y el atacante roba 4 cartas.</li>
-                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Es la carta de salvación absoluta. Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), tírala y podrás resucitarlo. Al resucitar a alguien o usarla como comodín normal, decides el nuevo color de la mesa. Si ganas la ronda cerrando con esta carta, obtienes un Bonus de 50 pts.</li>
+                <li><span class="min-c mc-negro">+12</span> <b>Más Doce:</b> Aplica un castigo masivo de 12 cartas. El jugador que lo recibe entra en fase de "Decisión de Castigo": puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
+                <li><span class="min-c mc-negro">SS</span> <b>SALTEO SUPREMO:</b> El siguiente jugador recibe 4 cartas de castigo y además pierde 4 turnos. Al igual que con el +12, el jugador afectado puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
+                <li><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Sirve para defender castigos numéricos. Abre una ventana donde: 1) Regalas 1 carta a cualquier jugador. 2) Eliges la carta que quieras de tu mano para descartar y definir cómo sigue el juego (sin importar el color previo).</li>
+                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> La víctima (automáticamente el siguiente jugador en el turno) entra en un Duelo a Muerte (Piedra/Papel/Tijera elemental: Fuego/Hielo/Agua). Quien pierde el duelo es eliminado (zombie) y ya no juega en esta ronda, a menos que alguien lo reviva. Si el atacante pierde, la víctima se salva y el atacante roba 4 cartas.</li>
+                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Es la carta de salvación absoluta. Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), tírala y podrás resucitarlo. Al resucitar a alguien o usarla como comodín normal, decides el nuevo color de la mesa.</li>
             </ul>
 
             <h3 style="color:#2ecc71;">7. DUELOS</h3>
-            <p>El sistema de duelos (activado por RIP o al defenderse de un +12/SS) se juega al mejor de 3 rondas bajo la siguiente regla: <b>El Fuego derrite al Hielo. El Hielo congela el Agua. El Agua apaga el Fuego.</b></p>
+            <p>El sistema de duelos (activado por RIP o al defenderse de un +12 o SALTEO SUPREMO) se juega al mejor de 3 rondas bajo la siguiente regla: <b>El Fuego derrite al Hielo. El Hielo congela el Agua. El Agua apaga el Fuego.</b></p>
             
             <h3 style="color:#2ecc71;">8. RECUENTO DE PUNTOS</h3>
             <p>Cuando alguien gana, se suman las cartas de los perdedores así:</p>
             <ul>
                 <li><b>Numéricas (0-9):</b> Valen su número.</li>
                 <li><b>1 y 1/2:</b> Vale 1.5 puntos.</li>
-                <li><b>+2, Reversa, Salteo:</b> Valen 20 puntos.</li>
-                <li><b>Cambio Color, +4:</b> Valen 40 puntos.</li>
-                <li><b>+12, Libre, Salteo Supremo:</b> Valen 80 puntos.</li>
+                <li><b>Más Dos, Reversa, Salteo:</b> Valen 20 puntos.</li>
+                <li><b>Cambio Color, Más Cuatro:</b> Valen 40 puntos.</li>
+                <li><b>Más Doce, LIBRE ALBEDRÍO, SALTEO SUPREMO:</b> Valen 80 puntos.</li>
                 <li><b>RIP:</b> Vale 100 puntos.</li>
-                <li><b>Gracia:</b> Vale 0 puntos en mano (¡pero +50 de Bonus si es tu última carta jugada!).</li>
+                <li><b>GRACIA DIVINA:</b> Si un perdedor tiene esta carta en su mano al terminar la ronda, queda absolutamente protegido y los puntos de TODAS las cartas de su mano se anulan (suman 0 al ganador). Sin embargo, si el ganador de la ronda arroja la GRACIA DIVINA como su última carta para ganar, obtiene un Bonus de +50 puntos adicionales.</li>
             </ul>
         </div>
     </div>
@@ -1875,10 +1859,8 @@ app.get('/', (req, res) => {
             } 
         }
         
-        function toggleRules() { const r = document.getElementById('rules-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
         function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
         function toggleManual() { 
-            const rm = document.getElementById('rules-modal'); if (rm.style.display === 'flex') rm.style.display = 'none';
             const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; 
         }
 

@@ -405,7 +405,7 @@ io.on('connection', (socket) => {
         for(let id of cardIds) { const c = tempHand.find(x => x.id === id); if(!c) return; playCards.push(c); }
         const top = room.discardPile[room.discardPile.length - 1];
 
-        // LÓGICA DE COMBO 1 Y 1/2 REVISADA
+        // LÓGICA DE COMBO 1 Y 1/2
         const isAll15 = playCards.every(c => c.value === '1 y 1/2');
         if (isAll15) {
             const count = playCards.length;
@@ -428,8 +428,11 @@ io.on('connection', (socket) => {
             room.discardPile.push(...playCards); 
             room.activeColor = finalColor; 
 
+            // --- ANIMACIÓN Y CARTELITO ---
+            io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO de ${player.name}! Formó un ${targetVal} ${finalColor}.`); 
             io.to(roomId).emit('playSound', 'divine'); 
+            
             checkUnoCheck(roomId, player);
             
             if(player.hand.length === 0) { calculateAndFinishRound(roomId, player); } 
@@ -1011,7 +1014,6 @@ function calculateAndFinishRound(roomId, winner) {
 
         room.players.forEach(p => {
             if (p.uuid !== winner.uuid && !p.isSpectator && !p.hasLeft) { 
-                // NOTA: No excluimos a p.isDead aquí. Los zombies suman puntos a menos que tengan gracia.
                 const hasGrace = p.hand.some(c => c.value === 'GRACIA');
                 let pPoints = 0; if (!hasGrace) { pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0); }
                 if(pPoints > 0) { pointsAccumulated += pPoints; losersDetails.push({ name: p.name + (p.isDead ? " (RIP)" : ""), points: pPoints }); }

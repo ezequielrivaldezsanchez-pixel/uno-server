@@ -121,8 +121,6 @@ const safe = (fn) => {
     return (...args) => { try { fn(...args); } catch (err) { console.error("Socket Error Prevenido:", err); } };
 };
 
-// --- GESTIÓN DE EXPULSIÓN POR INACTIVIDAD ---
-
 function getNextPlayerFrom(roomId, startIdx) {
     const room = rooms[roomId];
     let current = startIdx;
@@ -236,13 +234,11 @@ io.on('connection', (socket) => {
         }
         if (foundRoomId && foundPlayer) {
             foundPlayer.id = socket.id; foundPlayer.isConnected = true;
-            // NUEVO: Quitar estado fantasma al reconectar y mandarlo al final si está en el lobby
             if (foundPlayer.hasLeft) {
                 foundPlayer.hasLeft = false;
                 const room = rooms[foundRoomId];
                 if (room.gameState === 'waiting') {
                     foundPlayer.isDead = false; foundPlayer.isSpectator = false;
-                    // Mandar al jugador al final de la fila
                     const idx = room.players.indexOf(foundPlayer);
                     if (idx !== -1) {
                         room.players.splice(idx, 1);
@@ -273,19 +269,17 @@ io.on('connection', (socket) => {
         const existing = room.players.find(p => p.uuid === data.uuid);
         if (existing) { 
             existing.id = socket.id; existing.name = data.name; existing.isConnected = true; 
-            // NUEVO: Quitar estado fantasma y mandarlo al final si había abandonado
             if (existing.hasLeft) {
                 existing.hasLeft = false;
                 if (room.gameState === 'waiting') {
                     existing.isDead = false; existing.isSpectator = false;
-                    // Mandar al jugador al final de la fila
                     const idx = room.players.indexOf(existing);
                     if (idx !== -1) {
                         room.players.splice(idx, 1);
                         room.players.push(existing);
                     }
                 } else {
-                    existing.isSpectator = true; // Si el juego ya empezó, se queda de espectador
+                    existing.isSpectator = true;
                 }
                 io.to(roomId).emit('notification', `👋 ${existing.name} regresó a la sala.`);
             }
@@ -411,25 +405,45 @@ io.on('connection', (socket) => {
         for(let id of cardIds) { const c = tempHand.find(x => x.id === id); if(!c) return; playCards.push(c); }
         const top = room.discardPile[room.discardPile.length - 1];
 
-        if (playCards.length === 2 && playCards[0].value === '1 y 1/2' && playCards[1].value === '1 y 1/2') {
-            const c1 = playCards[0]; const c2 = playCards[1];
-            if (c1.color !== c2.color) { socket.emit('notification', '🚫 Deben ser del mismo color.'); return; }
-            if (top.value !== '3') { socket.emit('notification', '🚫 Solo sobre un 3.'); return; }
+        // LÓGICA DE COMBO 1 Y 1/2 REVISADA
+        const isAll15 = playCards.every(c => c.value === '1 y 1/2');
+        if (isAll15) {
+            const count = playCards.length;
+            if (count !== 2 && count !== 4 && count !== 6) {
+                socket.emit('notification', '🚫 Solo puedes agrupar 2, 4 o 6 cartas "1 y 1/2".');
+                return;
+            }
             
+            const targetVal = (count * 1.5).toString(); // Dará '3', '6' o '9'
+            
+            // VALIDACIÓN ESTRICTA DE NÚMERO
+            if (top.value !== targetVal) {
+                socket.emit('notification', `🚫 Coincidencia numérica requerida. Debes arrojarlas sobre un ${targetVal}.`);
+                return;
+            }
+
+            // Jugada válida
+            const finalColor = playCards[playCards.length - 1].color;
             removeCards(player, cardIds);
-            room.discardPile.push(...playCards); room.activeColor = c1.color; 
-            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! (1.5 + 1.5 = 3)`); io.to(roomId).emit('playSound', 'divine'); 
+            room.discardPile.push(...playCards); 
+            room.activeColor = finalColor; 
+
+            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO de ${player.name}! Formó un ${targetVal} ${finalColor}.`); 
+            io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
-            if(player.hand.length === 0) { calculateAndFinishRound(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
+            
+            if(player.hand.length === 0) { calculateAndFinishRound(roomId, player); } 
+            else { advanceTurn(roomId, 1); updateAll(roomId); }
             return;
         }
 
+        // LÓGICA DE ESCALERA
         const firstColor = playCards[0].color;
         if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con color.'); return; }
-        if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Mismo color requerido.'); return; }
+        if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Mismo color requerido para escalera.'); return; }
         
         const indices = playCards.map(c => ladderOrder.indexOf(c.value));
-        if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo números y 1y1/2.'); return; }
+        if(indices.includes(-1)) { socket.emit('notification', '🚫 Solo números y 1y1/2 en escaleras.'); return; }
         
         const sortedIndices = [...indices].sort((a,b) => a-b);
         let isInternallyConsecutive = true;
@@ -997,9 +1011,10 @@ function calculateAndFinishRound(roomId, winner) {
 
         room.players.forEach(p => {
             if (p.uuid !== winner.uuid && !p.isSpectator && !p.hasLeft) { 
+                // NOTA: No excluimos a p.isDead aquí. Los zombies suman puntos a menos que tengan gracia.
                 const hasGrace = p.hand.some(c => c.value === 'GRACIA');
                 let pPoints = 0; if (!hasGrace) { pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0); }
-                if(pPoints > 0) { pointsAccumulated += pPoints; losersDetails.push({ name: p.name, points: pPoints }); }
+                if(pPoints > 0) { pointsAccumulated += pPoints; losersDetails.push({ name: p.name + (p.isDead ? " (RIP)" : ""), points: pPoints }); }
             }
         });
 
@@ -1178,7 +1193,6 @@ app.get('/', (req, res) => {
         #uno-main-btn { right: 20px; background: #e67e22; font-size: 11px; font-weight: bold; text-align: center; line-height: 1.2; }
         #chat-btn { right: 20px; background: #3498db; }
 
-        /* Botón de Salir Fijo y Global */
         #global-leave-btn { left: 20px; background: #c0392b; font-size: 20px; }
 
         #players-zone { flex: 0 0 auto; padding: 30px 10px 10px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; position: relative; }
@@ -1336,48 +1350,76 @@ app.get('/', (req, res) => {
     <div id="rules-modal" class="floating-window">
         <div class="modal-close" onclick="toggleRules()">X</div>
         <h2 style="color:gold;">Reglas Rápidas</h2>
-        <div style="text-align:left; font-size:14px;">
+        <div style="text-align:left; font-size:14px; margin-bottom: 20px;">
             <p><b>Puntos:</b> Número=Cara | 1y1/2=1.5 | +2/Reversa/Salteo=20 | Color/+4=40 | +12/Libre/SS=80 | RIP=100.</p>
             <p>💀 <b>RIP:</b> Desafía a duelo a muerte. Si atacas y pierdes, robas 4.</p>
             <p>❤️ <b>GRACIA:</b> Inmune a castigos. Revive. Usada como última carta para ganar da un Bonus de +50pts.</p>
             <p>🕊️ <b>LIBRE ALBEDRÍO:</b> Defiende castigo. Regalas 1 y descartas la que quieras para definir el juego.</p>
-            <p>🪜 <b>ESCALERA:</b> 3 o más cartas consecutivas del mismo color (ej. <span class="min-c mc-azul">3</span> <span class="min-c mc-azul">4</span> <span class="min-c mc-azul">5</span>). Manten apretada una carta para seleccionar varias.</p>
+            <p>🪜 <b>ESCALERA:</b> 3 o más cartas consecutivas del mismo color. Manten apretada una carta para seleccionar varias.</p>
             <p>✨ <b>SAFF:</b> Tira fuera de turno si tu carta es EXACTAMENTE igual en número y color a la de la mesa.</p>
         </div>
+        <button class="btn-main" onclick="toggleManual()" style="width: 100%; margin: 0; background: #8e44ad; font-size: 16px;">📖 CONSULTAR MANUAL COMPLETO</button>
     </div>
 
-    <div id="manual-modal" class="floating-window" style="width:80%; max-width:600px;">
+    <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 800px; max-height: 90vh;">
         <div class="modal-close" onclick="toggleManual()">X</div>
-        <h1 style="color:gold; font-size:28px;">📖 MANUAL COMPLETO</h1>
-        <div style="padding:0 10px; text-align:left; line-height:1.6;">
-            <h3>1. EL OBJETIVO Y PUNTUACIÓN</h3>
-            <p>El juego se gana al alcanzar los <b>800 puntos</b>. El jugador que se queda sin cartas (gana la ronda) recolecta el valor de las manos de todos los perdedores.</p>
+        <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
+        <div style="padding:0 10px; text-align:left; line-height:1.7; font-size: 15px;">
+            
+            <h3 style="color:#2ecc71;">1. OBJETIVO DEL JUEGO</h3>
+            <p>El juego se desarrolla por rondas. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano. Cuando un jugador lo logra, la ronda termina y <b>recolecta los puntos de las cartas que les quedaron a los demás jugadores</b> en sus manos (incluso a los que hayan muerto durante la partida). El primer jugador en acumular <b>800 puntos</b> en el conteo general, será el ganador absoluto de la partida.</p>
+            
+            <h3 style="color:#2ecc71;">2. CANTIDAD DE JUGADORES</h3>
+            <p>La cantidad óptima y recomendada para disfrutar de toda la intensidad del juego es de <b>6 jugadores</b>. Sin embargo, el juego soporta una mayor cantidad de participantes y un mínimo de 2 (aunque jugar de a dos es muy poco recomendable y resta estrategia).</p>
+            
+            <h3 style="color:#2ecc71;">3. ¿CÓMO DESCARTAR CARTAS?</h3>
+            <p>Al iniciar, cada jugador recibe 7 cartas. En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta que se encuentra en el tope de la mesa. Si no tienes una carta válida (o no quieres jugarla), debes tocar el mazo central para robar una carta. Si la carta robada te sirve, puedes tirarla en ese mismo instante; de lo contrario, debes presionar "PASAR" para ceder el turno.</p>
+            <p><b>JUGADAS ESPECIALES DE DESCARTE:</b> (Se logran manteniendo presionada una carta para activar la Selección Múltiple)</p>
             <ul>
-                <li>Numéricas (0-9): Su valor.</li>
-                <li><span class="min-c mc-rojo">1 ½</span> Vale 1.5 puntos.</li>
-                <li><span class="min-c mc-verde">+2</span> <span class="min-c mc-amarillo">⮂</span> <span class="min-c mc-azul">⊘</span> Valen 20 puntos.</li>
-                <li><span class="min-c mc-negro">C</span> <span class="min-c mc-negro">+4</span> Valen 40 puntos.</li>
-                <li><span class="min-c mc-negro">SS</span> <span class="min-c mc-negro">+12</span> <span class="min-c mc-negro">🕊️</span> Valen 80 puntos.</li>
-                <li><span class="min-c mc-rip">🪦</span> Vale 100 puntos.</li>
-                <li><span class="min-c mc-gra">❤️</span> Vale 0 si pierdes con ella en mano. Si cierras la partida tirando esta carta, ganas +50 puntos de Bonus.</li>
+                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente, pero <b>tienen que ser todas del mismo color</b> (ej. <span class="min-c mc-azul">3</span> <span class="min-c mc-azul">4</span> <span class="min-c mc-azul">5</span>). Para jugarlas, la primera carta de tu secuencia debe coincidir con la de la mesa.</li>
+                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta <span class="min-c mc-rojo">1 ½</span> permite sumas. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2" (no importa de qué color sean). Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9". <b>Condición estricta:</b> El número que formes DEBE coincidir con el número que ya está en la mesa (Ej: dos "1 y 1/2" solo se pueden tirar sobre un "3"). El color que quedará activo en la mesa será el de la <i>última</i> carta "1 y 1/2" que hayas tocado.</li>
+                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta <b>EXACTAMENTE IGUAL</b> (Mismo número y mismo color), no tienes que esperar a que sea tu turno. Arrójala inmediatamente y el juego saltará automáticamente a ti, robándole el turno al resto.</li>
             </ul>
 
-            <h3>2. CARTAS DEL MAZO (130 Totales)</h3>
-            <p>Cada color (Rojo, Azul, Verde, Amarillo) tiene: dos 0, dos 1-9, dos 1y1/2, dos +2, dos Reversa, dos Salteo. <br>Especiales negras: 4 Cambios Color, 4 Mas Cuatro, 2 RIP, 2 Gracia Divina, 2 +12, 2 Libre Albedrío, 2 Salteo Supremo.</p>
+            <h3 style="color:#2ecc71;">4. CARTAS ESPECIALES (Básicas)</h3>
+            <p>Tienen colores y solo pueden jugarse si el color coincide, o si el símbolo de la mesa es el mismo.</p>
+            <ul>
+                <li><span class="min-c mc-verde">+2</span> <b>Más Dos:</b> El siguiente jugador recibe 2 cartas de castigo y pierde su turno, a menos que se defienda tirando otro castigo igual o mayor (+2, +4, +12, Gracia o Libre). Los castigos se acumulan.</li>
+                <li><span class="min-c mc-amarillo">⮂</span> <b>Reversa:</b> Cambia la dirección en la que giran los turnos.</li>
+                <li><span class="min-c mc-azul">⊘</span> <b>Salteo:</b> El siguiente jugador pierde su turno automáticamente.</li>
+            </ul>
 
-            <h3>3. JUGADAS MAESTRAS (Selección Múltiple)</h3>
-            <p>Mantén presionada una carta para iniciar la Selección Múltiple y elige varias para hacer combinaciones.</p>
-            <p><b>A) ESCALERAS (Mínimo 3 cartas):</b> Deben ser consecutivas numéricamente y del <b>MISMO COLOR</b>. Puedes tirarlas siempre que la primera encaje con la mesa.</p>
-            <p><b>B) EL COMBO 1 ½:</b> Dos cartas <span class="min-c mc-azul">1 ½</span> suman 3. Si la mesa tiene un <span class="min-c mc-azul">3</span>, seleccionas ambas 1y1/2 del mismo color y las tiras al mismo tiempo.</p>
+            <h3 style="color:#2ecc71;">5. CARTAS ESPECIALES PLUS</h3>
+            <p>Son de fondo negro. Pueden tirarse <b>sobre cualquier color</b> (incluso si no coincide).</p>
+            <ul>
+                <li><span class="min-c mc-negro">C</span> <b>Cambio de Color:</b> Te permite elegir el nuevo color con el que seguirá el juego.</li>
+                <li><span class="min-c mc-negro">+4</span> <b>Más Cuatro:</b> Funciona igual que el Cambio de Color, pero además aplica un castigo de 4 cartas al siguiente jugador.</li>
+            </ul>
 
-            <h3>4. EL MOVIMIENTO S.A.F.F.</h3>
-            <p>No tienes que esperar tu turno si tienes una carta <b>IDÉNTICA</b> a la de la mesa (Mismo Número Y Mismo Color). Tírala rápido.</p>
+            <h3 style="color:#2ecc71;">6. CARTAS SUPREMAS</h3>
+            <p>Cartas únicas de fondo negro o blanco, con reglas destructivas o salvadoras.</p>
+            <ul>
+                <li><span class="min-c mc-negro">+12</span> <b>Más Doce:</b> Aplica un castigo masivo de 12 cartas. El jugador que lo recibe entra en fase de "Decisión de Castigo": puede batirse a duelo para salvarse o huir.</li>
+                <li><span class="min-c mc-negro">SS</span> <b>Salteo Supremo:</b> El siguiente jugador recibe 4 cartas de castigo y además, la ronda salta a los siguientes 4 jugadores. (No se puede usar para defender castigos previos).</li>
+                <li><span class="min-c mc-negro">🕊️</span> <b>Libre Albedrío:</b> Sirve para defender castigos numéricos. Abre una ventana donde: 1) Regalas 1 carta a cualquier jugador. 2) Eliges la carta que quieras de tu mano para descartar y definir cómo sigue el juego (sin importar el color previo).</li>
+                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> Eliges a una víctima y comienza un Duelo a Muerte (Piedra/Papel/Tijera elemental: Fuego/Hielo/Agua). Quien pierde el duelo es eliminado (zombie) y ya no juega en esta ronda, a menos que alguien lo reviva. Si el atacante pierde, la víctima se salva y el atacante roba 4 cartas.</li>
+                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Es la carta de salvación absoluta. Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), tírala y podrás resucitarlo. Al resucitar a alguien o usarla como comodín normal, decides el nuevo color de la mesa. Si ganas la ronda cerrando con esta carta, obtienes un Bonus de 50 pts.</li>
+            </ul>
 
-            <h3>5. CARTAS SUPREMAS Y DUELOS</h3>
-            <p><span class="min-c mc-rip">🪦</span> <b>RIP:</b> Seleccionas a tu víctima y comienza un duelo a muerte. Al mejor de 3. Si el atacante gana, la víctima muere (no juega) hasta ser revivido. Si la víctima se defiende y gana, el atacante roba 4 cartas.</p>
-            <p><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), la tiras y lo resucitas. Al resucitar alguien, decides el color de la mesa.</p>
-            <p><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Defiende castigos numéricos. Abre una ventana para: 1) Regalar una carta a un rival. 2) Descartar la carta que quieras a la mesa (sin importar el color previo). El color y efecto de la carta que descartes dictará cómo sigue el juego automáticamente (si descartas un RIP, inicias duelo; si descartas un Cambio de Color, eliges color, etc.).</p>
-            <p><span class="min-c mc-negro">SS</span> <b>SALTEO SUPREMO:</b> El siguiente jugador pierde el turno y se le acumulan +4 cartas para robar.</p>
+            <h3 style="color:#2ecc71;">7. DUELOS</h3>
+            <p>El sistema de duelos (activado por RIP o al defenderse de un +12/SS) se juega al mejor de 3 rondas bajo la siguiente regla: <b>El Fuego derrite al Hielo. El Hielo congela el Agua. El Agua apaga el Fuego.</b></p>
+            
+            <h3 style="color:#2ecc71;">8. RECUENTO DE PUNTOS</h3>
+            <p>Cuando alguien gana, se suman las cartas de los perdedores así:</p>
+            <ul>
+                <li><b>Numéricas (0-9):</b> Valen su número.</li>
+                <li><b>1 y 1/2:</b> Vale 1.5 puntos.</li>
+                <li><b>+2, Reversa, Salteo:</b> Valen 20 puntos.</li>
+                <li><b>Cambio Color, +4:</b> Valen 40 puntos.</li>
+                <li><b>+12, Libre, Salteo Supremo:</b> Valen 80 puntos.</li>
+                <li><b>RIP:</b> Vale 100 puntos.</li>
+                <li><b>Gracia:</b> Vale 0 puntos en mano (¡pero +50 de Bonus si es tu última carta jugada!).</li>
+            </ul>
         </div>
     </div>
 
@@ -1385,14 +1427,14 @@ app.get('/', (req, res) => {
         <h2 style="color:gold;">¿Abandonar Partida?</h2>
         <p>Serás expulsado de la sala y no podrás volver.</p>
         <button class="btn-main" onclick="confirmLeave('leave_normal')" style="background:#e74c3c;">SÍ, ABANDONAR</button>
-        <button class="btn-main" onclick="closeLeaveModals()" style="background:#34495e;">CANCELAR</button>
+        <button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
     <div id="leave-admin-modal" class="floating-window">
         <h2 style="color:gold;">¿Abandonar Partida?</h2>
         <p>Eres el anfitrión. Puedes irte y dejar que continúen o cancelar la partida para todos.</p>
         <button class="btn-main" onclick="confirmLeave('leave_host_keep')" style="background:#f39c12; font-size:16px;">IRME Y DEJARLOS JUGANDO</button>
         <button class="btn-main" onclick="confirmLeave('leave_host_end')" style="background:#e74c3c; font-size:16px;">FINALIZAR PARTIDA PARA TODOS</button>
-        <button class="btn-main" onclick="closeLeaveModals()" style="background:#34495e;">CANCELAR</button>
+        <button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
 
     <div id="game-over-screen" class="screen">
@@ -1484,6 +1526,14 @@ app.get('/', (req, res) => {
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
+        // --- FUNCIÓN GLOBAL DE INTERRUPCIÓN ---
+        function forceCloseModals() {
+            document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none');
+            document.getElementById('chat-win').style.display = 'none';
+            document.getElementById('uno-menu').style.display = 'none';
+            isChatOpen = false;
+        }
+
         function repositionHUD() {
             const pZone = document.getElementById('players-zone');
             if (!pZone || pZone.offsetHeight === 0) return;
@@ -1520,12 +1570,10 @@ app.get('/', (req, res) => {
         
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
         
-        // REFINAMIENTO DE LIMPIEZA VISUAL AL SER EXPULSADO/ABANDONAR
         socket.on('requireLogin', () => { 
             document.getElementById('reconnect-overlay').style.display = 'none'; 
             changeScreen('login'); 
             document.getElementById('global-leave-btn').style.display = 'none';
-            // Vaciamos los contenedores visuales para no tener datos "fantasma"
             document.getElementById('lobby-users').innerHTML = ''; 
             document.getElementById('players-zone').innerHTML = '';
         });
@@ -1645,7 +1693,9 @@ app.get('/', (req, res) => {
                  requestAnimationFrame(repositionHUD);
             } 
             else if (s.state === 'rip_decision' || s.state === 'penalty_decision') {
-                changeScreen('game-area'); forceCloseChat(); document.body.classList.add('state-rip');
+                changeScreen('game-area'); 
+                forceCloseModals(); // NUEVO: Cierra modales
+                document.body.classList.add('state-rip');
                 
                 if(s.duelInfo.defenderId === myUUID) { 
                     document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; 
@@ -1658,7 +1708,9 @@ app.get('/', (req, res) => {
                 }
             }
             else if (s.state === 'dueling') {
-                changeScreen('game-area'); forceCloseChat(); document.body.classList.add('state-dueling');
+                changeScreen('game-area'); 
+                forceCloseModals(); // NUEVO: Cierra modales
+                document.body.classList.add('state-dueling');
                 document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex';
                 document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
                 
@@ -1820,11 +1872,13 @@ app.get('/', (req, res) => {
                 if (!pZone || pZone.offsetHeight === 0) { w.style.top = '130px'; w.style.right = '10px'; }
             } 
         }
-        function forceCloseChat() { document.getElementById('chat-win').style.display = 'none'; isChatOpen = false; document.getElementById('uno-menu').style.display = 'none'; document.querySelectorAll('.floating-window').forEach(w => w.style.display='none'); }
         
         function toggleRules() { const r = document.getElementById('rules-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
         function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
-        function toggleManual() { const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
+        function toggleManual() { 
+            const rm = document.getElementById('rules-modal'); if (rm.style.display === 'flex') rm.style.display = 'none';
+            const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; 
+        }
 
         function pickCol(c){ 
             document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; 
@@ -1845,7 +1899,7 @@ app.get('/', (req, res) => {
         });
 
         socket.on('roundStarted', data => {
-            forceCloseChat(); 
+            forceCloseModals(); // NUEVO: Cierra modales
             const banner = document.getElementById('round-start-banner');
             document.getElementById('rsb-round').innerText = "RONDA " + data.round;
             document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
@@ -1857,8 +1911,7 @@ app.get('/', (req, res) => {
         function requestLeave() { socket.emit('requestLeave'); }
         socket.on('showLeaveNormalPrompt', () => { document.getElementById('leave-normal-modal').style.display = 'flex'; });
         socket.on('showLeaveAdminPrompt', () => { document.getElementById('leave-admin-modal').style.display = 'flex'; });
-        function confirmLeave(choice) { closeLeaveModals(); socket.emit('confirmLeave', choice); }
-        function closeLeaveModals() { document.getElementById('leave-normal-modal').style.display = 'none'; document.getElementById('leave-admin-modal').style.display = 'none'; }
+        function confirmLeave(choice) { document.getElementById('leave-normal-modal').style.display = 'none'; document.getElementById('leave-admin-modal').style.display = 'none'; socket.emit('confirmLeave', choice); }
         
         socket.on('gamePaused', (data) => {
             document.getElementById('pause-msg').innerText = data.message;
@@ -1866,7 +1919,6 @@ app.get('/', (req, res) => {
             setTimeout(() => { document.getElementById('pause-overlay').style.display = 'none'; }, data.duration);
         });
 
-        // --- MANEJO DE CANCELACIÓN DE SALA EN EL LOBBY ---
         socket.on('roomCancelled', () => {
             document.getElementById('action-bar').style.display = 'none';
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
@@ -1877,7 +1929,7 @@ app.get('/', (req, res) => {
             setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 4000);
         });
 
-        socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseChat(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
+        socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseModals(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
         
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
@@ -1888,6 +1940,7 @@ app.get('/', (req, res) => {
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
         
         socket.on('roundOver', async d => {
+            forceCloseModals(); // NUEVO: Cierra modales
             document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';
             document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
@@ -1925,6 +1978,7 @@ app.get('/', (req, res) => {
         });
 
         socket.on('gameOver', d => {
+            forceCloseModals(); // NUEVO: Cierra modales
             document.getElementById('action-bar').style.display = 'none'; 
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
             document.getElementById('round-overlay').style.display='none';

@@ -520,7 +520,6 @@ io.on('connection', (socket) => {
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator || player.hasLeft) return;
         if (room.gameState === 'penalty_decision' && pIndex !== room.currentTurn) return;
 
-        // BLOQUEO ABSOLUTO DE DEFENSA SI EL CASTIGO VIENE DE UN DUELO PERDIDO
         if (room.pendingPenalty > 0 && room.resumeTurnFrom !== null && room.resumeTurnFrom !== undefined) {
             socket.emit('notification', '🚫 Castigo de duelo ineludible. Toca el mazo rojo para robar obligatoriamente.');
             return;
@@ -716,7 +715,6 @@ io.on('connection', (socket) => {
                         io.to(roomId).emit('notification', `✅ Fin del castigo.`); 
                     }
                     
-                    // LÓGICA DE SALTO DE TURNO POST-DUELO
                     if (room.resumeTurnFrom !== undefined && room.resumeTurnFrom !== null) {
                         room.currentTurn = room.resumeTurnFrom;
                         room.resumeTurnFrom = null;
@@ -757,7 +755,7 @@ io.on('connection', (socket) => {
                 if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
                     room.gameState = 'playing';
                     room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
-                    advanceTurn(roomId, 1); // Salta al jugador que sigue del muerto
+                    advanceTurn(roomId, 1);
                     updateAll(roomId);
                 }
             }
@@ -936,7 +934,7 @@ function finalizeDuel(roomId) {
             io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`); 
             room.pendingPenalty = 4; room.pendingSkip = 0; 
             room.currentTurn = room.players.indexOf(att); 
-            room.resumeTurnFrom = room.players.indexOf(def); // SETEA MARCADOR
+            room.resumeTurnFrom = room.players.indexOf(def); 
             room.gameState = 'playing'; updateAll(roomId); 
         } 
         else { 
@@ -945,7 +943,7 @@ function finalizeDuel(roomId) {
             room.players.forEach(p => p.hasDrawn = false); 
             room.currentTurn = room.players.indexOf(att); 
             room.pendingPenalty = 4; room.pendingSkip = 0; 
-            room.resumeTurnFrom = room.players.indexOf(def); // SETEA MARCADOR
+            room.resumeTurnFrom = room.players.indexOf(def); 
             room.gameState = 'playing'; updateAll(roomId); 
         }
     }
@@ -1221,15 +1219,14 @@ app.get('/', (req, res) => {
         .libre-step { display: none; width: 100%; text-align: center; }
         .libre-step.active { display: block; }
         
-        .hud-btn { position: fixed; width: 55px; height: 55px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 24px; cursor: pointer; transition: transform 0.2s, top 0.3s ease-out; }
+        .hud-btn { position: fixed; width: 50px; height: 50px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 20px; cursor: pointer; transition: transform 0.2s, top 0.3s ease-out, left 0.3s ease-out; }
         .hud-btn:active { transform: scale(0.9); }
         
-        #score-btn { left: 20px; background: gold; color: black; }
-        #rules-btn { left: 20px; background: #9b59b6; color: white; }
-        #uno-main-btn { right: 20px; background: #e67e22; font-size: 11px; font-weight: bold; text-align: center; line-height: 1.2; }
-        #chat-btn { right: 20px; background: #3498db; }
-
-        #global-leave-btn { left: 20px; background: #c0392b; font-size: 20px; }
+        #score-btn { background: gold; color: black; }
+        #rules-btn { background: #9b59b6; color: white; }
+        #uno-main-btn { background: #e67e22; font-size: 10px; font-weight: bold; text-align: center; line-height: 1.1; padding: 0; }
+        #chat-btn { background: #3498db; }
+        #global-leave-btn { background: #c0392b; font-size: 20px; }
 
         #players-zone { flex: 0 0 auto; padding: 30px 10px 10px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; position: relative; }
         .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
@@ -1267,7 +1264,7 @@ app.get('/', (req, res) => {
         .color-circle { width: 70px; height: 70px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 4px solid #fff; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         
-        #chat-win { position: fixed; right: 20px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; transition: top 0.3s ease-out; }
+        #chat-win { position: fixed; right: 10px; width: 280px; height: 250px; background: rgba(0,0,0,0.95); border: 2px solid #666; display: none; flex-direction: column; z-index: 50000; border-radius: 10px; box-shadow: 0 0 20px black; transition: top 0.3s ease-out; }
         #chat-badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: none; justify-content: center; align-items: center; font-weight: bold; border: 2px solid white; }
         
         .min-c { display:inline-block; width:22px; height:32px; border-radius:3px; border:1px solid white; text-align:center; line-height:32px; font-weight:bold; font-size:12px; color:white; vertical-align:middle; margin:0 2px; }
@@ -1301,7 +1298,7 @@ app.get('/', (req, res) => {
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 30px; }
         
-        #uno-menu { display: none; position: fixed; right: 80px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
+        #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
         
         .flying-card { position: fixed; width: 70px; height: 100px; background: #fff; border-radius: 8px; z-index: 50000; transition: all 0.5s ease-in-out; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; }
     </style>
@@ -1328,6 +1325,11 @@ app.get('/', (req, res) => {
     </div>
 
     <div id="global-leave-btn" class="hud-btn" onclick="requestLeave()" title="Abandonar Partida">🚪</div>
+    
+    <div id="rules-btn" class="hud-btn" onclick="toggleManual()">📖</div>
+    <div id="score-btn" class="hud-btn" onclick="toggleScores()">🏆</div>
+    <div id="chat-btn" class="hud-btn" onclick="toggleChat()">💬<div id="chat-badge">0</div></div>
+    <div id="uno-main-btn" class="hud-btn" onclick="toggleUnoMenu()">UNO<br>y 1/2</div>
 
     <div id="round-start-banner">
         <h1 id="rsb-round" style="color: gold; font-size: 50px; margin: 0; text-shadow: 2px 2px 5px black;">RONDA 1</h1>
@@ -1347,11 +1349,6 @@ app.get('/', (req, res) => {
             <button id="btn-ladder-cancel" onclick="cancelLadder()">CANCELAR</button>
         </div>
     </div>
-    
-    <div id="score-btn" class="hud-btn" onclick="toggleScores()">🏆</div>
-    <div id="rules-btn" class="hud-btn" onclick="toggleManual()">📖</div>
-    <div id="uno-main-btn" class="hud-btn" onclick="toggleUnoMenu()">UNO<br>y 1/2</div>
-    <div id="chat-btn" class="hud-btn" onclick="toggleChat()">💬<div id="chat-badge">0</div></div>
 
     <div id="uno-menu">
         <div id="uno-main-opts">
@@ -1556,31 +1553,52 @@ app.get('/', (req, res) => {
             isChatOpen = false;
         }
 
+        // --- ALGORITMO HORIZONTAL DE BOTONES ---
         function repositionHUD() {
             const pZone = document.getElementById('players-zone');
             if (!pZone || pZone.offsetHeight === 0) return;
             const rect = pZone.getBoundingClientRect();
-            const baseTop = rect.bottom + 15;
             
-            // Columna Izquierda
-            const leaveBtn = document.getElementById('global-leave-btn');
-            if(leaveBtn) leaveBtn.style.top = baseTop + 'px';
-            const scoreBtn = document.getElementById('score-btn');
-            if(scoreBtn) scoreBtn.style.top = (baseTop + 65) + 'px';
-            const rulesBtn = document.getElementById('rules-btn');
-            if(rulesBtn) rulesBtn.style.top = (baseTop + 130) + 'px';
+            // Altura dinámica: Siempre se despega 10px desde donde terminen los nombres
+            const baseTop = rect.bottom + 10; 
+
+            // El orden exacto de los botones, de izquierda a derecha
+            const buttons = [
+                document.getElementById('global-leave-btn'),
+                document.getElementById('rules-btn'),
+                document.getElementById('score-btn'),
+                document.getElementById('chat-btn'),
+                document.getElementById('uno-main-btn')
+            ];
+
+            const screenW = window.innerWidth;
+            const btnSize = 50;
+            let gap = 15; // Espacio normal entre botones
             
-            // Columna Derecha
-            const unoBtn = document.getElementById('uno-main-btn');
-            if(unoBtn) unoBtn.style.top = baseTop + 'px';
-            const chatBtn = document.getElementById('chat-btn');
-            if(chatBtn) chatBtn.style.top = (baseTop + 65) + 'px';
-            
+            // Acortamos el espacio si la pantalla es muy fina
+            if (screenW < 360) gap = 8;
+            if (screenW < 330) gap = 4;
+
+            const totalW = (btnSize * 5) + (gap * 4);
+            let startLeft = (screenW - totalW) / 2; // Calcula para centrar el bloque exacto
+
+            buttons.forEach((btn, idx) => {
+                if (btn) {
+                    btn.style.top = baseTop + 'px';
+                    btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px';
+                    btn.style.right = 'auto'; // Limpia cualquier regla antigua
+                }
+            });
+
+            // Reacomoda los modales y alertas justo debajo de la línea de botones
             const lowerElements = ['uno-menu', 'chat-win'];
-            lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) el.style.top = (baseTop + 65) + 'px'; });
+            lowerElements.forEach(function(id) {
+                const el = document.getElementById(id);
+                if(el) { el.style.top = (baseTop + 60) + 'px'; }
+            });
 
             const alertZone = document.getElementById('alert-zone');
-            if(alertZone) alertZone.style.top = (baseTop + 40) + 'px';
+            if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
         }
         window.addEventListener('resize', repositionHUD);
 
@@ -1854,12 +1872,12 @@ app.get('/', (req, res) => {
             
             if (id === 'lobby') {
                 const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px';
+                cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; // Reposiciona en la esquina superior para el lobby
                 const lv = document.getElementById('global-leave-btn');
-                if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; }
+                if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
             } else if (id === 'game-area') {
                 const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; cb.style.right = '20px'; requestAnimationFrame(repositionHUD);
+                cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); // Alinea horizontalmente al entrar al juego
             }
         }
         
@@ -1890,8 +1908,6 @@ app.get('/', (req, res) => {
             if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } 
             else { 
                 w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; 
-                const pZone = document.getElementById('players-zone');
-                if (!pZone || pZone.offsetHeight === 0) { w.style.top = '130px'; w.style.right = '10px'; }
             } 
         }
         

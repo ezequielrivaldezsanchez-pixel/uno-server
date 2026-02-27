@@ -28,6 +28,8 @@ setInterval(() => {
         Object.keys(rooms).forEach(roomId => {
             if (rooms[roomId] && now - rooms[roomId].lastActivity > 7200000) {
                 if (rooms[roomId].actionTimer) clearTimeout(rooms[roomId].actionTimer);
+                if (rooms[roomId].turnTimer) clearTimeout(rooms[roomId].turnTimer);
+                if (rooms[roomId].afkTimer) clearTimeout(rooms[roomId].afkTimer);
                 delete rooms[roomId]; 
             }
         });
@@ -59,6 +61,8 @@ function initRoom(roomId) {
         chatHistory: [],
         lastActivity: Date.now(),
         actionTimer: null,
+        turnTimer: null,
+        afkTimer: null,
         timerEndsAt: null,
         resumeTurnFrom: null
     };
@@ -133,7 +137,42 @@ function getNextPlayerFrom(roomId, startIdx) {
     return current;
 }
 
-// NUEVO SISTEMA DE AUTO-RESOLUCIÓN EN LUGAR DE EXPULSIÓN
+// EXPULSIÓN POR INACTIVIDAD EXTREMA (Reemplaza a CowardKick)
+function forceKickAFK(roomId, uuid) {
+    const room = rooms[roomId]; if(!room) return;
+    const pIndex = room.players.findIndex(p => p.uuid === uuid);
+    if(pIndex === -1) return;
+    const player = room.players[pIndex];
+    
+    player.isDead = true; player.isSpectator = true; player.hasLeft = true;
+    let msg = `🚪 ${player.name} fue expulsado de la partida por inactividad extrema.`;
+
+    if (player.isAdmin) {
+        player.isAdmin = false;
+        const nextAdmin = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft);
+        if (nextAdmin) {
+            nextAdmin.isAdmin = true;
+            msg += `\n👑 Ahora ${nextAdmin.name} es el nuevo anfitrión.`;
+        }
+    }
+
+    const socketToKick = io.sockets.sockets.get(player.id);
+    if(socketToKick) { socketToKick.leave(roomId); socketToKick.emit('requireLogin'); }
+
+    if (getAlivePlayersCount(roomId) <= 1) {
+        io.to(roomId).emit('notification', msg); 
+        checkWinCondition(roomId);
+    } else {
+        if (room.currentTurn === pIndex) {
+            room.pendingPenalty = 0; room.pendingSkip = 0;
+            advanceTurn(roomId, 1);
+        }
+        io.to(roomId).emit('gamePaused', { message: msg, duration: 4000 });
+        setTimeout(() => { if(rooms[roomId]) updateAll(roomId); }, 4000);
+    }
+}
+
+// AUTO-RESOLUCIÓN DE DECISIONES DE RIESGO
 function handleTimeout(roomId, targetUuid, stateContext) {
     const room = rooms[roomId]; if (!room) return;
     const targetIdx = room.players.findIndex(p => p.uuid === targetUuid);
@@ -141,7 +180,7 @@ function handleTimeout(roomId, targetUuid, stateContext) {
     const target = room.players[targetIdx];
     
     if (stateContext === 'penalty_decision' && room.gameState === 'penalty_decision') {
-        io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} perdió la chance de batirse a duelo y recibe el castigo.`);
+        io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} perdió la chance de batirse a duelo y recibe el castigo automáticamente.`);
         room.gameState = 'playing';
         updateAll(roomId);
     } 
@@ -157,58 +196,53 @@ function handleTimeout(roomId, targetUuid, stateContext) {
         }
     } 
     else if (stateContext === 'dueling' && room.gameState === 'dueling') {
-        const choices = ['fuego', 'hielo', 'agua'];
-        const rc = choices[Math.floor(Math.random() * choices.length)];
         if (targetUuid === room.duelState.attackerId) {
-            room.duelState.attackerChoice = rc;
-            room.duelState.turn = room.duelState.defenderId;
-            room.duelState.narrative = `⏳ ${target.name} tardó demasiado. Ataque elegido al azar... Turno de ${room.duelState.defenderName}.`;
+            room.duelState.attackerChoice = null; 
         } else if (targetUuid === room.duelState.defenderId) {
-            room.duelState.defenderChoice = rc;
-            io.to(roomId).emit('notification', `⏳ ${target.name} tardó demasiado. Defensa elegida al azar.`);
-            resolveDuelRound(roomId);
-            return;
+            room.duelState.defenderChoice = null; 
         }
-        updateAll(roomId);
+        resolveDuelRound(roomId, true);
     } 
-    else if (stateContext === 'playing_penalty' && room.gameState === 'playing' && room.pendingPenalty > 0 && room.currentTurn === targetIdx) {
-        io.to(roomId).emit('notification', `⏳ Tiempo agotado. El sistema hizo que ${target.name} recoja sus ${room.pendingPenalty} cartas de castigo automáticamente.`);
-        const p = room.pendingPenalty;
-        for(let i=0; i<p; i++) { drawCards(roomId, targetIdx, 1); }
-        room.pendingPenalty = 0;
-        if (room.pendingSkip > 0) {
-            target.missedTurns += room.pendingSkip;
-            room.pendingSkip = 0;
-        }
-        if (room.resumeTurnFrom !== null && room.resumeTurnFrom !== undefined) {
-            room.currentTurn = room.resumeTurnFrom;
-            room.resumeTurnFrom = null;
-        }
-        advanceTurn(roomId, 1);
-        updateAll(roomId);
-    }
 }
 
-function checkPenaltyTimer(roomId) {
+// SISTEMA MAESTRO DE TEMPORIZADORES (Auditoría: Separación estricta de responsabilidades)
+function manageTimers(roomId) {
     const room = rooms[roomId]; if (!room) return;
+    
     if (room.actionTimer) { clearTimeout(room.actionTimer); room.actionTimer = null; }
+    if (room.turnTimer) { clearTimeout(room.turnTimer); room.turnTimer = null; }
+    if (room.afkTimer) { clearTimeout(room.afkTimer); room.afkTimer = null; }
 
     let targetUuid = null;
     let stateCtx = '';
     
-    if (room.gameState === 'playing' && room.pendingPenalty > 0) {
-        if (room.players[room.currentTurn]) { targetUuid = room.players[room.currentTurn].uuid; stateCtx = 'playing_penalty'; }
-    } else if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
+    // 1. Prioridad Absoluta: Decisiones de Riesgo (15s, resuelven la jugada, NO expulsan)
+    if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
         targetUuid = room.duelState.defenderId; stateCtx = room.gameState;
     } else if (room.gameState === 'dueling') {
         targetUuid = room.duelState.turn; stateCtx = 'dueling';
     }
 
     if (targetUuid) {
-        room.timerEndsAt = Date.now() + 15000; // 15 SEGUNDOS PARA TOMAR LA DECISIÓN
+        room.timerEndsAt = Date.now() + 15000;
         room.actionTimer = setTimeout(() => {
             handleTimeout(roomId, targetUuid, stateCtx);
         }, 15000);
+        return; 
+    }
+
+    // 2. Temporizador Normal de Turno (Inactividad / AFK) (20s de gracia + 10s de alerta visual)
+    if (room.gameState === 'playing' && getAlivePlayersCount(roomId) > 1) {
+        const currentPlayer = room.players[room.currentTurn];
+        if (currentPlayer && !currentPlayer.isDead && !currentPlayer.isSpectator && !currentPlayer.hasLeft) {
+            room.timerEndsAt = null; 
+            room.turnTimer = setTimeout(() => {
+                io.to(currentPlayer.id).emit('showAFKPrompt');
+                room.afkTimer = setTimeout(() => {
+                    forceKickAFK(roomId, currentPlayer.uuid);
+                }, 10000);
+            }, 20000);
+        }
     } else {
         room.timerEndsAt = null;
     }
@@ -284,6 +318,13 @@ io.on('connection', (socket) => {
         }
         updateAll(roomId);
     }));
+
+    // El jugador confirma que no está AFK
+    socket.on('imHere', safe(() => {
+        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
+        touchRoom(roomId);
+        manageTimers(roomId); // Reinicia los timers dándole otros 20s
+    }));
     
     socket.on('requestSort', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
@@ -297,6 +338,7 @@ io.on('connection', (socket) => {
             return vA - vB;
         });
         io.to(p.id).emit('handUpdate', p.hand); socket.emit('notification', 'Cartas ordenadas.');
+        manageTimers(roomId); // Cualquier interacción resetea el AFK
     }));
 
     socket.on('kickPlayer', safe((targetId) => {
@@ -348,6 +390,8 @@ io.on('connection', (socket) => {
                 io.to(roomId).emit('gameOver', { winner: 'Partida Cancelada', totalScore: 0, reason: 'cancelled' });
             }
             if (room.actionTimer) clearTimeout(room.actionTimer);
+            if (room.turnTimer) clearTimeout(room.turnTimer);
+            if (room.afkTimer) clearTimeout(room.afkTimer);
             setTimeout(() => { delete rooms[roomId]; }, 3000);
             return;
         }
@@ -773,7 +817,7 @@ io.on('connection', (socket) => {
             room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId;
             room.duelState.narrative = `⚔️ ${room.duelState.attackerName} eligió. Turno de ${room.duelState.defenderName}...`;
         } 
-        else if (myUUID === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId); return; }
+        else if (myUUID === room.duelState.defenderId) { room.duelState.defenderChoice = c; resolveDuelRound(roomId, false); return; }
         updateAll(roomId);
     }));
     
@@ -781,7 +825,7 @@ io.on('connection', (socket) => {
         const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; 
         if (room.gameState !== 'playing') return;
         const p = room.players.find(x => x.id === socket.id);
-        if(p && p.hand.length === 1) { p.saidUno = true; io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`); io.to(roomId).emit('playSound', 'uno'); }
+        if(p && p.hand.length === 1) { p.saidUno = true; io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`); io.to(roomId).emit('playSound', 'uno'); manageTimers(roomId); }
     }));
 
     socket.on('reportUno', safe((targetId) => {
@@ -807,6 +851,7 @@ io.on('connection', (socket) => {
             const msg = { name: p.name, text }; room.chatHistory.push(msg);
             if(room.chatHistory.length > 50) room.chatHistory.shift();
             io.to(roomId).emit('chatMessage', msg); 
+            manageTimers(roomId); // Interactuar en chat resetea el AFK
         }
     }));
 
@@ -880,21 +925,50 @@ function getDuelNarrative(attName, defName, att, def) {
     return "Resultado confuso...";
 }
 
-function resolveDuelRound(roomId) {
-    const room = rooms[roomId]; const att = room.duelState.attackerChoice, def = room.duelState.defenderChoice; let winner = 'tie';
-    if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
-    else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
+// RESOLUCIÓN DE DUELO: Ahora acepta ganar por inactividad
+function resolveDuelRound(roomId, isTimeout = false) {
+    const room = rooms[roomId];
+    let att = room.duelState.attackerChoice;
+    let def = room.duelState.defenderChoice;
+    let winner = 'tie';
+
+    if (isTimeout) {
+        if (!att) {
+            winner = 'defender';
+            room.duelState.narrative = `⏳ ${room.duelState.defenderName} ganó la ronda porque ${room.duelState.attackerName} tardó mucho en elegir.`;
+        } else if (!def) {
+            winner = 'attacker';
+            room.duelState.narrative = `⏳ ${room.duelState.attackerName} ganó la ronda porque ${room.duelState.defenderName} tardó mucho en elegir.`;
+        }
+    } else {
+        if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
+        else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
+        room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
+    }
     
     if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
-    let winName = 'Empate'; if(winner === 'attacker') winName = room.duelState.attackerName; if(winner === 'defender') winName = room.duelState.defenderName;
+    
+    let winNameToHistory = 'Empate'; 
+    if(winner === 'attacker') winNameToHistory = room.duelState.attackerName; 
+    if(winner === 'defender') winNameToHistory = room.duelState.defenderName;
 
-    room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
-    room.duelState.history.push({ round: room.duelState.round, att, def, winnerName: winName });
+    room.duelState.history.push({ round: room.duelState.round, att: att || 'timeout', def: def || 'timeout', winnerName: winNameToHistory });
     room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
+    
     io.to(roomId).emit('playSound', 'soft');
     
-    if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2000); } 
-    else { setTimeout(() => { if(rooms[roomId]) { room.duelState.round++; room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} elige arma...`; updateAll(roomId); } }, 2500); updateAll(roomId); }
+    if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
+        setTimeout(() => finalizeDuel(roomId), 2000); 
+    } else { 
+        setTimeout(() => { 
+            if(rooms[roomId]) { 
+                room.duelState.round++; 
+                room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} elige arma...`; 
+                updateAll(roomId); 
+            } 
+        }, 3000); 
+    }
+    updateAll(roomId); 
 }
 
 function finalizeDuel(roomId) {
@@ -1052,6 +1126,8 @@ function calculateAndFinishRound(roomId, winner) {
             room.gameState = 'waiting';
             io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); io.to(roomId).emit('playSound', 'win');
             if (room.actionTimer) clearTimeout(room.actionTimer);
+            if (room.turnTimer) clearTimeout(room.turnTimer);
+            if (room.afkTimer) clearTimeout(room.afkTimer);
             setTimeout(() => { delete rooms[roomId]; }, 10000);
         } else {
             room.gameState = 'round_over'; room.roundCount++;
@@ -1124,6 +1200,8 @@ function checkWinCondition(roomId) {
                 });
                 io.to(roomId).emit('playSound', 'win');
                 if (room.actionTimer) clearTimeout(room.actionTimer);
+                if (room.turnTimer) clearTimeout(room.turnTimer);
+                if (room.afkTimer) clearTimeout(room.afkTimer);
                 setTimeout(() => { delete rooms[roomId]; }, 10000);
             }, 3000);
         } 
@@ -1157,7 +1235,7 @@ function updateAll(roomId) {
             }
         });
         
-        checkPenaltyTimer(roomId); 
+        manageTimers(roomId); 
     } catch(e) { console.error("Error UpdateAll:", e); }
 }
 
@@ -1374,7 +1452,6 @@ app.get('/', (req, res) => {
         <div class="modal-close" onclick="toggleManual()">X</div>
         <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
         <div style="padding:0 10px; text-align:left; line-height:1.7; font-size: 15px;">
-            
             <h3 style="color:#2ecc71;">1. OBJETIVO DEL JUEGO</h3>
             <p>El juego se desarrolla por rondas. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano. Cuando un jugador lo logra, la ronda termina y <b>recolecta los puntos de las cartas que les quedaron a los demás jugadores</b> en sus manos (incluso a los que hayan muerto durante la partida). El primer jugador en acumular <b>800 puntos</b> en el conteo general, será el ganador absoluto de la partida.</p>
             
@@ -1385,9 +1462,9 @@ app.get('/', (req, res) => {
             <p>Al iniciar, cada jugador recibe 7 cartas. En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta que se encuentra en el tope de la mesa. Si no tienes una carta válida (o no quieres jugarla), debes tocar el mazo central para robar una carta. Si la carta robada te sirve, puedes tirarla en ese mismo instante; de lo contrario, debes presionar "PASAR" para ceder el turno.</p>
             <p><b>JUGADAS ESPECIALES DE DESCARTE:</b> (Se logran manteniendo presionada una carta para activar la Selección Múltiple)</p>
             <ul>
-                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente, pero <b>tienen que ser todas del mismo color</b> (ej. <span class="min-c mc-azul">3</span> <span class="min-c mc-azul">4</span> <span class="min-c mc-azul">5</span>). También puedes hacer una escalera usando la carta del tope de la mesa como base, descartando solo 2 cartas consecutivas de tu mano que conecten con ella.</li>
-                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta <span class="min-c mc-rojo">1 ½</span> permite sumas. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2" (no importa de qué color sean). Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9". <b>Condición estricta:</b> El número que formes DEBE coincidir con el número que ya está en la mesa. El color que quedará activo en la mesa será el de la <i>última</i> carta "1 y 1/2" que hayas tocado.</li>
-                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica (del 0 al 9 o "1 y 1/2") <b>EXACTAMENTE IGUAL</b> (Mismo número y mismo color), no tienes que esperar a que sea tu turno. Arrójala inmediatamente y el juego saltará automáticamente a ti, robándole el turno al resto. (No aplica para cartas especiales ni supremas).</li>
+                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente, pero <b>tienen que ser todas del mismo color</b>. También puedes hacer una escalera usando la carta del tope de la mesa como base, descartando solo 2 cartas consecutivas de tu mano que conecten con ella.</li>
+                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta <span class="min-c mc-rojo">1 ½</span> permite sumas. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2". Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9". <b>Condición estricta:</b> El número que formes DEBE coincidir con el número que ya está en la mesa. El color que quedará activo en la mesa será el de la <i>última</i> carta que hayas tocado.</li>
+                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL</b> (Mismo número y mismo color), no tienes que esperar a que sea tu turno. Arrójala inmediatamente y el juego saltará automáticamente a ti, robándole el turno al resto.</li>
             </ul>
 
             <h3 style="color:#2ecc71;">4. CARTAS ESPECIALES (Básicas)</h3>
@@ -1409,17 +1486,16 @@ app.get('/', (req, res) => {
             <p>Cartas únicas de fondo negro o blanco, con reglas destructivas o salvadoras.</p>
             <ul>
                 <li><span class="min-c mc-negro">+12</span> <b>Más Doce:</b> Aplica un castigo masivo de 12 cartas. El jugador que lo recibe entra en fase de "Decisión de Castigo": puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
-                <li><span class="min-c mc-negro">SS</span> <b>SALTEO SUPREMO:</b> El siguiente jugador recibe 4 cartas de castigo y además pierde 4 turnos. Al igual que con el +12, el jugador afectado puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
-                <li><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Sirve para defender castigos numéricos. Abre una ventana donde: 1) Regalas 1 carta a cualquier jugador. 2) Eliges la carta que quieras de tu mano para descartar y definir cómo sigue el juego (sin importar el color previo).</li>
-                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> La víctima (automáticamente el siguiente jugador en el turno) entra en un Duelo a Muerte (Piedra/Papel/Tijera elemental: Fuego/Hielo/Agua). Quien pierde el duelo es eliminado (zombie) y ya no juega en esta ronda, a menos que alguien lo reviva. Si el atacante pierde, la víctima se salva y el atacante roba 4 cartas.</li>
-                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Es la carta de salvación absoluta. Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), tírala y podrás resucitarlo. Al resucitar a alguien o usarla como comodín normal, decides el nuevo color de la mesa.</li>
+                <li><span class="min-c mc-negro">SS</span> <b>SALTEO SUPREMO:</b> El siguiente jugador recibe 4 cartas de castigo y además pierde 4 turnos. Puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
+                <li><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Sirve para defender castigos numéricos. Abre una ventana donde: 1) Regalas 1 carta a cualquier jugador. 2) Eliges la carta que quieras de tu mano para descartar y definir cómo sigue el juego.</li>
+                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> La víctima (automáticamente el siguiente jugador) entra en un Duelo a Muerte (Piedra/Papel/Tijera elemental: Fuego/Hielo/Agua). Quien pierde el duelo es eliminado (zombie) y ya no juega en esta ronda. Si el atacante pierde, la víctima se salva y el atacante roba 4 cartas.</li>
+                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Es la carta de salvación absoluta. Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), tírala y podrás resucitarlo. Decides el nuevo color de la mesa.</li>
             </ul>
 
             <h3 style="color:#2ecc71;">7. DUELOS</h3>
-            <p>El sistema de duelos (activado por RIP o al defenderse de un +12 o SALTEO SUPREMO) se juega al mejor de 3 rondas bajo la siguiente regla: <b>El Fuego derrite al Hielo. El Hielo congela el Agua. El Agua apaga el Fuego.</b></p>
+            <p>Se juega al mejor de 3 rondas bajo la siguiente regla: <b>El Fuego derrite al Hielo. El Hielo congela el Agua. El Agua apaga el Fuego.</b></p>
             
             <h3 style="color:#2ecc71;">8. RECUENTO DE PUNTOS</h3>
-            <p>Cuando alguien gana, se suman las cartas de los perdedores así:</p>
             <ul>
                 <li><b>Numéricas (0-9):</b> Valen su número.</li>
                 <li><b>1 y 1/2:</b> Vale 1.5 puntos.</li>
@@ -1427,9 +1503,15 @@ app.get('/', (req, res) => {
                 <li><b>Cambio Color, Más Cuatro:</b> Valen 40 puntos.</li>
                 <li><b>Más Doce, LIBRE ALBEDRÍO, SALTEO SUPREMO:</b> Valen 80 puntos.</li>
                 <li><b>RIP:</b> Vale 100 puntos.</li>
-                <li><b>GRACIA DIVINA:</b> Si un perdedor tiene esta carta en su mano al terminar la ronda, queda absolutamente protegido y los puntos de TODAS las cartas de su mano se anulan (suman 0 al ganador). Sin embargo, si el ganador de la ronda arroja la GRACIA DIVINA como su última carta para ganar, obtiene un Bonus de +50 puntos adicionales.</li>
+                <li><b>GRACIA DIVINA:</b> Protege al perdedor que la tenga en la mano (suma 0). Si el ganador cierra la ronda con ella, obtiene Bonus de +50 puntos.</li>
             </ul>
         </div>
+    </div>
+
+    <div id="afk-modal" class="floating-window" style="z-index: 999999; background: #c0392b; border: 4px solid gold;">
+        <h1 style="color:white; font-size:40px; margin:10px 0;">¿ESTÁS AHÍ?</h1>
+        <p style="font-size:18px; line-height:1.4;">Tu turno está a punto de caducar por inactividad. Si no respondes, serás expulsado de la partida.</p>
+        <button class="btn-main" style="background:#27ae60; font-size:20px; padding:15px; width:100%; box-shadow: 0 0 15px white;" onclick="imHere()">¡SÍ, ESTOY JUGANDO!</button>
     </div>
 
     <div id="leave-normal-modal" class="floating-window">
@@ -1454,7 +1536,7 @@ app.get('/', (req, res) => {
     
     <div id="pause-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; justify-content:center; align-items:center; flex-direction:column; color:white; text-align:center; padding: 20px;">
         <h1 style="color:gold; font-size:50px; margin-bottom: 10px;">⏸️ PAUSA</h1>
-        <h2 id="pause-msg" style="font-weight: normal;"></h2>
+        <h2 id="pause-msg" style="font-weight: normal; line-height:1.4;"></h2>
     </div>
 
     <div id="round-overlay">
@@ -1531,14 +1613,13 @@ app.get('/', (req, res) => {
         let pressTimer;
         let pendingColorForRevive = null;
         let pendingLibreContext = null; 
-        let clientTimerInterval = null; // Para el cronómetro visual
+        let clientTimerInterval = null; 
 
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
-        // --- FUNCIÓN GLOBAL DE INTERRUPCIÓN ---
         function forceCloseModals() {
             document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none');
             document.getElementById('chat-win').style.display = 'none';
@@ -1546,16 +1627,13 @@ app.get('/', (req, res) => {
             isChatOpen = false;
         }
 
-        // --- ALGORITMO HORIZONTAL DE BOTONES ---
         function repositionHUD() {
             const pZone = document.getElementById('players-zone');
             if (!pZone || pZone.offsetHeight === 0) return;
             const rect = pZone.getBoundingClientRect();
             
-            // Altura dinámica: Siempre se despega 10px desde donde terminen los nombres
             const baseTop = rect.bottom + 10; 
 
-            // El orden exacto de los botones, de izquierda a derecha
             const buttons = [
                 document.getElementById('global-leave-btn'),
                 document.getElementById('rules-btn'),
@@ -1608,6 +1686,18 @@ app.get('/', (req, res) => {
             document.getElementById('lobby-users').innerHTML = ''; 
             document.getElementById('players-zone').innerHTML = '';
         });
+
+        // Eventos de Verificación AFK
+        socket.on('showAFKPrompt', () => {
+            document.getElementById('afk-modal').style.display = 'flex';
+            const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3');
+            a.volume = 0.5; a.play().catch(()=>{});
+        });
+
+        function imHere() {
+            document.getElementById('afk-modal').style.display = 'none';
+            socket.emit('imHere');
+        }
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
         
@@ -1693,7 +1783,6 @@ app.get('/', (req, res) => {
                 }).join('');
             }
 
-            // CRONÓMETRO VISUAL
             if (clientTimerInterval) { clearInterval(clientTimerInterval); clientTimerInterval = null; }
             document.querySelectorAll('#decision-timer, #duel-timer').forEach(el => el.innerText = '');
 
@@ -1706,7 +1795,7 @@ app.get('/', (req, res) => {
                     if (ripTimerEl) ripTimerEl.innerText = remaining;
                     if (duelTimerEl) duelTimerEl.innerText = remaining;
                 };
-                updateTimer(); // Ejecuta al instante para evitar parpadeos
+                updateTimer(); 
                 clientTimerInterval = setInterval(updateTimer, 250);
             }
 
@@ -1953,7 +2042,7 @@ app.get('/', (req, res) => {
         });
 
         socket.on('roundStarted', data => {
-            forceCloseModals(); // NUEVO: Cierra modales
+            forceCloseModals(); 
             const banner = document.getElementById('round-start-banner');
             document.getElementById('rsb-round').innerText = "RONDA " + data.round;
             document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
@@ -1961,7 +2050,6 @@ app.get('/', (req, res) => {
             setTimeout(() => { banner.classList.remove('show'); setTimeout(() => banner.style.display = 'none', 500); }, 3000);
         });
 
-        // NUEVO: SISTEMA DE ABANDONO
         function requestLeave() { socket.emit('requestLeave'); }
         socket.on('showLeaveNormalPrompt', () => { document.getElementById('leave-normal-modal').style.display = 'flex'; });
         socket.on('showLeaveAdminPrompt', () => { document.getElementById('leave-admin-modal').style.display = 'flex'; });
@@ -1994,7 +2082,7 @@ app.get('/', (req, res) => {
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
         
         socket.on('roundOver', async d => {
-            forceCloseModals(); // NUEVO: Cierra modales
+            forceCloseModals(); 
             document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';
             document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
@@ -2032,7 +2120,7 @@ app.get('/', (req, res) => {
         });
 
         socket.on('gameOver', d => {
-            forceCloseModals(); // NUEVO: Cierra modales
+            forceCloseModals(); 
             document.getElementById('action-bar').style.display = 'none'; 
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
             document.getElementById('round-overlay').style.display='none';

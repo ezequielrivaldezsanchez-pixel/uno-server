@@ -129,70 +129,74 @@ const safe = (fn) => {
 
 // EXPULSIÓN POR INACTIVIDAD EXTREMA
 function forceKickAFK(roomId, uuid) {
-    const room = rooms[roomId]; if(!room) return;
-    const pIndex = room.players.findIndex(p => p.uuid === uuid);
-    if(pIndex === -1) return;
-    const player = room.players[pIndex];
-    
-    player.isDead = true; player.isSpectator = true; player.hasLeft = true;
-    let msg = `🚪 ${player.name} fue expulsado de la partida por inactividad extrema.`;
+    try {
+        const room = rooms[roomId]; if(!room) return;
+        const pIndex = room.players.findIndex(p => p.uuid === uuid);
+        if(pIndex === -1) return;
+        const player = room.players[pIndex];
+        
+        player.isDead = true; player.isSpectator = true; player.hasLeft = true;
+        let msg = `🚪 ${player.name} fue expulsado de la partida por inactividad extrema.`;
 
-    if (player.isAdmin) {
-        player.isAdmin = false;
-        const nextAdmin = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft);
-        if (nextAdmin) {
-            nextAdmin.isAdmin = true;
-            msg += `\n👑 Ahora ${nextAdmin.name} es el nuevo anfitrión.`;
+        if (player.isAdmin) {
+            player.isAdmin = false;
+            const nextAdmin = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft);
+            if (nextAdmin) {
+                nextAdmin.isAdmin = true;
+                msg += `\n👑 Ahora ${nextAdmin.name} es el nuevo anfitrión.`;
+            }
         }
-    }
 
-    const socketToKick = io.sockets.sockets.get(player.id);
-    if(socketToKick) { socketToKick.leave(roomId); socketToKick.emit('requireLogin'); }
+        const socketToKick = io.sockets.sockets.get(player.id);
+        if(socketToKick) { socketToKick.leave(roomId); socketToKick.emit('requireLogin'); }
 
-    if (getAlivePlayersCount(roomId) <= 1) {
-        io.to(roomId).emit('notification', msg); 
-        checkWinCondition(roomId);
-    } else {
-        if (room.currentTurn === pIndex) {
-            room.pendingPenalty = 0; room.pendingSkip = 0;
-            advanceTurn(roomId, 1);
+        if (getAlivePlayersCount(roomId) <= 1) {
+            io.to(roomId).emit('notification', msg); 
+            checkWinCondition(roomId);
+        } else {
+            if (room.currentTurn === pIndex) {
+                room.pendingPenalty = 0; room.pendingSkip = 0;
+                advanceTurn(roomId, 1);
+            }
+            io.to(roomId).emit('gamePaused', { message: msg, duration: 4000 });
+            setTimeout(() => { try { if(rooms[roomId]) updateAll(roomId); } catch(e){} }, 4000);
         }
-        io.to(roomId).emit('gamePaused', { message: msg, duration: 4000 });
-        setTimeout(() => { if(rooms[roomId]) updateAll(roomId); }, 4000);
-    }
+    } catch (e) { console.error("Error en forceKickAFK:", e); }
 }
 
 // AUTO-RESOLUCIÓN DE DECISIONES DE RIESGO
 function handleTimeout(roomId, targetUuid, stateContext) {
-    const room = rooms[roomId]; if (!room) return;
-    const targetIdx = room.players.findIndex(p => p.uuid === targetUuid);
-    if (targetIdx === -1) return;
-    const target = room.players[targetIdx];
-    
-    if (stateContext === 'penalty_decision' && room.gameState === 'penalty_decision') {
-        io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} perdió la chance de batirse a duelo y recibe el castigo automáticamente.`);
-        room.gameState = 'playing';
-        updateAll(roomId);
-    } 
-    else if (stateContext === 'rip_decision' && room.gameState === 'rip_decision') {
-        io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} se quedó paralizado por el miedo y fue eliminado.`);
-        eliminatePlayer(roomId, targetUuid);
-        checkWinCondition(roomId);
-        if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
+    try {
+        const room = rooms[roomId]; if (!room) return;
+        const targetIdx = room.players.findIndex(p => p.uuid === targetUuid);
+        if (targetIdx === -1) return;
+        const target = room.players[targetIdx];
+        
+        if (stateContext === 'penalty_decision' && room.gameState === 'penalty_decision') {
+            io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} perdió la chance de batirse a duelo y recibe el castigo automáticamente.`);
             room.gameState = 'playing';
-            room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
-            advanceTurn(roomId, 1);
             updateAll(roomId);
-        }
-    } 
-    else if (stateContext === 'dueling' && room.gameState === 'dueling') {
-        if (targetUuid === room.duelState.attackerId) {
-            room.duelState.attackerChoice = null; 
-        } else if (targetUuid === room.duelState.defenderId) {
-            room.duelState.defenderChoice = null; 
-        }
-        resolveDuelRound(roomId, true);
-    } 
+        } 
+        else if (stateContext === 'rip_decision' && room.gameState === 'rip_decision') {
+            io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} se quedó paralizado por el miedo y fue eliminado.`);
+            eliminatePlayer(roomId, targetUuid);
+            checkWinCondition(roomId);
+            if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
+                room.gameState = 'playing';
+                room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
+                advanceTurn(roomId, 1);
+                updateAll(roomId);
+            }
+        } 
+        else if (stateContext === 'dueling' && room.gameState === 'dueling') {
+            if (targetUuid === room.duelState.attackerId) {
+                room.duelState.attackerChoice = null; 
+            } else if (targetUuid === room.duelState.defenderId) {
+                room.duelState.defenderChoice = null; 
+            }
+            resolveDuelRound(roomId, true);
+        } 
+    } catch (e) { console.error("Error en handleTimeout:", e); }
 }
 
 // SISTEMA MAESTRO DE TEMPORIZADORES (Duelos a 20s)
@@ -206,7 +210,7 @@ function manageTimers(roomId) {
     let targetUuid = null;
     let stateCtx = '';
     
-    // 1. Prioridad Absoluta: Decisiones de Riesgo (AHORA 20 SEGUNDOS)
+    // 1. Prioridad Absoluta: Decisiones de Riesgo (20 SEGUNDOS)
     if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
         targetUuid = room.duelState.defenderId; stateCtx = room.gameState;
     } else if (room.gameState === 'dueling') {
@@ -411,7 +415,7 @@ io.on('connection', (socket) => {
                 if (room.currentTurn === pIndex && oldState === 'playing') advanceTurn(roomId, 1);
                 
                 updateAll(roomId);
-                setTimeout(() => { if (rooms[roomId]) { room.gameState = oldState; updateAll(roomId); } }, 4000);
+                setTimeout(() => { try { if (rooms[roomId]) { room.gameState = oldState; updateAll(roomId); } } catch(e){} }, 4000);
             } else {
                 if (room.currentTurn === pIndex) advanceTurn(roomId, 1);
                 updateAll(roomId);
@@ -427,7 +431,7 @@ io.on('connection', (socket) => {
 
         let playCards = []; let tempHand = [...player.hand];
         for(let id of cardIds) { const c = tempHand.find(x => x.id === id); if(!c) return; playCards.push(c); }
-        const top = room.discardPile[room.discardPile.length - 1];
+        const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { value: '0', color: 'rojo' };
 
         const isAll15 = playCards.every(c => c.value === '1 y 1/2');
         if (isAll15) {
@@ -515,7 +519,7 @@ io.on('connection', (socket) => {
         let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
 
         if (!card) {
-            const top = room.discardPile[room.discardPile.length - 1];
+            const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null;
             if (top && top.id === data.cardId) card = top;
         }
         if(!card) return;
@@ -541,8 +545,7 @@ io.on('connection', (socket) => {
         
         const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator || player.hasLeft) return;
-        if (room.gameState === 'penalty_decision' && pIndex !== room.currentTurn) return;
-
+        
         if (room.pendingPenalty > 0 && room.resumeTurnFrom !== null && room.resumeTurnFrom !== undefined) {
             socket.emit('notification', '🚫 Castigo de duelo ineludible. Toca el mazo rojo para robar obligatoriamente.');
             return;
@@ -550,6 +553,7 @@ io.on('connection', (socket) => {
 
         let isLibreDiscard = false;
 
+        // EJECUCIÓN DEL COMBO LIBRE ALBEDRÍO (Independiente del color de la mesa)
         if (libreContext) {
             const lIdx = player.hand.findIndex(c => c.id === libreContext.libreId);
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
@@ -567,33 +571,28 @@ io.on('connection', (socket) => {
             io.to(target.id).emit('handUpdate', target.hand);
             io.to(roomId).emit('playSound', 'wild');
 
-            isLibreDiscard = true;
+            isLibreDiscard = true; // <--- ESTO APAGA LA RESTRICCIÓN DE COLOR
             
-            if (room.gameState === 'penalty_decision') {
-                room.gameState = 'playing';
-            }
-            
-            // Evaluamos si ganó gracias a esta jugada (Narrativa Punto 1)
-            if (player.hand.length === 1) { // 1 es la carta que va a descartar a continuación
+            if (player.hand.length === 1) { // 1 significa que solo le queda la carta de descarte actual
                  io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} usó Libre Albedrío, regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
             } else {
-                 if (room.gameState === 'penalty_decision') {
-                     io.to(roomId).emit('notification', `🛡️ ${player.name} usó LIBRE ALBEDRÍO para bloquear el castigo.`);
-                 } else {
-                     io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`);
-                 }
+                 io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`);
             }
         }
 
         let cardIndex = player.hand.findIndex(c => c.id === cardId); 
         let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
         if (!card && reviveTargetId) {
-             const top = room.discardPile[room.discardPile.length - 1]; if(top && top.value === 'GRACIA') card = top;
+             const topAux = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null; 
+             if(topAux && topAux.value === 'GRACIA') card = topAux;
         }
         if (!card) return;
-        const top = room.discardPile[room.discardPile.length - 1];
+        const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { value: '0', color: 'rojo' };
 
+        // REGLA ESTRICTA: FASE "DECISIÓN DE CASTIGO" (+12 o SALTEO SUPREMO)
         if (room.gameState === 'penalty_decision') {
+            if (pIndex !== room.currentTurn) return;
+            // Solo permitimos usar Gracia Divina. (Libre Albedrío NO está permitido aquí)
             if (card.value === 'GRACIA') {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
                 io.to(roomId).emit('playSound', 'divine');
@@ -603,11 +602,13 @@ io.on('connection', (socket) => {
                 checkUnoCheck(roomId, player);
                 if (player.hand.length === 0) { calculateAndFinishRound(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
-            } 
-            else if (card.value === 'LIBRE') { socket.emit('startLibreLogic', card.id); return; }
-            else { return; }
+            } else {
+                socket.emit('notification', '🚫 Frente a un castigo supremo, solo puedes usar GRACIA DIVINA o batirte a duelo.');
+                return; // Bloquea cualquier otra carta, incluyendo Libre Albedrío
+            }
         }
 
+        // DESCARTE Y VALIDACIÓN NORMAL
         if (cardIndex !== -1) {
             if (player.hand.length === 1) {
                 const isStrictNumber = /^[0-9]$/.test(card.value);
@@ -630,23 +631,26 @@ io.on('connection', (socket) => {
             }
 
             if (pIndex === room.currentTurn && !isSaff) {
-                if (room.pendingPenalty > 0) {
+                if (room.pendingPenalty > 0) { // Hay un castigo normal pendiente (+2 o +4)
                     if (card.value === 'SALTEO SUPREMO') {
                         socket.emit('notification', '🚫 SALTEO SUPREMO no puede usarse para defender castigos.'); return;
                     }
-                    if (card.value === 'GRACIA' || (card.value === 'LIBRE' && room.pendingSkip === 0)) { /* Pass */ }
-                    else {
+                    if (card.value === 'GRACIA' || (card.value === 'LIBRE' && room.pendingSkip === 0) || isLibreDiscard) { 
+                        // Permitido! (Libre Albedrío sí sirve contra +2 y +4)
+                    } else {
                         const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
                         const cardVal = getVal(card.value); const topVal = getVal(top.value);
                         if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Debes tirar un castigo igual/mayor, Gracia o Libre.`); return; }
                     }
-                } else {
+                } else { // Turno limpio (Sin castigos pendientes)
+                    // ACÁ OCURRE LA MAGIA DEL LIBRE ALBEDRÍO: si isLibreDiscard es TRUE, valid es TRUE automáticamente.
                     let valid = isLibreDiscard || (card.color === 'negro' || card.value === 'GRACIA' || card.color === room.activeColor || card.value === top.value);
-                    if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
+                    if (!valid) { socket.emit('notification', `❌ Carta inválida. Color o símbolo no coincide.`); return; }
                 }
             }
         }
 
+        // Activación de la ventana de Libre Albedrío
         if (room.pendingPenalty > 0 && card.value === 'LIBRE' && room.pendingSkip === 0 && cardIndex !== -1 && !isLibreDiscard) {
              socket.emit('startLibreLogic', card.id); return;
         }
@@ -924,97 +928,104 @@ function getDuelNarrative(attName, defName, att, def) {
 }
 
 function resolveDuelRound(roomId, isTimeout = false) {
-    const room = rooms[roomId];
-    let att = room.duelState.attackerChoice;
-    let def = room.duelState.defenderChoice;
-    let winner = 'tie';
+    try {
+        const room = rooms[roomId]; if (!room) return;
+        let att = room.duelState.attackerChoice;
+        let def = room.duelState.defenderChoice;
+        let winner = 'tie';
 
-    if (isTimeout) {
-        if (!att) {
-            winner = 'defender';
-            room.duelState.narrative = `⏳ ${room.duelState.defenderName} ganó la ronda porque ${room.duelState.attackerName} tardó mucho en elegir.`;
-        } else if (!def) {
-            winner = 'attacker';
-            room.duelState.narrative = `⏳ ${room.duelState.attackerName} ganó la ronda porque ${room.duelState.defenderName} tardó mucho en elegir.`;
+        if (isTimeout) {
+            if (!att) {
+                winner = 'defender';
+                room.duelState.narrative = `⏳ ${room.duelState.defenderName} ganó la ronda porque ${room.duelState.attackerName} tardó mucho en elegir.`;
+            } else if (!def) {
+                winner = 'attacker';
+                room.duelState.narrative = `⏳ ${room.duelState.attackerName} ganó la ronda porque ${room.duelState.defenderName} tardó mucho en elegir.`;
+            }
+        } else {
+            if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
+            else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
+            room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
         }
-    } else {
-        if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
-        else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
-        room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
-    }
-    
-    if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
-    
-    let winNameToHistory = 'Empate'; 
-    if(winner === 'attacker') winNameToHistory = room.duelState.attackerName; 
-    if(winner === 'defender') winNameToHistory = room.duelState.defenderName;
+        
+        if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
+        
+        let winNameToHistory = 'Empate'; 
+        if(winner === 'attacker') winNameToHistory = room.duelState.attackerName; 
+        if(winner === 'defender') winNameToHistory = room.duelState.defenderName;
 
-    room.duelState.history.push({ round: room.duelState.round, att: att || 'timeout', def: def || 'timeout', winnerName: winNameToHistory });
-    room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
-    
-    io.to(roomId).emit('playSound', 'soft');
-    
-    if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
-        setTimeout(() => finalizeDuel(roomId), 2000); 
-    } else { 
-        setTimeout(() => { 
-            if(rooms[roomId]) { 
-                room.duelState.round++; 
-                room.duelState.narrative = `Ronda ${room.duelState.round}: ${room.duelState.attackerName} elige arma...`; 
-                updateAll(roomId); 
-            } 
-        }, 3000); 
-    }
-    updateAll(roomId); 
+        room.duelState.history.push({ round: room.duelState.round, att: att || 'timeout', def: def || 'timeout', winnerName: winNameToHistory });
+        room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
+        
+        io.to(roomId).emit('playSound', 'soft');
+        
+        if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
+            setTimeout(() => finalizeDuel(roomId), 2000); 
+        } else { 
+            setTimeout(() => { 
+                try {
+                    if(rooms[roomId]) { 
+                        rooms[roomId].duelState.round++; 
+                        rooms[roomId].duelState.narrative = `Ronda ${rooms[roomId].duelState.round}: ${rooms[roomId].duelState.attackerName} elige arma...`; 
+                        updateAll(roomId); 
+                    } 
+                } catch(e){}
+            }, 3000); 
+        }
+        updateAll(roomId); 
+    } catch (e) { console.error("Error en resolveDuelRound:", e); }
 }
 
 function finalizeDuel(roomId) {
-    const room = rooms[roomId]; const att = room.players.find(p => p.uuid === room.duelState.attackerId); const def = room.players.find(p => p.uuid === room.duelState.defenderId);
-    if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
-    const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; const isPenaltyDuel = room.duelState.type === 'penalty';
+    try {
+        const room = rooms[roomId]; if (!room) return;
+        const att = room.players.find(p => p.uuid === room.duelState.attackerId); const def = room.players.find(p => p.uuid === room.duelState.defenderId);
+        if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
+        const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; const isPenaltyDuel = room.duelState.type === 'penalty';
 
-    if (attWins) { 
-        io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
-        if (!isPenaltyDuel) { 
-            eliminatePlayer(roomId, def.uuid); 
-            checkWinCondition(roomId); 
-            if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
-                room.gameState = 'playing';
-                room.currentTurn = room.players.indexOf(att);
-                advanceTurn(roomId, 1);
-                updateAll(roomId);
+        if (attWins) { 
+            io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
+            if (!isPenaltyDuel) { 
+                eliminatePlayer(roomId, def.uuid); 
+                checkWinCondition(roomId); 
+                if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
+                    room.gameState = 'playing';
+                    room.currentTurn = room.players.indexOf(att);
+                    advanceTurn(roomId, 1);
+                    updateAll(roomId);
+                }
+            } 
+            else { 
+                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); 
+                room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); 
             }
-        } 
-        else { 
-            io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); 
-            room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); 
+        } else { 
+            io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
+            if (!isPenaltyDuel) { 
+                io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`); 
+                room.pendingPenalty = 4; room.pendingSkip = 0; 
+                room.currentTurn = room.players.indexOf(att); 
+                room.resumeTurnFrom = room.players.indexOf(def); 
+                room.gameState = 'playing'; updateAll(roomId); 
+            } 
+            else { 
+                io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`); 
+                room.pendingPenalty = 0; room.pendingSkip = 0; 
+                room.players.forEach(p => p.hasDrawn = false); 
+                room.currentTurn = room.players.indexOf(att); 
+                room.pendingPenalty = 4; room.pendingSkip = 0; 
+                room.resumeTurnFrom = room.players.indexOf(def); 
+                room.gameState = 'playing'; updateAll(roomId); 
+            }
         }
-    } else { 
-        io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
-        if (!isPenaltyDuel) { 
-            io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`); 
-            room.pendingPenalty = 4; room.pendingSkip = 0; 
-            room.currentTurn = room.players.indexOf(att); 
-            room.resumeTurnFrom = room.players.indexOf(def); 
-            room.gameState = 'playing'; updateAll(roomId); 
-        } 
-        else { 
-            io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`); 
-            room.pendingPenalty = 0; room.pendingSkip = 0; 
-            room.players.forEach(p => p.hasDrawn = false); 
-            room.currentTurn = room.players.indexOf(att); 
-            room.pendingPenalty = 4; room.pendingSkip = 0; 
-            room.resumeTurnFrom = room.players.indexOf(def); 
-            room.gameState = 'playing'; updateAll(roomId); 
-        }
-    }
+    } catch (e) { console.error("Error en finalizeDuel:", e); }
 }
 
 function eliminatePlayer(roomId, uuid) { const room = rooms[roomId]; if(!room) return; const p = room.players.find(p => p.uuid === uuid); if (p) { p.isDead = true; p.isSpectator = true; } }
-function getAlivePlayersCount(roomId) { return rooms[roomId].players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft).length; }
+function getAlivePlayersCount(roomId) { const room = rooms[roomId]; if(!room) return 0; return room.players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft).length; }
 
 function getNextPlayerIndex(roomId, step) {
-    const room = rooms[roomId]; let current = room.currentTurn;
+    const room = rooms[roomId]; if(!room) return 0; let current = room.currentTurn;
     for(let i=0; i<room.players.length; i++) {
         current = (current + room.direction + room.players.length) % room.players.length;
         if(!room.players[current].isDead && !room.players[current].isSpectator && !room.players[current].hasLeft) return current;
@@ -1023,7 +1034,7 @@ function getNextPlayerIndex(roomId, step) {
 }
 
 function advanceTurn(roomId, steps) {
-    const room = rooms[roomId]; if (room.players.length === 0) return;
+    const room = rooms[roomId]; if (!room || room.players.length === 0) return;
     if (getAlivePlayersCount(roomId) <= 1) return; 
     
     room.players.forEach(p => p.hasDrawn = false);
@@ -1047,7 +1058,7 @@ function advanceTurn(roomId, steps) {
 }
 
 function startCountdown(roomId) {
-    const room = rooms[roomId]; if (room.players.length < 2) return;
+    const room = rooms[roomId]; if (!room || room.players.length < 2) return;
     room.gameState = 'counting'; room.resumeTurnFrom = null; createDeck(roomId);
     let safeCard = room.deck.pop();
     while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
@@ -1092,7 +1103,7 @@ function startCountdown(roomId) {
 }
 
 function drawCards(roomId, pid, n) { 
-    const room = rooms[roomId]; if (pid < 0 || pid >= room.players.length) return; 
+    const room = rooms[roomId]; if (!room || pid < 0 || pid >= room.players.length) return; 
     for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); if (room.deck.length > 0) room.players[pid].hand.push(room.deck.pop()); } 
     checkUnoCheck(roomId, room.players[pid]);
 }
@@ -1138,43 +1149,44 @@ function calculateAndFinishRound(roomId, winner) {
             io.to(roomId).emit('playSound', 'win');
 
             const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 3000;
-            setTimeout(() => { if(rooms[roomId]) resetRound(roomId); }, animationDelay);
+            setTimeout(() => { try { if(rooms[roomId]) resetRound(roomId); } catch(e){} }, animationDelay);
         }
-    } catch(e) { console.error("Error en calc round:", e); if(rooms[roomId]) resetRound(roomId); }
+    } catch(e) { console.error("Error en calc round:", e); try { if(rooms[roomId]) resetRound(roomId); } catch(err){} }
 }
 
 function resetRound(roomId) {
-    const room = rooms[roomId]; if(!room) return;
-    room.resumeTurnFrom = null;
-    room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
+    try {
+        const room = rooms[roomId]; if(!room) return;
+        room.resumeTurnFrom = null;
+        room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
 
-    let nextStarter = room.roundStarterIndex;
-    let safeLoop = 0;
-    while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) {
-        nextStarter = (nextStarter + 1) % room.players.length;
-        safeLoop++;
-    }
-    room.roundStarterIndex = nextStarter;
+        let nextStarter = room.roundStarterIndex;
+        let safeLoop = 0;
+        while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) {
+            nextStarter = (nextStarter + 1) % room.players.length;
+            safeLoop++;
+        }
+        room.roundStarterIndex = nextStarter;
 
-    createDeck(roomId);
-    let safeCard = room.deck.pop();
-    while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
-        room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
-    }
-    room.discardPile = [safeCard]; room.activeColor = safeCard.color; 
-    
-    room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.gameState = 'playing';
+        createDeck(roomId);
+        let safeCard = room.deck.pop();
+        while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
+            room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
+        }
+        room.discardPile = [safeCard]; room.activeColor = safeCard.color; 
+        
+        room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.gameState = 'playing';
 
-    room.players.forEach(p => { 
-        if(p.hasLeft) return;
-        p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; p.missedTurns = 0;
-        for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); 
-    });
+        room.players.forEach(p => { 
+            if(p.hasLeft) return;
+            p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; p.missedTurns = 0;
+            for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); 
+        });
 
-    startCountdown(roomId);
+        startCountdown(roomId);
+    } catch (e) { console.error("Error en resetRound:", e); }
 }
 
-// SOLUCIÓN PUNTO 4: FALSO ABANDONO EN DUELOS DE 2 JUGADORES
 function checkWinCondition(roomId) {
     const room = rooms[roomId];
     if (!room) return;
@@ -1187,7 +1199,6 @@ function checkWinCondition(roomId) {
     const presentPlayers = room.players.filter(p => !p.isSpectator && !p.hasLeft);
     const alivePlayers = presentPlayers.filter(p => !p.isDead);
 
-    // Si literalmente todos cerraron la ventana excepto uno
     if (presentPlayers.length <= 1) {
         const winner = presentPlayers[0] || room.players.find(p => !p.hasLeft);
         if (winner) {
@@ -1207,7 +1218,6 @@ function checkWinCondition(roomId) {
             }, 3000);
         }
     } 
-    // Si la gente sigue en la sala, pero se murieron por duelo (Victoria válida de ronda)
     else if (alivePlayers.length === 1 && presentPlayers.length > 1) {
         const roundWinner = alivePlayers[0];
         calculateAndFinishRound(roomId, roundWinner);
@@ -1708,6 +1718,7 @@ app.get('/', (req, res) => {
             document.getElementById('global-leave-btn').style.display = 'none';
             document.getElementById('lobby-users').innerHTML = ''; 
             document.getElementById('players-zone').innerHTML = '';
+            document.getElementById('hand-zone').innerHTML = '';
         });
 
         // Eventos de Verificación AFK

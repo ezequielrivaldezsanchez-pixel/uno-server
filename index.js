@@ -137,7 +137,7 @@ function getNextPlayerFrom(roomId, startIdx) {
     return current;
 }
 
-// EXPULSIÓN POR INACTIVIDAD EXTREMA (Reemplaza a CowardKick)
+// EXPULSIÓN POR INACTIVIDAD EXTREMA
 function forceKickAFK(roomId, uuid) {
     const room = rooms[roomId]; if(!room) return;
     const pIndex = room.players.findIndex(p => p.uuid === uuid);
@@ -205,7 +205,7 @@ function handleTimeout(roomId, targetUuid, stateContext) {
     } 
 }
 
-// SISTEMA MAESTRO DE TEMPORIZADORES (Auditoría: Separación estricta de responsabilidades)
+// SISTEMA MAESTRO DE TEMPORIZADORES
 function manageTimers(roomId) {
     const room = rooms[roomId]; if (!room) return;
     
@@ -216,7 +216,7 @@ function manageTimers(roomId) {
     let targetUuid = null;
     let stateCtx = '';
     
-    // 1. Prioridad Absoluta: Decisiones de Riesgo (15s, resuelven la jugada, NO expulsan)
+    // 1. Prioridad Absoluta: Decisiones de Riesgo (15s)
     if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
         targetUuid = room.duelState.defenderId; stateCtx = room.gameState;
     } else if (room.gameState === 'dueling') {
@@ -231,7 +231,7 @@ function manageTimers(roomId) {
         return; 
     }
 
-    // 2. Temporizador Normal de Turno (Inactividad / AFK) (20s de gracia + 10s de alerta visual)
+    // 2. Temporizador Normal de Turno (Inactividad / AFK)
     if (room.gameState === 'playing' && getAlivePlayersCount(roomId) > 1) {
         const currentPlayer = room.players[room.currentTurn];
         if (currentPlayer && !currentPlayer.isDead && !currentPlayer.isSpectator && !currentPlayer.hasLeft) {
@@ -319,11 +319,10 @@ io.on('connection', (socket) => {
         updateAll(roomId);
     }));
 
-    // El jugador confirma que no está AFK
     socket.on('imHere', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         touchRoom(roomId);
-        manageTimers(roomId); // Reinicia los timers dándole otros 20s
+        manageTimers(roomId);
     }));
     
     socket.on('requestSort', safe(() => {
@@ -338,7 +337,7 @@ io.on('connection', (socket) => {
             return vA - vB;
         });
         io.to(p.id).emit('handUpdate', p.hand); socket.emit('notification', 'Cartas ordenadas.');
-        manageTimers(roomId); // Cualquier interacción resetea el AFK
+        manageTimers(roomId); 
     }));
 
     socket.on('kickPlayer', safe((targetId) => {
@@ -851,7 +850,7 @@ io.on('connection', (socket) => {
             const msg = { name: p.name, text }; room.chatHistory.push(msg);
             if(room.chatHistory.length > 50) room.chatHistory.shift();
             io.to(roomId).emit('chatMessage', msg); 
-            manageTimers(roomId); // Interactuar en chat resetea el AFK
+            manageTimers(roomId);
         }
     }));
 
@@ -925,7 +924,7 @@ function getDuelNarrative(attName, defName, att, def) {
     return "Resultado confuso...";
 }
 
-// RESOLUCIÓN DE DUELO: Ahora acepta ganar por inactividad
+// RESOLUCIÓN DE DUELO
 function resolveDuelRound(roomId, isTimeout = false) {
     const room = rooms[roomId];
     let att = room.duelState.attackerChoice;
@@ -1840,13 +1839,13 @@ app.get('/', (req, res) => {
                     
                     if (s.state === 'rip_decision') { 
                         document.getElementById('rip-title').innerText = "💀 RIP 💀"; 
-                        msgDiv.innerHTML = `<span style="color:gold;">${s.duelInfo.attackerName}</span> te retó a Duelo usando un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid gray; background:black; padding:2px 8px; border-radius:5px;">RIP</span>`; 
+                        msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te retó a Duelo usando un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid gray; background:black; padding:2px 8px; border-radius:5px;">RIP</span>'; 
                         duelWarn.style.display = 'none'; btnAccept.style.display = 'none'; btnSurrender.style.display = 'inline-block'; btnDuel.style.display = 'inline-block'; 
                     } 
                     else { 
                         document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; 
                         const trig = s.duelInfo.triggerCard || "Castigo Supremo";
-                        msgDiv.innerHTML = `<span style="color:gold;">${s.duelInfo.attackerName}</span> te arrojó un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid red; background:black; padding:2px 8px; border-radius:5px;">${trig}</span>.<br><br>¿Aceptás el castigo o te batís a duelo para intentar salvarte?`;
+                        msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te arrojó un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid red; background:black; padding:2px 8px; border-radius:5px;">' + trig + '</span>.<br><br>¿Aceptás el castigo o te batís a duelo para intentar salvarte?';
                         duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; 
                     }
                 } else { 

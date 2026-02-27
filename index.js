@@ -127,16 +127,6 @@ const safe = (fn) => {
     return (...args) => { try { fn(...args); } catch (err) { console.error("Socket Error Prevenido:", err); } };
 };
 
-function getNextPlayerFrom(roomId, startIdx) {
-    const room = rooms[roomId];
-    let current = startIdx;
-    for(let i=0; i<room.players.length; i++) {
-        current = (current + room.direction + room.players.length) % room.players.length;
-        if(!room.players[current].isDead && !room.players[current].isSpectator && !room.players[current].hasLeft) return current;
-    }
-    return current;
-}
-
 // EXPULSIÓN POR INACTIVIDAD EXTREMA
 function forceKickAFK(roomId, uuid) {
     const room = rooms[roomId]; if(!room) return;
@@ -205,7 +195,7 @@ function handleTimeout(roomId, targetUuid, stateContext) {
     } 
 }
 
-// SISTEMA MAESTRO DE TEMPORIZADORES
+// SISTEMA MAESTRO DE TEMPORIZADORES (Duelos a 20s)
 function manageTimers(roomId) {
     const room = rooms[roomId]; if (!room) return;
     
@@ -216,7 +206,7 @@ function manageTimers(roomId) {
     let targetUuid = null;
     let stateCtx = '';
     
-    // 1. Prioridad Absoluta: Decisiones de Riesgo (15s)
+    // 1. Prioridad Absoluta: Decisiones de Riesgo (AHORA 20 SEGUNDOS)
     if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
         targetUuid = room.duelState.defenderId; stateCtx = room.gameState;
     } else if (room.gameState === 'dueling') {
@@ -224,10 +214,10 @@ function manageTimers(roomId) {
     }
 
     if (targetUuid) {
-        room.timerEndsAt = Date.now() + 15000;
+        room.timerEndsAt = Date.now() + 20000;
         room.actionTimer = setTimeout(() => {
             handleTimeout(roomId, targetUuid, stateCtx);
-        }, 15000);
+        }, 20000);
         return; 
     }
 
@@ -460,7 +450,7 @@ io.on('connection', (socket) => {
             room.activeColor = finalColor; 
 
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
-            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO de ${player.name}! Formó un ${targetVal} ${finalColor}.`); 
+            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó ${count} cartas "1 y 1/2" y formó un ${targetVal}.`); 
             io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
             
@@ -567,14 +557,7 @@ io.on('connection', (socket) => {
             if (lIdx === -1 || gIdx === -1 || !target) return;
 
             room.pendingPenalty = 0; room.pendingSkip = 0;
-            if (room.gameState === 'penalty_decision') {
-                room.gameState = 'playing';
-                io.to(roomId).emit('notification', `🛡️ ${player.name} usó LIBRE ALBEDRÍO para bloquear el castigo.`);
-            } else {
-                io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO.`);
-            }
-            io.to(roomId).emit('playSound', 'wild');
-
+            
             player.hand.splice(lIdx, 1);
             room.discardPile.push({ color: 'negro', value: 'LIBRE', type: 'special', id: libreContext.libreId });
 
@@ -582,8 +565,24 @@ io.on('connection', (socket) => {
             const giftCard = player.hand.splice(realGIdx, 1)[0];
             target.hand.push(giftCard);
             io.to(target.id).emit('handUpdate', target.hand);
+            io.to(roomId).emit('playSound', 'wild');
 
             isLibreDiscard = true;
+            
+            if (room.gameState === 'penalty_decision') {
+                room.gameState = 'playing';
+            }
+            
+            // Evaluamos si ganó gracias a esta jugada (Narrativa Punto 1)
+            if (player.hand.length === 1) { // 1 es la carta que va a descartar a continuación
+                 io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} usó Libre Albedrío, regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
+            } else {
+                 if (room.gameState === 'penalty_decision') {
+                     io.to(roomId).emit('notification', `🛡️ ${player.name} usó LIBRE ALBEDRÍO para bloquear el castigo.`);
+                 } else {
+                     io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`);
+                 }
+            }
         }
 
         let cardIndex = player.hand.findIndex(c => c.id === cardId); 
@@ -626,7 +625,7 @@ io.on('connection', (socket) => {
                     if (room.pendingPenalty > 0) return; 
                     if (player.hand.length === 1) { socket.emit('notification', '🚫 Prohibido ganar con SAFF.'); return; }
                     isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
-                    io.to(roomId).emit('notification', `⚡ ¡${player.name} hizo SAFF!`); io.to(roomId).emit('playSound', 'saff');
+                    io.to(roomId).emit('notification', `⚡ ¡${player.name} robó el turno haciendo S.A.F.F. con una carta idéntica!`); io.to(roomId).emit('playSound', 'saff');
                 } else { return; }
             }
 
@@ -924,7 +923,6 @@ function getDuelNarrative(attName, defName, att, def) {
     return "Resultado confuso...";
 }
 
-// RESOLUCIÓN DE DUELO
 function resolveDuelRound(roomId, isTimeout = false) {
     const room = rooms[roomId];
     let att = room.duelState.attackerChoice;
@@ -980,7 +978,7 @@ function finalizeDuel(roomId) {
         if (!isPenaltyDuel) { 
             eliminatePlayer(roomId, def.uuid); 
             checkWinCondition(roomId); 
-            if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
+            if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
                 room.gameState = 'playing';
                 room.currentTurn = room.players.indexOf(att);
                 advanceTurn(roomId, 1);
@@ -1176,6 +1174,7 @@ function resetRound(roomId) {
     startCountdown(roomId);
 }
 
+// SOLUCIÓN PUNTO 4: FALSO ABANDONO EN DUELOS DE 2 JUGADORES
 function checkWinCondition(roomId) {
     const room = rooms[roomId];
     if (!room) return;
@@ -1185,11 +1184,14 @@ function checkWinCondition(roomId) {
         return;
     }
 
-    if (room.players.length > 1 && getAlivePlayersCount(roomId) <= 1) { 
-        const winner = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft); 
+    const presentPlayers = room.players.filter(p => !p.isSpectator && !p.hasLeft);
+    const alivePlayers = presentPlayers.filter(p => !p.isDead);
+
+    // Si literalmente todos cerraron la ventana excepto uno
+    if (presentPlayers.length <= 1) {
+        const winner = presentPlayers[0] || room.players.find(p => !p.hasLeft);
         if (winner) {
-            room.gameState = 'game_over'; 
-            
+            room.gameState = 'game_over';
             setTimeout(() => {
                 if (!rooms[roomId]) return;
                 io.to(roomId).emit('gameOver', { 
@@ -1203,8 +1205,13 @@ function checkWinCondition(roomId) {
                 if (room.afkTimer) clearTimeout(room.afkTimer);
                 setTimeout(() => { delete rooms[roomId]; }, 10000);
             }, 3000);
-        } 
+        }
     } 
+    // Si la gente sigue en la sala, pero se murieron por duelo (Victoria válida de ronda)
+    else if (alivePlayers.length === 1 && presentPlayers.length > 1) {
+        const roundWinner = alivePlayers[0];
+        calculateAndFinishRound(roomId, roundWinner);
+    }
 }
 
 function updateAll(roomId) {
@@ -1619,6 +1626,23 @@ app.get('/', (req, res) => {
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
+        // --- PREVENCIÓN DE AFK POR INTERACCIÓN UI ---
+        let lastInteractionTime = Date.now();
+        function reportActivity() {
+            const now = Date.now();
+            if (now - lastInteractionTime > 5000) { 
+                lastInteractionTime = now;
+                if (document.body.classList.contains('playing-state')) {
+                    socket.emit('imHere'); 
+                }
+            }
+        }
+        document.addEventListener('mousemove', reportActivity);
+        document.addEventListener('touchstart', reportActivity);
+        document.addEventListener('click', reportActivity);
+        document.addEventListener('keydown', reportActivity);
+        // ------------------------------------------
+
         function forceCloseModals() {
             document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none');
             document.getElementById('chat-win').style.display = 'none';

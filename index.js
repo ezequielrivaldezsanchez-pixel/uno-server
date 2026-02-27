@@ -54,12 +54,13 @@ function initRoom(roomId) {
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
             attackerChoice: null, defenderChoice: null, history: [], turn: null, narrative: '',
-            type: 'rip', originalPenalty: 0, originalSkip: 0
+            type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: null
         },
         chatHistory: [],
         lastActivity: Date.now(),
         actionTimer: null,
-        resumeTurnFrom: null // MARCADOR DE SALTO POST-DUELO
+        timerEndsAt: null,
+        resumeTurnFrom: null
     };
 }
 
@@ -132,76 +133,60 @@ function getNextPlayerFrom(roomId, startIdx) {
     return current;
 }
 
-function executeCowardKick(roomId, targetUuid) {
+// NUEVO SISTEMA DE AUTO-RESOLUCIÓN EN LUGAR DE EXPULSIÓN
+function handleTimeout(roomId, targetUuid, stateContext) {
     const room = rooms[roomId]; if (!room) return;
     const targetIdx = room.players.findIndex(p => p.uuid === targetUuid);
     if (targetIdx === -1) return;
-    const player = room.players[targetIdx];
-    if (player.hasLeft) return; 
-
-    player.isDead = true; player.isSpectator = true; player.hasLeft = true;
-    io.to(roomId).emit('notification', `⚠️ ${player.name} fue expulsado de la partida por no asumir sus responsabilidades como jugador.`);
+    const target = room.players[targetIdx];
     
-    const socketToKick = io.sockets.sockets.get(player.id);
-    if (socketToKick) { socketToKick.leave(roomId); socketToKick.emit('requireLogin'); }
-
-    if (player.isAdmin) {
-        player.isAdmin = false;
-        const nextAdmin = room.players.find(p => !p.isDead && !p.isSpectator && !p.hasLeft);
-        if (nextAdmin) {
-            nextAdmin.isAdmin = true;
-            io.to(roomId).emit('notification', `👑 ${nextAdmin.name} es el nuevo anfitrión.`);
-        }
-    }
-
-    if (getAlivePlayersCount(roomId) <= 1) {
+    if (stateContext === 'penalty_decision' && room.gameState === 'penalty_decision') {
+        io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} perdió la chance de batirse a duelo y recibe el castigo.`);
+        room.gameState = 'playing';
+        updateAll(roomId);
+    } 
+    else if (stateContext === 'rip_decision' && room.gameState === 'rip_decision') {
+        io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} se quedó paralizado por el miedo y fue eliminado.`);
+        eliminatePlayer(roomId, targetUuid);
         checkWinCondition(roomId);
-        return;
-    }
-
-    const isPenaltyDuel = room.duelState.type === 'penalty';
-
-    if (room.gameState === 'playing' && room.pendingPenalty > 0) {
-        if (room.currentTurn === targetIdx) {
-            const nextIdx = getNextPlayerFrom(roomId, targetIdx);
-            room.currentTurn = nextIdx;
-            const nextPlayer = room.players[nextIdx];
-            io.to(roomId).emit('notification', `🩸 ¡El castigo pendiente de ${player.name} se transfiere a ${nextPlayer.name}!`);
+        if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
+            room.gameState = 'playing';
+            room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
+            advanceTurn(roomId, 1);
+            updateAll(roomId);
         }
-    } else if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
-        if (targetUuid === room.duelState.defenderId) {
-            const nextIdx = getNextPlayerFrom(roomId, targetIdx);
-            const nextPlayer = room.players[nextIdx];
-            room.duelState.defenderId = nextPlayer.uuid;
-            room.duelState.defenderName = nextPlayer.name;
-            if (room.currentTurn === targetIdx) room.currentTurn = nextIdx;
-            room.duelState.narrative = `¡${player.name} huyó! 🩸 ${nextPlayer.name} hereda el duelo.`;
-        } else if (targetUuid === room.duelState.attackerId) {
-            room.gameState = 'playing'; room.pendingPenalty = 0; room.pendingSkip = 0;
-            room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.defenderId);
-        }
-    } else if (room.gameState === 'dueling') {
+    } 
+    else if (stateContext === 'dueling' && room.gameState === 'dueling') {
+        const choices = ['fuego', 'hielo', 'agua'];
+        const rc = choices[Math.floor(Math.random() * choices.length)];
         if (targetUuid === room.duelState.attackerId) {
-            io.to(roomId).emit('notification', `¡${player.name} huyó! ${room.duelState.defenderName} se salva.`);
-            room.gameState = 'playing'; room.pendingPenalty = 0; room.pendingSkip = 0;
-            room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.defenderId);
-        } else {
-            if (isPenaltyDuel) {
-                const nextIdx = getNextPlayerFrom(roomId, targetIdx);
-                const nextPlayer = room.players[nextIdx];
-                room.pendingPenalty += 4; 
-                room.gameState = 'playing';
-                room.currentTurn = nextIdx;
-                io.to(roomId).emit('notification', `¡${player.name} huyó del duelo! ${nextPlayer.name} hereda TODO el castigo.`);
-            } else {
-                room.gameState = 'playing';
-                room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
-                advanceTurn(roomId, 1);
-            }
+            room.duelState.attackerChoice = rc;
+            room.duelState.turn = room.duelState.defenderId;
+            room.duelState.narrative = `⏳ ${target.name} tardó demasiado. Ataque elegido al azar... Turno de ${room.duelState.defenderName}.`;
+        } else if (targetUuid === room.duelState.defenderId) {
+            room.duelState.defenderChoice = rc;
+            io.to(roomId).emit('notification', `⏳ ${target.name} tardó demasiado. Defensa elegida al azar.`);
+            resolveDuelRound(roomId);
+            return;
         }
+        updateAll(roomId);
+    } 
+    else if (stateContext === 'playing_penalty' && room.gameState === 'playing' && room.pendingPenalty > 0 && room.currentTurn === targetIdx) {
+        io.to(roomId).emit('notification', `⏳ Tiempo agotado. El sistema hizo que ${target.name} recoja sus ${room.pendingPenalty} cartas de castigo automáticamente.`);
+        const p = room.pendingPenalty;
+        for(let i=0; i<p; i++) { drawCards(roomId, targetIdx, 1); }
+        room.pendingPenalty = 0;
+        if (room.pendingSkip > 0) {
+            target.missedTurns += room.pendingSkip;
+            room.pendingSkip = 0;
+        }
+        if (room.resumeTurnFrom !== null && room.resumeTurnFrom !== undefined) {
+            room.currentTurn = room.resumeTurnFrom;
+            room.resumeTurnFrom = null;
+        }
+        advanceTurn(roomId, 1);
+        updateAll(roomId);
     }
-
-    updateAll(roomId);
 }
 
 function checkPenaltyTimer(roomId) {
@@ -209,18 +194,23 @@ function checkPenaltyTimer(roomId) {
     if (room.actionTimer) { clearTimeout(room.actionTimer); room.actionTimer = null; }
 
     let targetUuid = null;
+    let stateCtx = '';
+    
     if (room.gameState === 'playing' && room.pendingPenalty > 0) {
-        if (room.players[room.currentTurn]) targetUuid = room.players[room.currentTurn].uuid;
+        if (room.players[room.currentTurn]) { targetUuid = room.players[room.currentTurn].uuid; stateCtx = 'playing_penalty'; }
     } else if (room.gameState === 'rip_decision' || room.gameState === 'penalty_decision') {
-        targetUuid = room.duelState.defenderId;
+        targetUuid = room.duelState.defenderId; stateCtx = room.gameState;
     } else if (room.gameState === 'dueling') {
-        targetUuid = room.duelState.turn;
+        targetUuid = room.duelState.turn; stateCtx = 'dueling';
     }
 
     if (targetUuid) {
+        room.timerEndsAt = Date.now() + 15000; // 15 SEGUNDOS PARA TOMAR LA DECISIÓN
         room.actionTimer = setTimeout(() => {
-            executeCowardKick(roomId, targetUuid);
-        }, 10000);
+            handleTimeout(roomId, targetUuid, stateCtx);
+        }, 15000);
+    } else {
+        room.timerEndsAt = null;
     }
 }
 
@@ -680,7 +670,7 @@ io.on('connection', (socket) => {
             room.duelState = { 
                 attackerId: attacker.uuid, defenderId: defender.uuid, attackerName: attacker.name, defenderName: defender.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0 
+                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
             };
             updateAll(roomId); return;
         }
@@ -869,7 +859,7 @@ function applyCardEffect(roomId, player, card, chosenColor) {
             room.duelState = { 
                 attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty', originalPenalty: room.pendingPenalty, originalSkip: room.pendingSkip 
+                turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty', originalPenalty: room.pendingPenalty, originalSkip: room.pendingSkip, triggerCard: card.value 
             };
             room.currentTurn = nextPIdx; updateAll(roomId); return;
         }
@@ -1145,7 +1135,7 @@ function updateAll(roomId) {
         const room = rooms[roomId]; if(!room) return;
         let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
         const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
-        const duelInfo = (['dueling','rip_decision','penalty_decision'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type } : null;
+        const duelInfo = (['dueling','rip_decision','penalty_decision'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type, triggerCard: room.duelState.triggerCard } : null;
 
         const leaderboard = Object.keys(room.scores).map(uid => {
             const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); 
@@ -1157,7 +1147,7 @@ function updateAll(roomId) {
         const pack = { state: room.gameState, roomId: roomId, players: activePlayers.map((p) => {
             const pIndex = room.players.findIndex(x => x.uuid === p.uuid);
             return { name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && pIndex === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected };
-        }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard };
+        }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard, timerEndsAt: room.timerEndsAt };
         
         activePlayers.forEach(p => {
             if(p.isConnected) {
@@ -1484,6 +1474,7 @@ app.get('/', (req, res) => {
     <div id="rip-screen" class="screen">
         <h1 style="color:red;" id="rip-title">💀 RIP 💀</h1>
         <h3 id="rip-msg-custom" style="text-align:center; padding:10px;"></h3>
+        <div id="decision-timer" style="font-size: 60px; color: #e74c3c; font-weight: bold; margin: 5px 0; text-shadow: 0 0 15px red;">15</div>
         <button id="btn-accept-penalty" onclick="ripResp('accept_penalty')" class="btn-main" style="background:#34495e; display:none;">ACEPTAR CASTIGO</button>
         <button id="btn-duel-start" onclick="ripResp('duel')" class="btn-main" style="background:red; border:3px solid gold;">BATIRSE A DUELO</button>
         <button id="btn-surrender" onclick="ripResp('surrender')" class="btn-main">RENDIRSE</button>
@@ -1493,6 +1484,7 @@ app.get('/', (req, res) => {
 
     <div id="duel-screen" class="screen">
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
+        <div id="duel-timer" style="font-size: 40px; color: #e74c3c; font-weight: bold; margin-bottom: 5px; text-shadow: 0 0 10px red;">15</div>
         <h3 id="duel-narrative">Cargando duelo...</h3>
         <h2 id="duel-names">... vs ...</h2>
         <h3 id="duel-sc">0 - 0</h3>
@@ -1539,6 +1531,7 @@ app.get('/', (req, res) => {
         let pressTimer;
         let pendingColorForRevive = null;
         let pendingLibreContext = null; 
+        let clientTimerInterval = null; // Para el cronómetro visual
 
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
@@ -1573,24 +1566,22 @@ app.get('/', (req, res) => {
 
             const screenW = window.innerWidth;
             const btnSize = 50;
-            let gap = 15; // Espacio normal entre botones
+            let gap = 15; 
             
-            // Acortamos el espacio si la pantalla es muy fina
             if (screenW < 360) gap = 8;
             if (screenW < 330) gap = 4;
 
             const totalW = (btnSize * 5) + (gap * 4);
-            let startLeft = (screenW - totalW) / 2; // Calcula para centrar el bloque exacto
+            let startLeft = (screenW - totalW) / 2; 
 
             buttons.forEach((btn, idx) => {
                 if (btn) {
                     btn.style.top = baseTop + 'px';
                     btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px';
-                    btn.style.right = 'auto'; // Limpia cualquier regla antigua
+                    btn.style.right = 'auto'; 
                 }
             });
 
-            // Reacomoda los modales y alertas justo debajo de la línea de botones
             const lowerElements = ['uno-menu', 'chat-win'];
             lowerElements.forEach(function(id) {
                 const el = document.getElementById(id);
@@ -1702,6 +1693,23 @@ app.get('/', (req, res) => {
                 }).join('');
             }
 
+            // CRONÓMETRO VISUAL
+            if (clientTimerInterval) { clearInterval(clientTimerInterval); clientTimerInterval = null; }
+            document.querySelectorAll('#decision-timer, #duel-timer').forEach(el => el.innerText = '');
+
+            if (s.timerEndsAt) {
+                const updateTimer = () => {
+                    let remaining = Math.ceil((s.timerEndsAt - Date.now()) / 1000);
+                    if (remaining < 0) remaining = 0;
+                    const ripTimerEl = document.getElementById('decision-timer');
+                    const duelTimerEl = document.getElementById('duel-timer');
+                    if (ripTimerEl) ripTimerEl.innerText = remaining;
+                    if (duelTimerEl) duelTimerEl.innerText = remaining;
+                };
+                updateTimer(); // Ejecuta al instante para evitar parpadeos
+                clientTimerInterval = setInterval(updateTimer, 250);
+            }
+
             const me = s.players.find(p=>p.uuid===myUUID); const amITurning = me && me.isTurn;
             
             if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
@@ -1740,8 +1748,18 @@ app.get('/', (req, res) => {
                 if(s.duelInfo.defenderId === myUUID) { 
                     document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; 
                     const msgDiv = document.getElementById('rip-msg-custom'); const duelWarn = document.getElementById('duel-warning'); const btnAccept = document.getElementById('btn-accept-penalty'); const btnSurrender = document.getElementById('btn-surrender'); const btnDuel = document.getElementById('btn-duel-start');
-                    if (s.state === 'rip_decision') { document.getElementById('rip-title').innerText = "💀 RIP 💀"; msgDiv.innerText = s.duelInfo.attackerName + " te retó a Duelo."; duelWarn.style.display = 'none'; btnAccept.style.display = 'none'; btnSurrender.style.display = 'inline-block'; btnDuel.style.display = 'inline-block'; } 
-                    else { document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; msgDiv.innerText = "Castigo de " + s.duelInfo.attackerName + "."; duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; }
+                    
+                    if (s.state === 'rip_decision') { 
+                        document.getElementById('rip-title').innerText = "💀 RIP 💀"; 
+                        msgDiv.innerHTML = `<span style="color:gold;">${s.duelInfo.attackerName}</span> te retó a Duelo usando un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid gray; background:black; padding:2px 8px; border-radius:5px;">RIP</span>`; 
+                        duelWarn.style.display = 'none'; btnAccept.style.display = 'none'; btnSurrender.style.display = 'inline-block'; btnDuel.style.display = 'inline-block'; 
+                    } 
+                    else { 
+                        document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; 
+                        const trig = s.duelInfo.triggerCard || "Castigo Supremo";
+                        msgDiv.innerHTML = `<span style="color:gold;">${s.duelInfo.attackerName}</span> te arrojó un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid red; background:black; padding:2px 8px; border-radius:5px;">${trig}</span>.<br><br>¿Aceptás el castigo o te batís a duelo para intentar salvarte?`;
+                        duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; 
+                    }
                 } else { 
                     document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; 
@@ -1872,12 +1890,12 @@ app.get('/', (req, res) => {
             
             if (id === 'lobby') {
                 const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; // Reposiciona en la esquina superior para el lobby
+                cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; 
                 const lv = document.getElementById('global-leave-btn');
                 if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
             } else if (id === 'game-area') {
                 const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); // Alinea horizontalmente al entrar al juego
+                cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); 
             }
         }
         

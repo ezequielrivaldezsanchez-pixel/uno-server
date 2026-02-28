@@ -553,7 +553,7 @@ io.on('connection', (socket) => {
 
         let isLibreDiscard = false;
 
-        // EJECUCIÓN DEL COMBO LIBRE ALBEDRÍO (Independiente del color de la mesa)
+        // EJECUCIÓN DEL COMBO LIBRE ALBEDRÍO
         if (libreContext) {
             const lIdx = player.hand.findIndex(c => c.id === libreContext.libreId);
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
@@ -571,9 +571,9 @@ io.on('connection', (socket) => {
             io.to(target.id).emit('handUpdate', target.hand);
             io.to(roomId).emit('playSound', 'wild');
 
-            isLibreDiscard = true; // <--- ESTO APAGA LA RESTRICCIÓN DE COLOR
+            isLibreDiscard = true; 
             
-            if (player.hand.length === 1) { // 1 significa que solo le queda la carta de descarte actual
+            if (player.hand.length === 1) { 
                  io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} usó Libre Albedrío, regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
             } else {
                  io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`);
@@ -589,10 +589,8 @@ io.on('connection', (socket) => {
         if (!card) return;
         const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { value: '0', color: 'rojo' };
 
-        // REGLA ESTRICTA: FASE "DECISIÓN DE CASTIGO" (+12 o SALTEO SUPREMO)
         if (room.gameState === 'penalty_decision') {
             if (pIndex !== room.currentTurn) return;
-            // Solo permitimos usar Gracia Divina. (Libre Albedrío NO está permitido aquí)
             if (card.value === 'GRACIA') {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
                 io.to(roomId).emit('playSound', 'divine');
@@ -604,11 +602,10 @@ io.on('connection', (socket) => {
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             } else {
                 socket.emit('notification', '🚫 Frente a un castigo supremo, solo puedes usar GRACIA DIVINA o batirte a duelo.');
-                return; // Bloquea cualquier otra carta, incluyendo Libre Albedrío
+                return; 
             }
         }
 
-        // DESCARTE Y VALIDACIÓN NORMAL
         if (cardIndex !== -1) {
             if (player.hand.length === 1) {
                 const isStrictNumber = /^[0-9]$/.test(card.value);
@@ -631,26 +628,23 @@ io.on('connection', (socket) => {
             }
 
             if (pIndex === room.currentTurn && !isSaff) {
-                if (room.pendingPenalty > 0) { // Hay un castigo normal pendiente (+2 o +4)
+                if (room.pendingPenalty > 0) { 
                     if (card.value === 'SALTEO SUPREMO') {
                         socket.emit('notification', '🚫 SALTEO SUPREMO no puede usarse para defender castigos.'); return;
                     }
                     if (card.value === 'GRACIA' || (card.value === 'LIBRE' && room.pendingSkip === 0) || isLibreDiscard) { 
-                        // Permitido! (Libre Albedrío sí sirve contra +2 y +4)
                     } else {
                         const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
                         const cardVal = getVal(card.value); const topVal = getVal(top.value);
                         if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Debes tirar un castigo igual/mayor, Gracia o Libre.`); return; }
                     }
-                } else { // Turno limpio (Sin castigos pendientes)
-                    // ACÁ OCURRE LA MAGIA DEL LIBRE ALBEDRÍO: si isLibreDiscard es TRUE, valid es TRUE automáticamente.
+                } else { 
                     let valid = isLibreDiscard || (card.color === 'negro' || card.value === 'GRACIA' || card.color === room.activeColor || card.value === top.value);
                     if (!valid) { socket.emit('notification', `❌ Carta inválida. Color o símbolo no coincide.`); return; }
                 }
             }
         }
 
-        // Activación de la ventana de Libre Albedrío
         if (room.pendingPenalty > 0 && card.value === 'LIBRE' && room.pendingSkip === 0 && cardIndex !== -1 && !isLibreDiscard) {
              socket.emit('startLibreLogic', card.id); return;
         }
@@ -1270,7 +1264,13 @@ app.get('/', (req, res) => {
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-        #login, #join-menu, #lobby { background: #2c3e50; z-index: 2000; }
+        
+        /* ESTILOS DE LA PANTALLA DE INICIO RENOVADA */
+        .login-bg { z-index: 2000; background: linear-gradient(-45deg, #1a252f, #2c3e50, #2980b9, #8e44ad); background-size: 400% 400%; animation: gradientBG 10s ease infinite; }
+        @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(255,255,255,0.4); animation: floatLogo 3s ease-in-out infinite; }
+        @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(255,255,255,0.6); } 100% { transform: translateY(0px); } }
+        
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); }
         #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; flex-direction: column; justify-content: center; align-items: center; }
@@ -1336,7 +1336,8 @@ app.get('/', (req, res) => {
         #btn-ladder-cancel { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px red; font-size: 14px; }
         #btn-sort { background: #34495e; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #2c3e50; }
 
-        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: flex; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; }
+        /* ELIMINACIÓN DE LA FRANJA NEGRA EN EL LOBBY */
+        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: none; /* ← ACÁ SE CORRIGE EL BUG VISUAL */ align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; }
         .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: transform 0.2s; white-space: nowrap; }
         .hand-card:active { transform: scale(0.95); }
         .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
@@ -1390,14 +1391,24 @@ app.get('/', (req, res) => {
 <body>
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
-    <div id="login" class="screen" style="display:flex;"><h1 style="font-size:60px; margin:0;">UNO y 1/2</h1><input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15"><button id="btn-create" class="btn-main" onclick="showCreate()">Crear Sala</button><button id="btn-join-menu" class="btn-main" onclick="showJoin()" style="background:#2980b9">Unirse a Sala</button></div>
-    <div id="join-menu" class="screen"><h1>Unirse</h1><input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;"><button class="btn-main" onclick="joinRoom()">Entrar</button><button class="btn-main" onclick="backToLogin()">Volver</button></div>
-    <div id="lobby" class="screen">
-        <button onclick="toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
-        <h1>Sala: <span id="lobby-code" style="color:gold;"></span></h1>
-        <div id="lobby-link-container"><button onclick="copyLink()">🔗 Link</button></div>
+    <div id="login" class="screen login-bg" style="display:flex;">
+        <h1 class="logo-title">UNO y 1/2</h1>
+        <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15" onfocus="playUI()">
+        <button id="btn-create" class="btn-main" onclick="playUI(); showCreate()">Crear Sala</button>
+        <button id="btn-join-menu" class="btn-main" onclick="playUI(); showJoin()" style="background:#2980b9">Unirse a Sala</button>
+    </div>
+    <div id="join-menu" class="screen login-bg">
+        <h1 class="logo-title">Unirse</h1>
+        <input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;" onfocus="playUI()">
+        <button class="btn-main" onclick="playUI(); joinRoom()">Entrar</button>
+        <button class="btn-main" onclick="playUI(); backToLogin()">Volver</button>
+    </div>
+    <div id="lobby" class="screen login-bg">
+        <button onclick="playUI(); toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
+        <h1 class="logo-title" style="font-size: 40px;">Sala: <span id="lobby-code" style="color:gold;"></span></h1>
+        <div id="lobby-link-container"><button onclick="playUI(); copyLink()">🔗 Link</button></div>
         <div id="lobby-users"></div>
-        <button id="start-btn" onclick="start()" class="btn-main" style="display:none;">EMPEZAR</button>
+        <button id="start-btn" onclick="playUI(); start()" class="btn-main" style="display:none; background:#2ecc71; border:2px solid white;">EMPEZAR</button>
         <p id="wait-msg" style="display:none;">Esperando...</p>
     </div>
     
@@ -1630,6 +1641,16 @@ app.get('/', (req, res) => {
         let pendingColorForRevive = null;
         let pendingLibreContext = null; 
         let clientTimerInterval = null; 
+        
+        // --- SONIDO DE INICIO ---
+        let hasPlayedIntro = false;
+        function playUI() { 
+            if(!hasPlayedIntro) { 
+                const a = new Audio('https://cdn.freesound.org/previews/511/511484_6890478-lq.mp3'); 
+                a.volume = 0.5; a.play().catch(()=>{}); 
+                hasPlayedIntro = true; 
+            } 
+        }
 
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
@@ -1719,6 +1740,7 @@ app.get('/', (req, res) => {
             document.getElementById('lobby-users').innerHTML = ''; 
             document.getElementById('players-zone').innerHTML = '';
             document.getElementById('hand-zone').innerHTML = '';
+            document.getElementById('hand-zone').style.display = 'none'; // Asegurar que la zona oculta desaparezca
         });
 
         // Eventos de Verificación AFK

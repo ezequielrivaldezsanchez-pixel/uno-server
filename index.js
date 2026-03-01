@@ -1122,7 +1122,7 @@ app.get('/', (req, res) => {
     <div id="lobby" class="screen login-bg">
         <button onclick="playUI(); toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
         <h1 class="logo-title" style="font-size: 40px;">Sala: <span id="lobby-code" style="color:gold;"></span></h1>
-        <div id="lobby-link-container"><button onclick="playUI(); copyLink()" style="background:#34495e; color:white; border:none; padding:10px 20px; border-radius:20px; cursor:pointer;">🔗 Copiar Link</button></div>
+        <div id="lobby-link-container" style="margin-bottom: 25px;"><button onclick="playUI(); copyLink()" style="background:#34495e; color:white; border:none; padding:10px 20px; border-radius:20px; cursor:pointer;">🔗 Copiar Link</button></div>
         <div id="lobby-users"></div>
         <button id="start-btn" onclick="playUI(); start()" class="btn-main" style="display:none; background:#2ecc71; border:2px solid white; font-weight:bold; font-size:24px;">EMPEZAR</button>
         <p id="wait-msg" style="display:none;">Esperando...</p>
@@ -1317,7 +1317,6 @@ app.get('/', (req, res) => {
             if (card.value === 'RIP') el.style.borderColor = '#666';
             else if (card.value === 'GRACIA') el.style.borderColor = 'gold';
 
-            // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en partículas
             if (card.value === '1 y 1/2') el.style.fontSize = '12px';
             
             el.style.left = Math.random() * 100 + 'vw';
@@ -1367,7 +1366,6 @@ app.get('/', (req, res) => {
             el.className = 'universal-flying-card'; el.style.backgroundColor = getBgColor(data.card); el.style.color = (data.card.color==='amarillo'||data.card.color==='verde'||data.card.value==='GRACIA') ? ((data.card.value==='GRACIA')?'red':'black') : 'white';
             el.innerText = getCardText(data.card);
             
-            // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en carta voladora
             if (data.card.value === '1 y 1/2') el.style.fontSize = '14px';
 
             if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.5)'; } 
@@ -1383,7 +1381,6 @@ app.get('/', (req, res) => {
                     const el = document.createElement('div');
                     el.className = 'universal-flying-card'; el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; el.innerText = getCardText(c); 
                     
-                    // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en animación de escalera
                     if (c.value === '1 y 1/2') el.style.fontSize = '14px';
 
                     if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.3)'; } 
@@ -1418,7 +1415,6 @@ app.get('/', (req, res) => {
                  requestAnimationFrame(repositionHUD); document.getElementById('personal-debt-display').style.display = me.personalDebt > 0 ? 'block' : 'none';
                  if(s.topCard) { 
                      const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(s.topCard); el.innerText = getCardText(s.topCard); el.style.color = (s.topCard.color==='amarillo'||s.topCard.color==='verde')?'black':'white'; 
-                     // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en la carta superior del mazo de descarte
                      el.style.fontSize = (s.topCard.value === '1 y 1/2') ? '16px' : '24px';
                  }
                  document.getElementById('btn-pass').style.display = (me.isTurn && me.hasDrawn && s.pendingPenalty === 0 && !s.librePending) ? 'inline-block' : 'none';
@@ -1450,7 +1446,6 @@ app.get('/', (req, res) => {
                 const d = document.createElement('div'); d.className = 'hand-card'; if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
                 d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde'||c.value==='GRACIA')?((c.value==='GRACIA')?'red':'black'):'white'; d.innerText = getCardText(c);
                 
-                // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en la mano del jugador
                 if (c.value === '1 y 1/2') d.style.fontSize = '20px';
 
                 d.onmousedown = d.ontouchstart = () => { pressTimer = setTimeout(() => { if(!ladderMode) { ladderMode = true; toggleLadderSelection(c, d); } }, 800); };
@@ -1485,8 +1480,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-    `);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {});

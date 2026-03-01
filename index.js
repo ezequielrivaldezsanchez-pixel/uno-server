@@ -1983,7 +1983,8 @@ app.get('/', (req, res) => {
                 zone.id = 'duel-clash-zone';
                 document.body.appendChild(zone);
             }
-            zone.innerHTML = `<span>${attE}</span><span>💥</span><span>${defE}</span>`;
+            // 👇 Corregido con concatenación normal
+            zone.innerHTML = '<span>' + attE + '</span><span>💥</span><span>' + defE + '</span>';
             zone.classList.remove('clash-anim');
             void zone.offsetWidth; 
             zone.classList.add('clash-anim');

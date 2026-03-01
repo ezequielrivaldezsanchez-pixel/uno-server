@@ -52,6 +52,7 @@ function initRoom(roomId) {
         pendingSkip: 0,
         scores: {}, 
         roundCount: 1,
+        librePending: null, // NUEVO: Bloqueo de mesa por Libre Albedrío
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
@@ -127,7 +128,6 @@ const safe = (fn) => {
     return (...args) => { try { fn(...args); } catch (err) { console.error("Socket Error Prevenido:", err); } };
 };
 
-// EXPULSIÓN POR INACTIVIDAD EXTREMA
 function forceKickAFK(roomId, uuid) {
     try {
         const room = rooms[roomId]; if(!room) return;
@@ -164,7 +164,6 @@ function forceKickAFK(roomId, uuid) {
     } catch (e) { console.error("Error en forceKickAFK:", e); }
 }
 
-// AUTO-RESOLUCIÓN DE DECISIONES DE RIESGO
 function handleTimeout(roomId, targetUuid, stateContext) {
     try {
         const room = rooms[roomId]; if (!room) return;
@@ -312,8 +311,7 @@ io.on('connection', (socket) => {
 
     socket.on('imHere', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
-        touchRoom(roomId);
-        manageTimers(roomId);
+        touchRoom(roomId); manageTimers(roomId);
     }));
     
     socket.on('requestSort', safe(() => {
@@ -348,21 +346,19 @@ io.on('connection', (socket) => {
     socket.on('requestLeave', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId];
-        const pIndex = room.players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1) return;
+        const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
         const player = room.players[pIndex];
 
         const isMyTurn = (room.currentTurn === pIndex);
         const hasPenalty = ((isMyTurn && room.pendingPenalty > 0) || player.personalDebt > 0);
-        const inDuel = (['dueling', 'rip_decision', 'penalty_decision'].includes(room.gameState) && (room.duelState.attackerId === player.uuid || room.duelState.defenderId === player.uuid));
+        const inDuel = (['dueling', 'rip_decision', 'penalty_decision', 'animating_penalty', 'animating_rip'].includes(room.gameState) && (room.duelState.attackerId === player.uuid || room.duelState.defenderId === player.uuid));
 
         if (hasPenalty || inDuel) {
             socket.emit('notification', '🚫 No puedes huir si tienes un castigo, deuda o duelo pendiente.');
             return;
         }
 
-        if (player.isAdmin) { socket.emit('showLeaveAdminPrompt'); } 
-        else { socket.emit('showLeaveNormalPrompt'); }
+        if (player.isAdmin) { socket.emit('showLeaveAdminPrompt'); } else { socket.emit('showLeaveNormalPrompt'); }
     }));
 
     socket.on('confirmLeave', safe((choice) => {
@@ -408,9 +404,7 @@ io.on('connection', (socket) => {
             if (oldState === 'playing' || oldState === 'waiting') {
                 room.gameState = 'paused';
                 io.to(roomId).emit('gamePaused', { message: msg, duration: 4000 });
-                
                 if (room.currentTurn === pIndex && oldState === 'playing') advanceTurn(roomId, 1);
-                
                 updateAll(roomId);
                 setTimeout(() => { try { if (rooms[roomId]) { room.gameState = oldState; updateAll(roomId); } } catch(e){} }, 4000);
             } else {
@@ -423,7 +417,7 @@ io.on('connection', (socket) => {
     socket.on('playMultiCards', safe((cardIds) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; const pIndex = room.players.findIndex(p => p.id === socket.id); const player = room.players[pIndex];
-        if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0) return;
+        if (room.gameState !== 'playing' || pIndex !== room.currentTurn || room.pendingPenalty > 0 || room.librePending) return;
         if (player.personalDebt > 0) { socket.emit('notification', '🚫 Tienes una deuda de cartas. Toca el mazo para pagar primero.'); return; }
         if (!cardIds || cardIds.length < 2) return; 
 
@@ -435,15 +429,11 @@ io.on('connection', (socket) => {
         if (isAll15) {
             const count = playCards.length;
             if (count !== 2 && count !== 4 && count !== 6) {
-                socket.emit('notification', '🚫 Solo puedes agrupar 2, 4 o 6 cartas "1 y 1/2".');
-                return;
+                socket.emit('notification', '🚫 Solo puedes agrupar 2, 4 o 6 cartas "1 y 1/2".'); return;
             }
-            
             const targetVal = (count * 1.5).toString();
-            
             if (top.value !== targetVal) {
-                socket.emit('notification', `🚫 Coincidencia numérica requerida. Debes arrojarlas sobre un ${targetVal}.`);
-                return;
+                socket.emit('notification', `🚫 Coincidencia numérica requerida. Debes arrojarlas sobre un ${targetVal}.`); return;
             }
 
             const finalColor = playCards[playCards.length - 1].color;
@@ -451,13 +441,12 @@ io.on('connection', (socket) => {
             room.discardPile.push(...playCards); 
             room.activeColor = finalColor; 
 
-            io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
+            io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name, playerId: player.id });
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó ${count} cartas "1 y 1/2" y formó un ${targetVal}.`); 
             io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
             
-            if(player.hand.length === 0) { initiateRoundEnd(roomId, player); } 
-            else { advanceTurn(roomId, 1); updateAll(roomId); }
+            if(player.hand.length === 0) { initiateRoundEnd(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
             return;
         }
 
@@ -481,7 +470,6 @@ io.on('connection', (socket) => {
                 const min = sortedIndices[0]; const max = sortedIndices[1];
                 const isAsc = (min === topIdx + 1 && max === topIdx + 2);
                 const isDesc = (max === topIdx - 1 && min === topIdx - 2);
-                
                 if (isAsc || isDesc) {
                     isValidPlay = true;
                     if (isAsc) playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
@@ -501,7 +489,7 @@ io.on('connection', (socket) => {
         if (isValidPlay) {
             removeCards(player, cardIds);
             room.discardPile.push(...playCards); room.activeColor = firstColor;
-            io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
+            io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name, playerId: player.id });
             io.to(roomId).emit('notification', `🪜 ¡ESCALERA de ${player.name}!`); io.to(roomId).emit('playSound', 'soft');
             checkUnoCheck(roomId, player);
             if(player.hand.length === 0) { initiateRoundEnd(roomId, player); } else { advanceTurn(roomId, 1); updateAll(roomId); }
@@ -536,6 +524,35 @@ io.on('connection', (socket) => {
         }
     }));
 
+    // NUEVO: FASE 1 DE LIBRE ALBEDRÍO (Vuela la carta, se bloquea la mesa)
+    socket.on('playLibreInitial', safe((cardId) => {
+        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
+        const room = rooms[roomId]; 
+        const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
+        const player = room.players[pIndex]; 
+        
+        if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision') return;
+        if (player.personalDebt > 0) return;
+        
+        const cardIndex = player.hand.findIndex(c => c.id === cardId);
+        if(cardIndex === -1) return;
+        const card = player.hand[cardIndex];
+        
+        if (card.value !== 'LIBRE') return;
+
+        player.hand.splice(cardIndex, 1);
+        room.discardPile.push(card);
+        room.activeColor = 'negro'; 
+        room.librePending = player.uuid;
+        
+        io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
+        io.to(roomId).emit('playSound', 'wild');
+        io.to(roomId).emit('notification', `🕊️ ${player.name} arrojó LIBRE ALBEDRÍO y está decidiendo...`);
+        
+        updateAll(roomId);
+        socket.emit('startLibreLogic', card.id);
+    }));
+
     socket.on('playCard', safe((cardId, chosenColor, reviveTargetId, libreContext) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; 
@@ -555,35 +572,50 @@ io.on('connection', (socket) => {
         }
 
         let isLibreDiscard = false;
+        let cardIndex = -1;
+        let card = null;
 
         if (libreContext) {
-            const lIdx = player.hand.findIndex(c => c.id === libreContext.libreId);
+            // FASE 2 DE LIBRE ALBEDRÍO: Se resuelve la donación y el descarte vuela a la mesa
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
+            const dIdx = player.hand.findIndex(c => c.id === libreContext.discardId);
             const target = room.players.find(p => p.id === libreContext.targetId);
-            if (lIdx === -1 || gIdx === -1 || !target) return;
+            if (gIdx === -1 || dIdx === -1 || !target) return;
 
             room.pendingPenalty = 0; room.pendingSkip = 0;
-            
-            player.hand.splice(lIdx, 1);
-            room.discardPile.push({ color: 'negro', value: 'LIBRE', type: 'special', id: libreContext.libreId });
+            room.librePending = null;
 
-            const realGIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
-            const giftCard = player.hand.splice(realGIdx, 1)[0];
+            const giftCard = player.hand.splice(gIdx, 1)[0];
             target.hand.push(giftCard);
             io.to(target.id).emit('handUpdate', target.hand);
-            io.to(roomId).emit('playSound', 'wild');
-
-            isLibreDiscard = true; 
             
-            if (player.hand.length === 1) { 
-                 io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} usó Libre Albedrío, regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
+            const realDIdx = player.hand.findIndex(c => c.id === libreContext.discardId);
+            card = player.hand.splice(realDIdx, 1)[0];
+            room.discardPile.push(card);
+            
+            io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
+            io.to(roomId).emit('playSound', 'soft');
+            
+            isLibreDiscard = true;
+            cardIndex = -2; // Bypassea validaciones extra
+            
+            if (player.hand.length === 0) { 
+                 io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
             } else {
-                 io.to(roomId).emit('notification', `🕊️ ${player.name} usó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`);
+                 io.to(roomId).emit('notification', `🕊️ ${player.name} regaló una carta a ${target.name} y descartó.`);
             }
+            
+            if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; 
+            else if (card.color !== 'negro') room.activeColor = card.color;
+
+            checkUnoCheck(roomId, player); 
+            applyCardEffect(roomId, player, card, chosenColor);
+            return;
         }
 
-        let cardIndex = player.hand.findIndex(c => c.id === cardId); 
-        let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
+        cardIndex = player.hand.findIndex(c => c.id === cardId); 
+        card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
+        
         if (!card && reviveTargetId) {
              const topAux = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null; 
              if(topAux && topAux.value === 'GRACIA') card = topAux;
@@ -595,6 +627,7 @@ io.on('connection', (socket) => {
             if (pIndex !== room.currentTurn) return;
             if (card.value === 'GRACIA') {
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card);
+                io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
                 io.to(roomId).emit('playSound', 'divine');
                 if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                 io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`);
@@ -603,8 +636,7 @@ io.on('connection', (socket) => {
                 if (player.hand.length === 0) { initiateRoundEnd(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             } else {
-                socket.emit('notification', '🚫 Frente a un castigo supremo, solo puedes usar GRACIA DIVINA o batirte a duelo.');
-                return; 
+                socket.emit('notification', '🚫 Frente a un castigo supremo, solo puedes usar GRACIA DIVINA o batirte a duelo.'); return; 
             }
         }
 
@@ -622,39 +654,34 @@ io.on('connection', (socket) => {
             if (pIndex !== room.currentTurn) {
                 const isNumericSaff = /^[0-9]$/.test(card.value) || card.value === '1 y 1/2';
                 if (isNumericSaff && card.color !== 'negro' && card.value === top.value && card.color === top.color) {
-                    if (room.pendingPenalty > 0) return; 
+                    if (room.pendingPenalty > 0 || room.librePending) return; 
                     if (player.hand.length === 1) { socket.emit('notification', '🚫 Prohibido ganar con SAFF.'); return; }
                     isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
-                    io.to(roomId).emit('notification', `⚡ ¡${player.name} robó el turno haciendo S.A.F.F. con una carta idéntica!`); io.to(roomId).emit('playSound', 'saff');
+                    io.to(roomId).emit('notification', `⚡ ¡${player.name} robó el turno haciendo S.A.F.F.!`); io.to(roomId).emit('playSound', 'saff');
                 } else { return; }
             }
 
             if (pIndex === room.currentTurn && !isSaff) {
                 if (room.pendingPenalty > 0) { 
-                    if (card.value === 'SALTEO SUPREMO') {
-                        socket.emit('notification', '🚫 SALTEO SUPREMO no puede usarse para defender castigos.'); return;
-                    }
-                    if (card.value === 'GRACIA' || (card.value === 'LIBRE' && room.pendingSkip === 0) || isLibreDiscard) { 
-                    } else {
+                    if (card.value === 'SALTEO SUPREMO') { socket.emit('notification', '🚫 SALTEO SUPREMO no puede usarse para defender castigos.'); return; }
+                    if (card.value === 'GRACIA') { } else {
                         const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
                         const cardVal = getVal(card.value); const topVal = getVal(top.value);
                         if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Debes tirar un castigo igual/mayor, Gracia o Libre.`); return; }
                     }
                 } else { 
-                    let valid = isLibreDiscard || (card.color === 'negro' || card.value === 'GRACIA' || card.color === room.activeColor || card.value === top.value);
+                    let valid = (card.color === 'negro' || card.value === 'GRACIA' || card.color === room.activeColor || card.value === top.value);
                     if (!valid) { socket.emit('notification', `❌ Carta inválida. Color o símbolo no coincide.`); return; }
                 }
             }
         }
 
-        if (room.pendingPenalty > 0 && card.value === 'LIBRE' && room.pendingSkip === 0 && cardIndex !== -1 && !isLibreDiscard) {
-             socket.emit('startLibreLogic', card.id); return;
-        }
-
         if (card.value === 'GRACIA') {
             const deadPlayers = room.players.filter(p => p.isDead && !p.hasLeft);
             if (room.pendingPenalty > 0 && cardIndex !== -1) {
-                player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'divine');
+                player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
+                io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
+                io.to(roomId).emit('playSound', 'divine');
                 if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                 io.to(roomId).emit('showDivine', `${player.name} anuló el castigo`); 
                 room.pendingPenalty = 0; room.pendingSkip = 0; checkUnoCheck(roomId, player);
@@ -672,6 +699,7 @@ io.on('connection', (socket) => {
                             target.isDead = false; target.isSpectator = false; io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
                             if(cardIndex !== -1) {
                                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
+                                io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
                                 if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                             }
                             io.to(roomId).emit('playSound', 'divine'); checkUnoCheck(roomId, player);
@@ -683,7 +711,9 @@ io.on('connection', (socket) => {
             } else { 
                 if (cardIndex !== -1) {
                      io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
-                     player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'divine'); 
+                     player.hand.splice(cardIndex, 1); room.discardPile.push(card); 
+                     io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
+                     io.to(roomId).emit('playSound', 'divine'); 
                      if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
                      checkUnoCheck(roomId, player);
                      if (player.hand.length === 0) { initiateRoundEnd(roomId, player); return; }
@@ -694,45 +724,20 @@ io.on('connection', (socket) => {
 
         if (cardIndex === -1) return; 
 
-        if (card.value === 'RIP') {
-            if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no evita castigos.'); return; }
-            if (getAlivePlayersCount(roomId) < 2) { 
-                player.hand.splice(cardIndex, 1); room.discardPile.push(card);
-                advanceTurn(roomId, 1); updateAll(roomId); return; 
-            }
-            
-            const victimIdx = getNextPlayerIndex(roomId, 1);
-            if (victimIdx === pIndex) { socket.emit('notification', '⛔ No puedes desafiarte a duelo a ti mismo.'); return; }
-
-            player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
-            checkUnoCheck(roomId, player);
-            
-            room.gameState = 'rip_decision';
-            const attacker = player; const defender = room.players[victimIdx];
-            room.duelState = { 
-                attackerId: attacker.uuid, defenderId: defender.uuid, attackerName: attacker.name, defenderName: defender.name, 
-                round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
-            };
-            updateAll(roomId); return;
-        }
-
-        if (card.value === 'LIBRE' && !isLibreDiscard) { socket.emit('startLibreLogic', card.id); return; }
-
         player.hand.splice(cardIndex, 1); room.discardPile.push(card);
-        io.to(roomId).emit('cardPlayedEffect', { color: card.color, playerName: player.name });
+        io.to(roomId).emit('animateCard', { card: card, playerId: player.id });
         if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; else if (card.color !== 'negro') room.activeColor = card.color;
 
-        checkUnoCheck(roomId, player); applyCardEffect(roomId, player, card, chosenColor);
+        checkUnoCheck(roomId, player); 
+        applyCardEffect(roomId, player, card, chosenColor);
     }));
 
     socket.on('draw', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'playing') return;
         const pIndex = room.players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1 || room.players[pIndex].isDead || room.players[pIndex].isSpectator) return;
+        if (pIndex === -1 || room.players[pIndex].isDead || room.players[pIndex].isSpectator || room.librePending) return;
         
-        // PAGO DE DEUDA PERSONAL (No necesita ser su turno)
         if (room.players[pIndex].personalDebt > 0) {
             drawCards(roomId, pIndex, 1); 
             room.players[pIndex].personalDebt--; 
@@ -741,8 +746,7 @@ io.on('connection', (socket) => {
             if (room.players[pIndex].personalDebt === 0) {
                 io.to(roomId).emit('notification', `✅ ${room.players[pIndex].name} ha saldado su deuda de cartas.`);
             }
-            updateAll(roomId);
-            return;
+            updateAll(roomId); return;
         }
 
         if (pIndex === room.currentTurn) {
@@ -755,19 +759,14 @@ io.on('connection', (socket) => {
                 } else { 
                     if (room.pendingSkip > 0) {
                         io.to(roomId).emit('notification', `⛔ ¡${room.players[pIndex].name} PIERDE ${room.pendingSkip} TURNOS!`); 
-                        room.players[pIndex].missedTurns += room.pendingSkip;
-                        room.pendingSkip = 0;
+                        room.players[pIndex].missedTurns += room.pendingSkip; room.pendingSkip = 0;
                     } else { 
                         io.to(roomId).emit('notification', `✅ Fin del castigo para ${room.players[pIndex].name}.`); 
                     }
-                    
                     if (room.resumeTurnFrom !== undefined && room.resumeTurnFrom !== null) {
-                        room.currentTurn = room.resumeTurnFrom;
-                        room.resumeTurnFrom = null;
+                        room.currentTurn = room.resumeTurnFrom; room.resumeTurnFrom = null;
                     }
-                    
-                    advanceTurn(roomId, 1);
-                    updateAll(roomId); 
+                    advanceTurn(roomId, 1); updateAll(roomId); 
                 }
             } else {
                 if (!room.players[pIndex].hasDrawn) { 
@@ -776,8 +775,7 @@ io.on('connection', (socket) => {
                     io.to(roomId).emit('playSound', 'soft'); 
                     io.to(roomId).emit('cardDrawnEffect', { playerName: room.players[pIndex].name });
                     updateAll(roomId); 
-                } 
-                else { socket.emit('notification', 'Ya robaste. Debes jugar o pasar.'); }
+                } else { socket.emit('notification', 'Ya robaste. Debes jugar o pasar.'); }
             }
         }
     }));
@@ -786,7 +784,7 @@ io.on('connection', (socket) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'playing') return;
         const pIndex = room.players.findIndex(p => p.id === socket.id);
-        if (pIndex === room.currentTurn && room.players[pIndex].hasDrawn && room.pendingPenalty === 0 && room.players[pIndex].personalDebt === 0) { advanceTurn(roomId, 1); updateAll(roomId); }
+        if (pIndex === room.currentTurn && room.players[pIndex].hasDrawn && room.pendingPenalty === 0 && room.players[pIndex].personalDebt === 0 && !room.librePending) { advanceTurn(roomId, 1); updateAll(roomId); }
     }));
 
     socket.on('ripDecision', safe((d) => {
@@ -803,8 +801,7 @@ io.on('connection', (socket) => {
                 if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
                     room.gameState = 'playing';
                     room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
-                    advanceTurn(roomId, 1);
-                    updateAll(roomId);
+                    advanceTurn(roomId, 1); updateAll(roomId);
                 }
             }
         }
@@ -832,23 +829,10 @@ io.on('connection', (socket) => {
             updateAll(roomId);
         } 
         else if (myUUID === room.duelState.defenderId) { 
-            room.duelState.defenderChoice = c; 
-            room.duelState.narrative = `¡IMPACTO INMINENTE!`;
-            
-            // DISPARO DEL CLASH VISUAL PARA TODOS
-            io.to(roomId).emit('duelClash', {
-                attName: room.duelState.attackerName,
-                defName: room.duelState.defenderName,
-                attChoice: room.duelState.attackerChoice,
-                defChoice: room.duelState.defenderChoice
-            });
-            
-            io.to(roomId).emit('playSound', 'attack'); // Sonido previo
-
-            // Pausar la resolución en el servidor para permitir la animación en el cliente
-            setTimeout(() => {
-                resolveDuelRound(roomId, false);
-            }, 3500); 
+            room.duelState.defenderChoice = c; room.duelState.narrative = `¡IMPACTO INMINENTE!`;
+            io.to(roomId).emit('duelClash', { attName: room.duelState.attackerName, defName: room.duelState.defenderName, attChoice: room.duelState.attackerChoice, defChoice: room.duelState.defenderChoice });
+            io.to(roomId).emit('playSound', 'attack'); 
+            setTimeout(() => { resolveDuelRound(roomId, false); }, 3500); 
         }
     }));
     
@@ -864,18 +848,12 @@ io.on('connection', (socket) => {
         if (room.gameState !== 'playing') { socket.emit('notification', '⛔ No puedes denunciar ahora.'); return; }
         const accuser = room.players.find(x => x.id === socket.id); const target = room.players.find(x => x.id === targetId);
         
-        if(!target || target.hand.length !== 1 || target.saidUno) { 
-            socket.emit('notification', '🚫 No puedes hacer denuncias falsas.'); 
-            return; 
-        }
-        
+        if(!target || target.hand.length !== 1 || target.saidUno) { socket.emit('notification', '🚫 No puedes hacer denuncias falsas.'); return; }
         const timeDiff = Date.now() - target.lastOneCardTime;
         if (timeDiff < 2000) { socket.emit('notification', '¡Espera! Tiene tiempo de gracia (2s).'); return; }
         
-        // APLICACIÓN DE LA DEUDA MANUAL
         target.personalDebt += 2; target.saidUno = true; 
-        io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Castigo: +2 cartas.`); 
-        updateAll(roomId);
+        io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Castigo: +2 cartas.`); updateAll(roomId);
     }));
 
     socket.on('sendChat', safe((text) => { 
@@ -884,8 +862,7 @@ io.on('connection', (socket) => {
         if (p) {
             const msg = { name: p.name, text }; room.chatHistory.push(msg);
             if(room.chatHistory.length > 50) room.chatHistory.shift();
-            io.to(roomId).emit('chatMessage', msg); 
-            manageTimers(roomId);
+            io.to(roomId).emit('chatMessage', msg); manageTimers(roomId);
         }
     }));
 
@@ -894,10 +871,7 @@ io.on('connection', (socket) => {
             const roomId = getRoomId(socket);
             if (roomId && rooms[roomId]) { 
                 const room = rooms[roomId]; const p = room.players.find(pl => pl.id === socket.id); 
-                if(p) {
-                    p.isConnected = false;
-                    updateAll(roomId);
-                }
+                if(p) { p.isConnected = false; updateAll(roomId); }
             }
         } catch(e) { console.error("Error desconexión:", e); }
     });
@@ -914,15 +888,14 @@ function checkUnoCheck(roomId, player) {
     else { player.saidUno = false; player.lastOneCardTime = 0; }
 }
 
-function removeCards(player, ids) {
-    ids.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
-}
+function removeCards(player, ids) { ids.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); }); }
 
 function applyCardEffect(roomId, player, card, chosenColor) {
     const room = rooms[roomId]; let steps = 1;
     if (card.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
     if (card.value === 'X') steps = 2;
     
+    // DELAY DRAMÁTICO PARA CASTIGOS (+12, SS, RIP)
     if (['+2', '+4', '+12', 'SALTEO SUPREMO'].includes(card.value)) {
         let val = 0; let skips = 0;
         if(card.value === '+2') val=2; if(card.value === '+4') val=4; if(card.value === '+12') val=12;
@@ -934,16 +907,36 @@ function applyCardEffect(roomId, player, card, chosenColor) {
 
         if (['+12', 'SALTEO SUPREMO'].includes(card.value)) {
             const nextPIdx = getNextPlayerIndex(roomId, 1); const victim = room.players[nextPIdx];
-            room.gameState = 'penalty_decision';
+            room.gameState = 'animating_penalty'; // Estado intermedio para esperar la animación visual
             room.duelState = { 
                 attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
                 round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
                 turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty', originalPenalty: room.pendingPenalty, originalSkip: room.pendingSkip, triggerCard: card.value 
             };
-            room.currentTurn = nextPIdx; updateAll(roomId); return;
+            room.currentTurn = nextPIdx; updateAll(roomId); 
+            setTimeout(() => { if(rooms[roomId] && rooms[roomId].gameState === 'animating_penalty') { rooms[roomId].gameState = 'penalty_decision'; updateAll(roomId); } }, 1200);
+            return;
         }
         advanceTurn(roomId, 1); updateAll(roomId); return; 
     }
+
+    if (card.value === 'RIP') {
+        if (getAlivePlayersCount(roomId) < 2) { advanceTurn(roomId, 1); updateAll(roomId); return; }
+        const victimIdx = getNextPlayerIndex(roomId, 1);
+        if (victimIdx === room.players.indexOf(player)) return; // Previsto arriba
+        const victim = room.players[victimIdx];
+        io.to(roomId).emit('playSound', 'rip');
+        room.gameState = 'animating_rip'; // Estado intermedio
+        room.duelState = { 
+            attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
+            round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
+            turn: player.uuid, narrative: `💀 ${player.name} retó a Duelo a ${victim.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
+        };
+        updateAll(roomId);
+        setTimeout(() => { if(rooms[roomId] && rooms[roomId].gameState === 'animating_rip') { rooms[roomId].gameState = 'rip_decision'; updateAll(roomId); } }, 1200);
+        return;
+    }
+
     if (card.color === 'negro') io.to(roomId).emit('playSound', 'wild'); else io.to(roomId).emit('playSound', 'soft');
     if (player.hand.length === 0) initiateRoundEnd(roomId, player); else { advanceTurn(roomId, steps); updateAll(roomId); }
 }
@@ -962,18 +955,11 @@ function getDuelNarrative(attName, defName, att, def) {
 function resolveDuelRound(roomId, isTimeout = false) {
     try {
         const room = rooms[roomId]; if (!room) return;
-        let att = room.duelState.attackerChoice;
-        let def = room.duelState.defenderChoice;
-        let winner = 'tie';
+        let att = room.duelState.attackerChoice; let def = room.duelState.defenderChoice; let winner = 'tie';
 
         if (isTimeout) {
-            if (!att) {
-                winner = 'defender';
-                room.duelState.narrative = `⏳ ${room.duelState.defenderName} ganó la ronda porque ${room.duelState.attackerName} tardó mucho en elegir.`;
-            } else if (!def) {
-                winner = 'attacker';
-                room.duelState.narrative = `⏳ ${room.duelState.attackerName} ganó la ronda porque ${room.duelState.defenderName} tardó mucho en elegir.`;
-            }
+            if (!att) { winner = 'defender'; room.duelState.narrative = `⏳ ${room.duelState.defenderName} ganó la ronda por inactividad.`; } 
+            else if (!def) { winner = 'attacker'; room.duelState.narrative = `⏳ ${room.duelState.attackerName} ganó la ronda por inactividad.`; }
         } else {
             if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
             else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
@@ -981,29 +967,14 @@ function resolveDuelRound(roomId, isTimeout = false) {
         }
         
         if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
-        
-        let winNameToHistory = 'Empate'; 
-        if(winner === 'attacker') winNameToHistory = room.duelState.attackerName; 
-        if(winner === 'defender') winNameToHistory = room.duelState.defenderName;
+        let winNameToHistory = 'Empate'; if(winner === 'attacker') winNameToHistory = room.duelState.attackerName; if(winner === 'defender') winNameToHistory = room.duelState.defenderName;
 
         room.duelState.history.push({ round: room.duelState.round, att: att || 'timeout', def: def || 'timeout', winnerName: winNameToHistory });
         room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
-        
         io.to(roomId).emit('playSound', 'soft');
         
-        if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
-            setTimeout(() => finalizeDuel(roomId), 2500); 
-        } else { 
-            setTimeout(() => { 
-                try {
-                    if(rooms[roomId]) { 
-                        rooms[roomId].duelState.round++; 
-                        rooms[roomId].duelState.narrative = `Ronda ${rooms[roomId].duelState.round}: ${rooms[roomId].duelState.attackerName} elige arma...`; 
-                        updateAll(roomId); 
-                    } 
-                } catch(e){}
-            }, 3000); 
-        }
+        if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2500); } 
+        else { setTimeout(() => { try { if(rooms[roomId]) { rooms[roomId].duelState.round++; rooms[roomId].duelState.narrative = `Ronda ${rooms[roomId].duelState.round}: ${rooms[roomId].duelState.attackerName} elige arma...`; updateAll(roomId); } } catch(e){} }, 3000); }
         updateAll(roomId); 
     } catch (e) { console.error("Error en resolveDuelRound:", e); }
 }
@@ -1018,36 +989,21 @@ function finalizeDuel(roomId) {
         if (attWins) { 
             io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
             if (!isPenaltyDuel) { 
-                eliminatePlayer(roomId, def.uuid); 
-                checkWinCondition(roomId); 
+                eliminatePlayer(roomId, def.uuid); checkWinCondition(roomId); 
                 if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
-                    room.gameState = 'playing';
-                    room.currentTurn = room.players.indexOf(att);
-                    advanceTurn(roomId, 1);
-                    updateAll(roomId);
+                    room.gameState = 'playing'; room.currentTurn = room.players.indexOf(att); advanceTurn(roomId, 1); updateAll(roomId);
                 }
             } 
-            else { 
-                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); 
-                room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); 
-            }
+            else { io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); }
         } else { 
             io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
             if (!isPenaltyDuel) { 
                 io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`); 
-                room.pendingPenalty = 4; room.pendingSkip = 0; 
-                room.currentTurn = room.players.indexOf(att); 
-                room.resumeTurnFrom = room.players.indexOf(def); 
-                room.gameState = 'playing'; updateAll(roomId); 
+                room.pendingPenalty = 4; room.pendingSkip = 0; room.currentTurn = room.players.indexOf(att); room.resumeTurnFrom = room.players.indexOf(def); room.gameState = 'playing'; updateAll(roomId); 
             } 
             else { 
                 io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`); 
-                room.pendingPenalty = 0; room.pendingSkip = 0; 
-                room.players.forEach(p => p.hasDrawn = false); 
-                room.currentTurn = room.players.indexOf(att); 
-                room.pendingPenalty = 4; room.pendingSkip = 0; 
-                room.resumeTurnFrom = room.players.indexOf(def); 
-                room.gameState = 'playing'; updateAll(roomId); 
+                room.pendingPenalty = 0; room.pendingSkip = 0; room.players.forEach(p => p.hasDrawn = false); room.currentTurn = room.players.indexOf(att); room.pendingPenalty = 4; room.pendingSkip = 0; room.resumeTurnFrom = room.players.indexOf(def); room.gameState = 'playing'; updateAll(roomId); 
             }
         }
     } catch (e) { console.error("Error en finalizeDuel:", e); }
@@ -1068,7 +1024,6 @@ function getNextPlayerIndex(roomId, step) {
 function advanceTurn(roomId, steps) {
     const room = rooms[roomId]; if (!room || room.players.length === 0) return;
     if (getAlivePlayersCount(roomId) <= 1) return; 
-    
     room.players.forEach(p => p.hasDrawn = false);
     
     let safeLoop = 0;
@@ -1076,14 +1031,9 @@ function advanceTurn(roomId, steps) {
         safeLoop++;
         room.currentTurn = (room.currentTurn + room.direction + room.players.length) % room.players.length;
         let cp = room.players[room.currentTurn];
-        
         if (!cp.isDead && !cp.isSpectator && !cp.hasLeft) {
-            if (cp.missedTurns > 0) {
-                cp.missedTurns--;
-                io.to(roomId).emit('notification', `⏭️ Turno de ${cp.name} salteado por castigo.`);
-            } else {
-                steps--; 
-            }
+            if (cp.missedTurns > 0) { cp.missedTurns--; io.to(roomId).emit('notification', `⏭️ Turno de ${cp.name} salteado por castigo.`); } 
+            else { steps--; }
         }
     }
     if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
@@ -1092,23 +1042,20 @@ function advanceTurn(roomId, steps) {
 function startCountdown(roomId) {
     const room = rooms[roomId]; if (!room || room.players.length < 2) return;
     room.gameState = 'counting'; room.resumeTurnFrom = null; createDeck(roomId);
+    
     let safeCard = room.deck.pop();
+    let loopCount = 0; // NUEVO: Evita bucle infinito en la extracción inicial de la 4ta ronda
     while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
+        loopCount++; if (loopCount > 50) break; // CORTAFUEGOS
         room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
     }
-    room.discardPile = [safeCard]; room.activeColor = safeCard.color; 
+    room.discardPile = [safeCard]; room.activeColor = safeCard.color === 'negro' ? 'rojo' : safeCard.color; 
     
-    let nextStarter = room.roundStarterIndex % room.players.length;
-    let safeLoop = 0;
-    while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) {
-        nextStarter = (nextStarter + 1) % room.players.length;
-        safeLoop++;
-    }
-    room.roundStarterIndex = nextStarter;
-    room.currentTurn = room.roundStarterIndex; 
+    let nextStarter = room.roundStarterIndex % room.players.length; let safeLoop = 0;
+    while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) { nextStarter = (nextStarter + 1) % room.players.length; safeLoop++; }
+    room.roundStarterIndex = nextStarter; room.currentTurn = room.roundStarterIndex; 
     
-    room.direction = 1;
-    room.pendingPenalty = 0; room.pendingSkip = 0;
+    room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.librePending = null;
     
     room.players.forEach(p => { 
         if(p.hasLeft) return;
@@ -1122,11 +1069,7 @@ function startCountdown(roomId) {
         if (!rooms[roomId]) return clearInterval(room.countdownInterval);
         io.to(roomId).emit('countdownTick', count); io.to(roomId).emit('playSound', 'soft');
         if (count <= 0) { 
-            clearInterval(room.countdownInterval); 
-            room.gameState = 'playing'; 
-            io.to(roomId).emit('playSound', 'start'); 
-            updateAll(roomId); 
-            
+            clearInterval(room.countdownInterval); room.gameState = 'playing'; io.to(roomId).emit('playSound', 'start'); updateAll(roomId); 
             const starterName = room.players[room.currentTurn] ? room.players[room.currentTurn].name : "???";
             io.to(roomId).emit('roundStarted', { round: room.roundCount, starterName: starterName });
         } 
@@ -1140,14 +1083,12 @@ function drawCards(roomId, pid, n) {
     checkUnoCheck(roomId, room.players[pid]);
 }
 
-// NUEVA FUNCIÓN: Pausa dramática para asimilar la última carta ganadora
 function initiateRoundEnd(roomId, winner) {
     const room = rooms[roomId]; if(!room) return;
     room.gameState = 'round_ending';
     updateAll(roomId);
-    setTimeout(() => {
-        if(rooms[roomId]) calculateAndFinishRound(roomId, winner);
-    }, 2500);
+    // NUEVO: Reducción de 2.5s a 1s para acelerar el flow sin perder visibilidad
+    setTimeout(() => { if(rooms[roomId]) calculateAndFinishRound(roomId, winner); }, 1000); 
 }
 
 function calculateAndFinishRound(roomId, winner) {
@@ -1165,31 +1106,20 @@ function calculateAndFinishRound(roomId, winner) {
             }
         });
 
-        pointsAccumulated += bonus;
-        if(bonus > 0) losersDetails.push({ name: "BONUS (Cierre Gracia)", points: 50 });
+        pointsAccumulated += bonus; if(bonus > 0) losersDetails.push({ name: "BONUS (Cierre Gracia)", points: 50 });
 
         if(room.scores[winner.uuid] === undefined) room.scores[winner.uuid] = 0;
-        room.scores[winner.uuid] += pointsAccumulated;
-        const winnerTotal = room.scores[winner.uuid];
+        room.scores[winner.uuid] += pointsAccumulated; const winnerTotal = room.scores[winner.uuid];
 
         if (winnerTotal >= 800) {
-            room.gameState = 'waiting';
-            io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); io.to(roomId).emit('playSound', 'win');
-            if (room.actionTimer) clearTimeout(room.actionTimer);
-            if (room.turnTimer) clearTimeout(room.turnTimer);
-            if (room.afkTimer) clearTimeout(room.afkTimer);
+            room.gameState = 'waiting'; io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); io.to(roomId).emit('playSound', 'win');
+            if (room.actionTimer) clearTimeout(room.actionTimer); if (room.turnTimer) clearTimeout(room.turnTimer); if (room.afkTimer) clearTimeout(room.afkTimer);
             setTimeout(() => { delete rooms[roomId]; }, 10000);
         } else {
             room.gameState = 'round_over'; room.roundCount++;
-            
-            const leaderboard = Object.keys(room.scores).map(uid => {
-                const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); 
-                if(pl) return { name: pl.name, score: room.scores[uid] }; return null;
-            }).filter(x=>x).sort((a,b) => b.score - a.score);
-
+            const leaderboard = Object.keys(room.scores).map(uid => { const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); if(pl) return { name: pl.name, score: room.scores[uid] }; return null; }).filter(x=>x).sort((a,b) => b.score - a.score);
             io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal });
             io.to(roomId).emit('playSound', 'win');
-
             const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 3000;
             setTimeout(() => { try { if(rooms[roomId]) resetRound(roomId); } catch(e){} }, animationDelay);
         }
@@ -1199,44 +1129,33 @@ function calculateAndFinishRound(roomId, winner) {
 function resetRound(roomId) {
     try {
         const room = rooms[roomId]; if(!room) return;
-        room.resumeTurnFrom = null;
-        room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
+        room.resumeTurnFrom = null; room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
 
-        let nextStarter = room.roundStarterIndex;
-        let safeLoop = 0;
-        while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) {
-            nextStarter = (nextStarter + 1) % room.players.length;
-            safeLoop++;
-        }
+        let nextStarter = room.roundStarterIndex; let safeLoop = 0;
+        while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) { nextStarter = (nextStarter + 1) % room.players.length; safeLoop++; }
         room.roundStarterIndex = nextStarter;
 
-        createDeck(roomId);
-        let safeCard = room.deck.pop();
+        createDeck(roomId); let safeCard = room.deck.pop(); let loopCount = 0;
         while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
+            loopCount++; if(loopCount > 50) break; // CORTAFUEGOS
             room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
         }
-        room.discardPile = [safeCard]; room.activeColor = safeCard.color; 
+        room.discardPile = [safeCard]; room.activeColor = safeCard.color === 'negro' ? 'rojo' : safeCard.color; 
         
-        room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.gameState = 'playing';
+        room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.librePending = null; room.gameState = 'playing';
 
         room.players.forEach(p => { 
             if(p.hasLeft) return;
             p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; p.missedTurns = 0; p.personalDebt = 0;
             for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); 
         });
-
         startCountdown(roomId);
     } catch (e) { console.error("Error en resetRound:", e); }
 }
 
 function checkWinCondition(roomId) {
-    const room = rooms[roomId];
-    if (!room) return;
-
-    if (room.gameState === 'waiting') {
-        updateAll(roomId);
-        return;
-    }
+    const room = rooms[roomId]; if (!room) return;
+    if (room.gameState === 'waiting') { updateAll(roomId); return; }
 
     const presentPlayers = room.players.filter(p => !p.isSpectator && !p.hasLeft);
     const alivePlayers = presentPlayers.filter(p => !p.isDead);
@@ -1247,22 +1166,14 @@ function checkWinCondition(roomId) {
             room.gameState = 'game_over';
             setTimeout(() => {
                 if (!rooms[roomId]) return;
-                io.to(roomId).emit('gameOver', { 
-                    winner: winner.name, 
-                    totalScore: room.scores[winner.uuid] || 0,
-                    reason: 'desertion' 
-                });
+                io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: room.scores[winner.uuid] || 0, reason: 'desertion' });
                 io.to(roomId).emit('playSound', 'win');
-                if (room.actionTimer) clearTimeout(room.actionTimer);
-                if (room.turnTimer) clearTimeout(room.turnTimer);
-                if (room.afkTimer) clearTimeout(room.afkTimer);
+                if (room.actionTimer) clearTimeout(room.actionTimer); if (room.turnTimer) clearTimeout(room.turnTimer); if (room.afkTimer) clearTimeout(room.afkTimer);
                 setTimeout(() => { delete rooms[roomId]; }, 10000);
             }, 3000);
         }
-    } 
-    else if (alivePlayers.length === 1 && presentPlayers.length > 1) {
-        const roundWinner = alivePlayers[0];
-        initiateRoundEnd(roomId, roundWinner);
+    } else if (alivePlayers.length === 1 && presentPlayers.length > 1) {
+        const roundWinner = alivePlayers[0]; initiateRoundEnd(roomId, roundWinner);
     }
 }
 
@@ -1271,18 +1182,14 @@ function updateAll(roomId) {
         const room = rooms[roomId]; if(!room) return;
         let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
         const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
-        const duelInfo = (['dueling','rip_decision','penalty_decision'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type, triggerCard: room.duelState.triggerCard } : null;
+        const duelInfo = (['dueling','rip_decision','penalty_decision', 'animating_penalty', 'animating_rip'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type, triggerCard: room.duelState.triggerCard } : null;
 
-        const leaderboard = Object.keys(room.scores).map(uid => {
-            const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); 
-            if(pl) return { name: pl.name, score: room.scores[uid] }; return null;
-        }).filter(x=>x).sort((a,b) => b.score - a.score);
-
+        const leaderboard = Object.keys(room.scores).map(uid => { const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); if(pl) return { name: pl.name, score: room.scores[uid] }; return null; }).filter(x=>x).sort((a,b) => b.score - a.score);
         const activePlayers = room.players.filter(p => !p.hasLeft);
 
-        const pack = { state: room.gameState, roomId: roomId, players: activePlayers.map((p) => {
+        const pack = { state: room.gameState, roomId: roomId, librePending: room.librePending, players: activePlayers.map((p) => {
             const pIndex = room.players.findIndex(x => x.uuid === p.uuid);
-            return { name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && pIndex === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected, personalDebt: p.personalDebt };
+            return { name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (['playing', 'animating_penalty', 'animating_rip'].includes(room.gameState) && pIndex === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected, personalDebt: p.personalDebt };
         }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard, timerEndsAt: room.timerEndsAt };
         
         activePlayers.forEach(p => {
@@ -1292,7 +1199,6 @@ function updateAll(roomId) {
                 io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand); io.to(p.id).emit('chatHistory', room.chatHistory);
             }
         });
-        
         manageTimers(roomId); 
     } catch(e) { console.error("Error UpdateAll:", e); }
 }
@@ -1309,16 +1215,22 @@ app.get('/', (req, res) => {
     <style>
         * { box-sizing: border-box; }
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: transparent; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background-color 0.5s; }
         
+        /* NUEVO: CICLO DE FONDO ANIMADO Y PARTICULAS */
+        .bg-cycle { animation: bgCycle 20s infinite ease-in-out; }
+        @keyframes bgCycle { 0% { background-color: #c0392b; } 25% { background-color: #2980b9; } 50% { background-color: #27ae60; } 75% { background-color: #f1c40f; } 100% { background-color: #c0392b; } }
+        
+        .falling-bg-card { position: absolute; top: -100px; background: #111; color: white; border: 2px solid #555; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; z-index: 1; pointer-events: none; opacity: 0.6; animation: fall linear forwards; box-shadow: 0 0 10px black; }
+        @keyframes fall { to { transform: translateY(120vh) rotate(360deg); } }
+
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         
-        .login-bg { z-index: 2000; background: linear-gradient(-45deg, #1a252f, #2c3e50, #2980b9, #8e44ad); background-size: 400% 400%; animation: gradientBG 10s ease infinite; }
-        @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-        .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(255,255,255,0.4); animation: floatLogo 3s ease-in-out infinite; }
-        @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(255,255,255,0.6); } 100% { transform: translateY(0px); } }
+        .login-bg { z-index: 2000; background: transparent; }
+        .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(0,0,0,0.8); animation: floatLogo 3s ease-in-out infinite; }
+        @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(0,0,0,0.9); } 100% { transform: translateY(0px); } }
         
-        #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); }
+        #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); background: #1e272e; }
         #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
         #game-over-screen { background: rgba(0,0,0,0.95); z-index: 200000; text-align: center; border: 5px solid gold; flex-direction: column; justify-content: center; align-items: center; }
         
@@ -1327,13 +1239,7 @@ app.get('/', (req, res) => {
         .active-stage { display: flex; animation: fadeIn 0.5s; }
         .score-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 0.6s ease-in-out; text-shadow: 0 0 10px black; z-index: 160000; }
 
-        #round-start-banner {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0);
-            background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px;
-            color: white; padding: 30px; text-align: center; z-index: 200000;
-            box-shadow: 0 0 30px gold; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none;
-        }
+        #round-start-banner { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px; color: white; padding: 30px; text-align: center; z-index: 200000; box-shadow: 0 0 30px gold; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none; }
         #round-start-banner.show { transform: translate(-50%, -50%) scale(1); }
 
         .rank-row { display: flex; justify-content: space-between; width: 80%; max-width: 400px; padding: 15px; margin: 8px 0; background: rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transform: translateY(20px); transition: all 0.5s; font-size: 22px; }
@@ -1364,16 +1270,13 @@ app.get('/', (req, res) => {
         .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
         .is-dead { text-decoration: line-through; opacity: 0.6; }
         
-        /* Efecto destello para robar/jugar cartas */
         @keyframes flashAction { 0% { box-shadow: 0 0 0px white; transform: scale(1); } 50% { box-shadow: 0 0 20px gold; transform: scale(1.15); } 100% { box-shadow: 0 0 0px white; transform: scale(1); } }
         .flash-action { animation: flashAction 0.4s ease-out; z-index: 9999; }
 
         #alert-zone { position: fixed; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; transition: top 0.3s ease-out; gap: 10px; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; pointer-events: auto; }
         
-        /* NUEVO: ESTILO PARA LA DEUDA PERSONAL DE CARTAS */
         #personal-debt-display { font-size: 20px; color: white; text-shadow: 0 0 5px black; display: none; background: rgba(231, 76, 60, 0.95); padding: 15px 20px; border-radius: 10px; border: 3px solid white; pointer-events: auto; width: 90%; max-width: 350px; text-align: center; line-height: 1.3; animation: pulseRed 1s infinite alternate; box-shadow: 0 0 20px red; }
-        
         #penalty-display { font-size: 20px; color: #ff4757; text-shadow: 0 0 5px red; display: none; background: rgba(0,0,0,0.9); padding: 10px 15px; border-radius: 8px; border: 2px solid red; pointer-events: auto; width: 85%; max-width: 320px; text-align: center; line-height: 1.3; transform: translateY(-30px); animation: pulseRed 1s infinite alternate; }
         @keyframes pulseRed { from { box-shadow: 0 0 10px red; } to { box-shadow: 0 0 25px red; } }
         
@@ -1400,7 +1303,11 @@ app.get('/', (req, res) => {
         @keyframes slideUp { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .drawn-card { animation: slideUp 0.5s ease-out; border: 2px solid gold; }
 
-        body.bg-rojo { background-color: #4a1c1c !important; } body.bg-azul { background-color: #1c2a4a !important; } body.bg-verde { background-color: #1c4a2a !important; } body.bg-amarillo { background-color: #4a451c !important; }
+        body.bg-rojo #game-area { background-color: #4a1c1c !important; } 
+        body.bg-azul #game-area { background-color: #1c2a4a !important; } 
+        body.bg-verde #game-area { background-color: #1c4a2a !important; } 
+        body.bg-amarillo #game-area { background-color: #4a451c !important; }
+
         .color-circle { width: 70px; height: 70px; border-radius: 50%; display: inline-block; margin: 10px; cursor: pointer; border: 4px solid #fff; }
         .zombie-btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #333; color: white; border: 1px solid #666; font-size: 18px; cursor: pointer; border-radius: 10px; }
         
@@ -1422,7 +1329,6 @@ app.get('/', (req, res) => {
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
         
-        /* ANIMACIONES Y ESTILOS DEL CLASH DE DUELOS */
         #duel-clash-zone { display: none; flex-direction: row; justify-content: center; align-items: center; width: 100%; gap: 30px; margin: 30px 0; }
         @keyframes slideRightHit { 0% { transform: translateX(-150px); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(20px); } }
         @keyframes slideLeftHit { 0% { transform: translateX(150px); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(-20px); } }
@@ -1435,23 +1341,24 @@ app.get('/', (req, res) => {
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-        /* BLOQUEO ABSOLUTO DE CHAT Y BOTONES EN DUELOS / RIP */
+        /* BLOQUEOS */
         body.state-dueling #game-area, body.state-dueling #hand-zone, body.state-dueling #action-bar, body.state-dueling .hud-btn, body.state-dueling #chat-win, body.state-dueling #alert-zone { display: none !important; }
         body.state-dueling #duel-screen { display: flex !important; }
         body.state-rip #game-area, body.state-rip #hand-zone, body.state-rip #action-bar, body.state-rip .hud-btn, body.state-rip #chat-win, body.state-rip #alert-zone { display: none !important; }
         body.state-rip #rip-screen { display: flex !important; } 
 
-        .lobby-row { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 300px; margin-bottom: 10px; background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 5px; }
-        .lobby-name { display: flex; align-items: center; gap: 10px; }
+        .lobby-row { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 300px; margin-bottom: 10px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; }
+        .lobby-name { display: flex; align-items: center; gap: 10px; font-size:18px; font-weight:bold; }
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 30px; }
         
         #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
         
-        .flying-card { position: fixed; width: 70px; height: 100px; background: #fff; border-radius: 8px; z-index: 50000; transition: all 0.5s ease-in-out; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; }
+        /* NUEVO: CLASE PARA CARTAS VOLADORAS UNIVERSALES */
+        .universal-flying-card { position: fixed; width: 70px; height: 100px; border-radius: 8px; z-index: 50000; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; box-shadow: 0 5px 15px rgba(0,0,0,0.8); transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1); pointer-events: none; }
     </style>
 </head>
-<body>
+<body class="bg-cycle">
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
     <div id="login" class="screen login-bg" style="display:flex;">
@@ -1469,9 +1376,9 @@ app.get('/', (req, res) => {
     <div id="lobby" class="screen login-bg">
         <button onclick="playUI(); toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
         <h1 class="logo-title" style="font-size: 40px;">Sala: <span id="lobby-code" style="color:gold;"></span></h1>
-        <div id="lobby-link-container"><button onclick="playUI(); copyLink()">🔗 Link</button></div>
+        <div id="lobby-link-container"><button onclick="playUI(); copyLink()" style="background:#34495e; color:white; border:none; padding:10px 20px; border-radius:20px; cursor:pointer;">🔗 Copiar Link</button></div>
         <div id="lobby-users"></div>
-        <button id="start-btn" onclick="playUI(); start()" class="btn-main" style="display:none; background:#2ecc71; border:2px solid white;">EMPEZAR</button>
+        <button id="start-btn" onclick="playUI(); start()" class="btn-main" style="display:none; background:#2ecc71; border:2px solid white; font-weight:bold; font-size:24px;">EMPEZAR</button>
         <p id="wait-msg" style="display:none;">Esperando...</p>
     </div>
     
@@ -1544,11 +1451,11 @@ app.get('/', (req, res) => {
         <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
         <div style="padding:0 10px; text-align:left; line-height:1.7; font-size: 15px;">
             <h3 style="color:#2ecc71;">1. OBJETIVO DEL JUEGO</h3>
-            <p>El juego se desarrolla por rondas. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano. Cuando un jugador lo logra, la ronda termina y <b>recolecta los puntos de las cartas que les quedaron a los demás jugadores</b> en sus manos. El primer jugador en acumular <b>800 puntos</b> será el ganador absoluto.</p>
+            <p>El juego se desarrolla por rondas. El objetivo es ser el primero en quedarse sin cartas. Al lograrlo, la ronda termina y <b>recolectas los puntos de las cartas de los rivales</b>. El primero en sumar <b>800 puntos</b> gana.</p>
             
             <h3 style="color:#2ecc71;">2. ¿CÓMO JUGAR?</h3>
-            <p>En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta de la mesa. Si no tienes o no quieres jugarla, toca el mazo para robar. Si te sirve, puedes tirarla; si no, presiona "PASAR".</p>
-            <p><b>JUGADAS MÚLTIPLES (Mantén presionada una carta para activar):</b></p>
+            <p>Debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la mesa. Si no tienes o no quieres, toca el mazo. Si te sirve, tírala; si no, presiona "PASAR".</p>
+            <p><b>JUGADAS MÚLTIPLES (Mantén presionada una carta para seleccionar):</b></p>
             <ul>
                 <li><b>🪜 Escalera:</b> 3 o más cartas consecutivas del <b>mismo color</b>.</li>
                 <li><b>✨ Combo "1 y 1/2":</b> Agrupa 2, 4 o 6 cartas para formar 3, 6 o 9 respectivamente. Debe coincidir con el número de la mesa.</li>
@@ -1557,7 +1464,7 @@ app.get('/', (req, res) => {
 
             <h3 style="color:#2ecc71;">3. CARTAS SUPREMAS Y DUELOS</h3>
             <ul>
-                <li><span class="min-c mc-negro">+12</span> / <span class="min-c mc-negro">SS</span>: Castigos letales. El jugador puede aceptar el castigo o salvarse batiéndose a duelo.</li>
+                <li><span class="min-c mc-negro">+12</span> / <span class="min-c mc-negro">SS</span>: Castigos letales. Puedes aceptar robarlas o salvarte batiéndote a duelo.</li>
                 <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> El siguiente jugador debe batirse a duelo a muerte (Fuego 🔥 derrite Hielo ❄️, Hielo congela Agua 💧, Agua apaga Fuego). Quien pierde queda eliminado.</li>
                 <li><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Defiende castigos numéricos. Regalas 1 carta y descartas la que quieras.</li>
                 <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Anula castigos, resucita muertos (RIP) y permite elegir el color.</li>
@@ -1668,16 +1575,27 @@ app.get('/', (req, res) => {
     <script>
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
-        let isChatOpen = false; let unreadCount = 0;
-        let ladderMode = false; let ladderSelected = []; 
+        let isChatOpen = false; let unreadCount = 0; let ladderMode = false; let ladderSelected = []; 
         let myUUID = localStorage.getItem('uno_uuid');
         
-        let pressTimer;
-        let pendingColorForRevive = null;
-        let pendingLibreContext = null; 
-        let clientTimerInterval = null; 
-        
+        let pressTimer; let pendingColorForRevive = null; let pendingLibreContext = null; let clientTimerInterval = null; 
         let hasPlayedIntro = false;
+
+        // NUEVO: Generador de partículas de cartas en el menú
+        function createFallingCard() {
+            if(document.body.classList.contains('playing-state')) return; 
+            const cards = ['+12', 'SS', '🪦', '❤️', '🕊️', '+4', '🎨', 'X', 'R'];
+            const card = cards[Math.floor(Math.random() * cards.length)];
+            const el = document.createElement('div');
+            el.className = 'falling-bg-card';
+            el.innerText = card;
+            el.style.left = Math.random() * 100 + 'vw';
+            el.style.animationDuration = (Math.random() * 5 + 8) + 's'; 
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 13000);
+        }
+        setInterval(createFallingCard, 1200);
+
         function playUI() { 
             if(!hasPlayedIntro) { 
                 const a = new Audio('https://cdn.freesound.org/previews/511/511484_6890478-lq.mp3'); 
@@ -1696,15 +1614,11 @@ app.get('/', (req, res) => {
             const now = Date.now();
             if (now - lastInteractionTime > 5000) { 
                 lastInteractionTime = now;
-                if (document.body.classList.contains('playing-state')) {
-                    socket.emit('imHere'); 
-                }
+                if (document.body.classList.contains('playing-state')) { socket.emit('imHere'); }
             }
         }
-        document.addEventListener('mousemove', reportActivity);
-        document.addEventListener('touchstart', reportActivity);
-        document.addEventListener('click', reportActivity);
-        document.addEventListener('keydown', reportActivity);
+        document.addEventListener('mousemove', reportActivity); document.addEventListener('touchstart', reportActivity);
+        document.addEventListener('click', reportActivity); document.addEventListener('keydown', reportActivity);
 
         function forceCloseModals() {
             document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none');
@@ -1717,78 +1631,46 @@ app.get('/', (req, res) => {
             const pZone = document.getElementById('players-zone');
             if (!pZone || pZone.offsetHeight === 0) return;
             const rect = pZone.getBoundingClientRect();
-            
             const baseTop = rect.bottom + 10; 
-
-            const buttons = [
-                document.getElementById('global-leave-btn'),
-                document.getElementById('rules-btn'),
-                document.getElementById('score-btn'),
-                document.getElementById('chat-btn'),
-                document.getElementById('uno-main-btn')
-            ];
+            const buttons = [ document.getElementById('global-leave-btn'), document.getElementById('rules-btn'), document.getElementById('score-btn'), document.getElementById('chat-btn'), document.getElementById('uno-main-btn') ];
 
             const screenW = window.innerWidth;
-            const btnSize = 50;
-            let gap = 15; 
-            
-            if (screenW < 360) gap = 8;
-            if (screenW < 330) gap = 4;
+            const btnSize = 50; let gap = 15; 
+            if (screenW < 360) gap = 8; if (screenW < 330) gap = 4;
 
             const totalW = (btnSize * 5) + (gap * 4);
             let startLeft = (screenW - totalW) / 2; 
 
             buttons.forEach((btn, idx) => {
-                if (btn) {
-                    btn.style.top = baseTop + 'px';
-                    btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px';
-                    btn.style.right = 'auto'; 
-                }
+                if (btn) { btn.style.top = baseTop + 'px'; btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px'; btn.style.right = 'auto'; }
             });
 
             const lowerElements = ['uno-menu', 'chat-win'];
-            lowerElements.forEach(function(id) {
-                const el = document.getElementById(id);
-                if(el) { el.style.top = (baseTop + 60) + 'px'; }
-            });
-
-            const alertZone = document.getElementById('alert-zone');
-            if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
+            lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) { el.style.top = (baseTop + 60) + 'px'; } });
+            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
         }
         window.addEventListener('resize', repositionHUD);
 
-        socket.on('connect', () => { 
-            document.getElementById('reconnect-overlay').style.display = 'none';
-            myId = socket.id; 
-            socket.emit('checkSession', myUUID); 
-        });
-        
+        socket.on('connect', () => { document.getElementById('reconnect-overlay').style.display = 'none'; myId = socket.id; socket.emit('checkSession', myUUID); });
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
         
         socket.on('requireLogin', () => { 
-            document.getElementById('reconnect-overlay').style.display = 'none'; 
-            changeScreen('login'); 
+            document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); 
             document.getElementById('global-leave-btn').style.display = 'none';
-            document.getElementById('lobby-users').innerHTML = ''; 
-            document.getElementById('players-zone').innerHTML = '';
-            document.getElementById('hand-zone').innerHTML = '';
-            document.getElementById('hand-zone').style.display = 'none';
+            document.getElementById('lobby-users').innerHTML = ''; document.getElementById('players-zone').innerHTML = '';
+            document.getElementById('hand-zone').innerHTML = ''; document.getElementById('hand-zone').style.display = 'none';
         });
 
         socket.on('showAFKPrompt', () => {
             document.getElementById('afk-modal').style.display = 'flex';
-            const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3');
-            a.volume = 0.5; a.play().catch(()=>{});
+            const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3'); a.volume = 0.5; a.play().catch(()=>{});
         });
 
-        function imHere() {
-            document.getElementById('afk-modal').style.display = 'none';
-            socket.emit('imHere');
-        }
+        function imHere() { document.getElementById('afk-modal').style.display = 'none'; socket.emit('imHere'); }
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
         
-        function startLibreLogic(cardId) {
+        socket.on('startLibreLogic', (cardId) => {
             if(myHand.length < 3) return; 
             document.getElementById('action-bar').style.display = 'none';
             libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
@@ -1797,12 +1679,10 @@ app.get('/', (req, res) => {
             currentPlayers.forEach(p => {
                 if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) {
                     const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name;
-                    b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); };
-                    div.appendChild(b);
+                    b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); }; div.appendChild(b);
                 }
             });
-        }
-        socket.on('startLibreLogic', startLibreLogic);
+        });
 
         function renderGiftHand() {
             const div = document.getElementById('libre-gift-hand'); div.innerHTML = '';
@@ -1810,8 +1690,7 @@ app.get('/', (req, res) => {
                 if(c.id === libreState.cardId) return;
                 const b = document.createElement('div'); b.className = 'mini-card';
                 b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); };
-                div.appendChild(b);
+                b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); }; div.appendChild(b);
             });
         }
         function renderDiscardHand() {
@@ -1822,30 +1701,23 @@ app.get('/', (req, res) => {
                 b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
                 b.onclick = () => { 
                     libreState.discardId = c.id; 
-                    pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId };
-                    document.getElementById('libre-modal').style.display = 'none';
-                    libreState.active = false;
-                    handleCardClick(c);
+                    pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId, discardId: libreState.discardId };
+                    document.getElementById('libre-modal').style.display = 'none'; libreState.active = false;
+                    socket.emit('playCard', null, null, null, pendingLibreContext); 
+                    pendingLibreContext = null;
                 };
                 pool.appendChild(b);
             });
         }
         
-        function cancelLibre() {
-            document.getElementById('libre-modal').style.display = 'none';
-            if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex';
-            libreState = { active: false };
-            pendingLibreContext = null;
-        }
-
+        function cancelLibre() { document.getElementById('libre-modal').style.display = 'none'; if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex'; libreState = { active: false }; pendingLibreContext = null; }
         function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); document.getElementById('step-'+n).classList.add('active'); }
         
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
         function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
-        function showJoin() { changeScreen('join-menu'); }
-        function backToLogin() { changeScreen('login'); }
+        function showJoin() { changeScreen('join-menu'); } function backToLogin() { changeScreen('login'); }
         function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
         function copyLink() { const code = document.getElementById('lobby-code').innerText; const url = window.location.origin + '/?room=' + code; if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(url).then(() => { alert('¡Link copiado!'); }).catch(err => { prompt("Copia:", url); }); } else { prompt("Copia:", url); } }
         function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
@@ -1853,9 +1725,7 @@ app.get('/', (req, res) => {
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         
-        // --- MANEJO DE EFECTOS GRÁFICOS ---
         socket.on('cardPlayedEffect', d => { 
-            if(d.color) document.body.className = 'bg-' + d.color; 
             if(d.playerName) {
                 const badges = document.querySelectorAll('.player-badge');
                 badges.forEach(b => { if(b.innerText.includes(d.playerName)) { b.classList.add('flash-action'); setTimeout(()=>b.classList.remove('flash-action'), 400); } });
@@ -1869,37 +1739,70 @@ app.get('/', (req, res) => {
             }
         });
 
-        // --- MANEJO DE ESTADO DE DUELO VISUAL (CLASH) ---
+        // NUEVO: SISTEMA UNIVERSAL DE CARTAS VOLADORAS
+        socket.on('animateCard', data => {
+            const el = document.createElement('div');
+            el.className = 'universal-flying-card';
+            el.style.backgroundColor = getBgColor(data.card);
+            el.style.color = (data.card.color==='amarillo'||data.card.color==='verde')?'black':'white';
+            el.innerText = getCardText(data.card);
+            
+            const isMe = (data.playerId === socket.id);
+            
+            if (isMe) {
+                el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.5)';
+            } else {
+                el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.5)';
+            }
+            
+            document.body.appendChild(el);
+            
+            setTimeout(() => {
+                const dest = document.getElementById('top-card').getBoundingClientRect();
+                el.style.top = dest.top + 'px'; el.style.left = dest.left + 'px';
+                el.style.transform = 'scale(1)';
+            }, 50);
+            setTimeout(() => el.remove(), 600);
+        });
+
+        socket.on('ladderAnimate', (data) => {
+            const isMe = (data.playerId === socket.id);
+            data.cards.forEach((c, i) => { 
+                setTimeout(() => { 
+                    const el = document.createElement('div'); el.className = 'universal-flying-card'; 
+                    el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; 
+                    el.innerText = getCardText(c); 
+                    if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.3)'; } 
+                    else { el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.3)'; }
+                    document.body.appendChild(el); 
+                    setTimeout(() => { 
+                        const dest = document.getElementById('top-card').getBoundingClientRect();
+                        el.style.top = dest.top + 'px'; el.style.left = dest.left + 'px'; el.style.transform = 'scale(1)'; 
+                    }, 50); 
+                    setTimeout(() => el.remove(), 600); 
+                }, i * 200); 
+            });
+        });
+
         socket.on('duelClash', data => {
-            document.getElementById('duel-opts').style.display = 'none';
-            document.getElementById('duel-narrative').style.display = 'none';
-            document.getElementById('duel-clash-zone').style.display = 'flex';
-            
+            document.getElementById('duel-opts').style.display = 'none'; document.getElementById('duel-narrative').style.display = 'none'; document.getElementById('duel-clash-zone').style.display = 'flex';
             const emMap = { 'fuego': '🔥', 'hielo': '❄️', 'agua': '💧' };
-            document.getElementById('clash-att-name').innerText = data.attName;
-            document.getElementById('clash-def-name').innerText = data.defName;
-            document.getElementById('clash-att-emoji').innerText = emMap[data.attChoice] || '❓';
-            document.getElementById('clash-def-emoji').innerText = emMap[data.defChoice] || '❓';
-            
-            document.body.style.animation = 'screenShake 0.5s';
-            setTimeout(() => document.body.style.animation = '', 500);
+            document.getElementById('clash-att-name').innerText = data.attName; document.getElementById('clash-def-name').innerText = data.defName;
+            document.getElementById('clash-att-emoji').innerText = emMap[data.attChoice] || '❓'; document.getElementById('clash-def-emoji').innerText = emMap[data.defChoice] || '❓';
+            document.body.style.animation = 'screenShake 0.5s'; setTimeout(() => document.body.style.animation = '', 500);
         });
 
         socket.on('updateState', s => {
             currentPlayers = s.players;
             
-            if(s.state === 'waiting' || s.state === 'playing' || s.state === 'round_ending') {
+            if(s.state === 'waiting' || s.state === 'playing' || s.state === 'round_ending' || s.state === 'animating_penalty' || s.state === 'animating_rip') {
                 document.getElementById('global-leave-btn').style.display = 'flex';
                 const lc = document.getElementById('lobby-code'); if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
-            } else {
-                document.getElementById('global-leave-btn').style.display = 'none';
-            }
+            } else { document.getElementById('global-leave-btn').style.display = 'none'; }
 
             if(s.leaderboard) {
                 const slist = document.getElementById('score-list');
-                slist.innerHTML = s.leaderboard.map(function(u, i) {
-                    return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span></div>';
-                }).join('');
+                slist.innerHTML = s.leaderboard.map(function(u, i) { return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span></div>'; }).join('');
             }
 
             if (clientTimerInterval) { clearInterval(clientTimerInterval); clientTimerInterval = null; }
@@ -1907,15 +1810,11 @@ app.get('/', (req, res) => {
 
             if (s.timerEndsAt) {
                 const updateTimer = () => {
-                    let remaining = Math.ceil((s.timerEndsAt - Date.now()) / 1000);
-                    if (remaining < 0) remaining = 0;
-                    const ripTimerEl = document.getElementById('decision-timer');
-                    const duelTimerEl = document.getElementById('duel-timer');
-                    if (ripTimerEl) ripTimerEl.innerText = remaining;
-                    if (duelTimerEl) duelTimerEl.innerText = remaining;
+                    let remaining = Math.ceil((s.timerEndsAt - Date.now()) / 1000); if (remaining < 0) remaining = 0;
+                    const ripTimerEl = document.getElementById('decision-timer'); const duelTimerEl = document.getElementById('duel-timer');
+                    if (ripTimerEl) ripTimerEl.innerText = remaining; if (duelTimerEl) duelTimerEl.innerText = remaining;
                 };
-                updateTimer(); 
-                clientTimerInterval = setInterval(updateTimer, 250);
+                updateTimer(); clientTimerInterval = setInterval(updateTimer, 250);
             }
 
             const me = s.players.find(p=>p.uuid===myUUID); const amITurning = me && me.isTurn;
@@ -1925,67 +1824,48 @@ app.get('/', (req, res) => {
             }
 
             if(s.state === 'waiting') {
+                document.body.classList.remove('playing-state');
                 const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin && p.uuid !== myUUID ? ('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>') : '') + '</div>').join('');
-                document.getElementById('lobby-users').innerHTML = list;
-                document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
-                changeScreen('lobby'); 
-                return;
+                document.getElementById('lobby-users').innerHTML = list; document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
+                changeScreen('lobby'); return;
             }
             
-            document.body.className = ''; 
-            
-            if(s.state === 'playing' || s.state === 'round_ending') {
+            if(s.state === 'playing' || s.state === 'round_ending' || s.state === 'animating_penalty' || s.state === 'animating_rip') {
                  changeScreen('game-area'); 
-                 
                  document.body.classList.add('playing-state'); 
                  if (s.state === 'round_ending') document.body.classList.add('state-round-ending');
+                 else document.body.classList.remove('state-round-ending');
                  
-                 if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
+                 if(s.activeColor) { document.body.className = 'playing-state bg-'+s.activeColor; }
+                 
                  document.getElementById('game-area').style.display = 'flex'; document.getElementById('hand-zone').style.display = 'flex';
                  document.getElementById('round-overlay').style.display = 'none'; 
-                 if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
+                 
+                 if(document.getElementById('libre-modal').style.display !== 'flex' && s.state === 'playing') { document.getElementById('action-bar').style.display = 'flex'; }
+                 if (s.state !== 'playing') document.getElementById('action-bar').style.display = 'none'; // Oculto en animaciones
+
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
                  document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
                  
-                 document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
-                 requestAnimationFrame(repositionHUD);
+                 document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex'); requestAnimationFrame(repositionHUD);
 
-                 // DEUDA PERSONAL UI
-                 if (me && me.personalDebt > 0) {
-                     document.getElementById('personal-debt-display').style.display = 'block';
-                     document.getElementById('pd-num').innerText = me.personalDebt;
-                 } else {
-                     document.getElementById('personal-debt-display').style.display = 'none';
-                 }
+                 if (me && me.personalDebt > 0) { document.getElementById('personal-debt-display').style.display = 'block'; document.getElementById('pd-num').innerText = me.personalDebt; } 
+                 else { document.getElementById('personal-debt-display').style.display = 'none'; }
 
                  if(s.topCard) {
                      const tc = s.topCard; const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white')); el.innerText = getCardText(tc);
                      if(tc.value === '1 y 1/2') { el.style.fontSize = '20px'; el.style.padding = '0 5px'; } else { el.style.fontSize = '24px'; el.style.padding = '0'; }
                  }
                  
-                 if (me && me.isTurn && me.hasDrawn && s.pendingPenalty === 0 && me.personalDebt === 0 && s.state !== 'round_ending') { 
-                     document.getElementById('btn-pass').style.display = 'inline-block'; 
-                 } else { 
-                     document.getElementById('btn-pass').style.display = 'none'; 
-                 }
+                 if (me && me.isTurn && me.hasDrawn && s.pendingPenalty === 0 && me.personalDebt === 0 && s.state === 'playing' && !s.librePending) { document.getElementById('btn-pass').style.display = 'inline-block'; } 
+                 else { document.getElementById('btn-pass').style.display = 'none'; }
 
-                 if(me && me.isTurn && s.pendingPenalty > 0 && s.state !== 'round_ending') { 
-                     document.getElementById('penalty-display').style.display='block'; 
-                     document.getElementById('pen-num').innerText = s.pendingPenalty; 
-                 } else { 
-                     document.getElementById('penalty-display').style.display='none'; 
-                 }
-
-                 if (s.state === 'round_ending') {
-                     document.getElementById('action-bar').style.display = 'none';
-                 }
+                 if(me && me.isTurn && s.pendingPenalty > 0 && s.state === 'playing') { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText = s.pendingPenalty; } 
+                 else { document.getElementById('penalty-display').style.display='none'; }
             } 
             else if (s.state === 'rip_decision' || s.state === 'penalty_decision') {
-                changeScreen('game-area'); 
-                forceCloseModals(); 
-                document.body.classList.add('state-rip');
-                
+                changeScreen('game-area'); forceCloseModals(); document.body.classList.add('state-rip');
                 if(s.duelInfo.defenderId === myUUID) { 
                     document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; 
                     const msgDiv = document.getElementById('rip-msg-custom'); const duelWarn = document.getElementById('duel-warning'); const btnAccept = document.getElementById('btn-accept-penalty'); const btnSurrender = document.getElementById('btn-surrender'); const btnDuel = document.getElementById('btn-duel-start');
@@ -1994,46 +1874,31 @@ app.get('/', (req, res) => {
                         document.getElementById('rip-title').innerText = "💀 RIP 💀"; 
                         msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te retó a Duelo usando un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid gray; background:black; padding:2px 8px; border-radius:5px;">RIP</span>'; 
                         duelWarn.style.display = 'none'; btnAccept.style.display = 'none'; btnSurrender.style.display = 'inline-block'; btnDuel.style.display = 'inline-block'; 
-                    } 
-                    else { 
-                        document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; 
-                        const trig = s.duelInfo.triggerCard || "Castigo Supremo";
+                    } else { 
+                        document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; const trig = s.duelInfo.triggerCard || "Castigo Supremo";
                         msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te arrojó un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid red; background:black; padding:2px 8px; border-radius:5px;">' + trig + '</span>.<br><br>¿Aceptás el castigo o te batís a duelo para intentar salvarte?';
                         duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; 
                     }
                 } else { 
                     document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
-                    document.getElementById('duel-clash-zone').style.display = 'none';
-                    document.getElementById('duel-narrative').style.display = 'block';
+                    document.getElementById('duel-clash-zone').style.display = 'none'; document.getElementById('duel-narrative').style.display = 'block';
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; 
                 }
             }
             else if (s.state === 'dueling') {
-                changeScreen('game-area'); 
-                forceCloseModals(); 
-                document.body.classList.add('state-dueling');
-                document.getElementById('rip-screen').style.display = 'none'; 
-                document.getElementById('duel-screen').style.display = 'flex';
-                document.getElementById('duel-clash-zone').style.display = 'none';
-                document.getElementById('duel-narrative').style.display = 'block';
+                changeScreen('game-area'); forceCloseModals(); document.body.classList.add('state-dueling');
+                document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex';
+                document.getElementById('duel-clash-zone').style.display = 'none'; document.getElementById('duel-narrative').style.display = 'block';
 
-                document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; 
-                document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; 
-                document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
-                
+                document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
                 const amFighter = (myUUID === s.duelInfo.attackerId || myUUID === s.duelInfo.defenderId); 
                 
                 if(amFighter) {
-                    document.getElementById('duel-opts').style.display = 'flex';
-                    const isTurn = (s.duelInfo.turn === myUUID); 
+                    document.getElementById('duel-opts').style.display = 'flex'; const isTurn = (s.duelInfo.turn === myUUID); 
                     document.getElementById('duel-turn-msg').innerText = isTurn ? "¡TU TURNO! Elige un ataque:" : "Esperando movimiento del oponente..."; 
                     document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
                     if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).classList.add('selected'); } else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
-                } else { 
-                    // VISTA PURA PARA ESPECTADORES
-                    document.getElementById('duel-opts').style.display = 'none';
-                    document.getElementById('duel-turn-msg').innerText = ""; 
-                }
+                } else { document.getElementById('duel-opts').style.display = 'none'; document.getElementById('duel-turn-msg').innerText = ""; }
             }
         });
 
@@ -2065,34 +1930,21 @@ app.get('/', (req, res) => {
         }
 
         function cancelLadder() { ladderMode = false; ladderSelected = []; document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected-ladder')); updateLadderUI(); }
-        
-        function updateLadderUI() { 
-            const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; 
-            document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; 
-            document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none'; 
-        }
+        function updateLadderUI() { const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none'; }
 
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'flex') return;
-            
-            // BLOQUEO POR DEUDA
-            if (document.getElementById('personal-debt-display').style.display === 'block' && !pendingLibreContext) {
-                 const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Paga tu deuda! Toca el mazo rojo."; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); 
-                 return;
-            }
+            if (document.getElementById('personal-debt-display').style.display === 'block' && !pendingLibreContext) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Paga tu deuda! Toca el mazo rojo."; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); return; }
 
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if (hasPenalty && !pendingLibreContext) {
                 if (c.value !== 'GRACIA' && c.value !== 'LIBRE') {
                     const isPenaltyCard = ['+2', '+4', '+12', 'SALTEO SUPREMO'].includes(c.value);
-                    if (!isPenaltyCard) {
-                        const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Cumple el castigo tocando el mazo, acumúlalo o defiéndete!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); 
-                        return;
-                    }
+                    if (!isPenaltyCard) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Cumple el castigo tocando el mazo, acumúlalo o defiéndete!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); return; }
                 }
             }
 
-            if(c.value === 'LIBRE' && !pendingLibreContext) { socket.emit('playCard', c.id, null, null, null); return; }
+            if(c.value === 'LIBRE' && !pendingLibreContext) { socket.emit('playLibreInitial', c.id); return; }
             if(c.value === 'GRACIA') {
                 const hasZombies = currentPlayers.some(p => p.isDead); const isDecisionPhase = (document.body.classList.contains('state-rip'));
                 if(isDecisionPhase) { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; return; }
@@ -2101,28 +1953,18 @@ app.get('/', (req, res) => {
             
             if(c.color==='negro' && c.value!=='GRACIA') { 
                 if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') { 
-                    if(c.value==='RIP') { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; } 
-                    else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
-                } 
-                else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
-            } else {
-                socket.emit('playCard', c.id, null, null, pendingLibreContext);
-                pendingLibreContext = null;
-            }
+                    if(c.value==='RIP') { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; } else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
+                } else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
+            } else { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; }
         }
 
         function showGraceModal() { document.getElementById('grace-color-modal').style.display = 'flex'; }
-        function confirmGraceColor(confirmed) { 
-            document.getElementById('grace-color-modal').style.display = 'none'; 
-            if (confirmed) { pendingColorForRevive = null; pendingGrace = false; document.getElementById('color-picker').style.display='flex'; } 
-            else { socket.emit('playCard', pendingCard, null, null, pendingLibreContext); pendingLibreContext = null; pendingCard = null; } 
-        }
+        function confirmGraceColor(confirmed) { document.getElementById('grace-color-modal').style.display = 'none'; if (confirmed) { pendingColorForRevive = null; pendingGrace = false; document.getElementById('color-picker').style.display='flex'; } else { socket.emit('playCard', pendingCard, null, null, pendingLibreContext); pendingLibreContext = null; pendingCard = null; } }
         
         function submitLadder() { 
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if(hasPenalty) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); cancelLadder(); return; }
-            if(ladderSelected.length < 2) return; 
-            socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
+            if(ladderSelected.length < 2) return; socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
         }
 
         function changeScreen(id) { 
@@ -2131,13 +1973,10 @@ app.get('/', (req, res) => {
             document.getElementById(id).style.display='flex'; 
             
             if (id === 'lobby') {
-                const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; 
-                const lv = document.getElementById('global-leave-btn');
-                if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
+                const cb = document.getElementById('chat-btn'); cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; 
+                const lv = document.getElementById('global-leave-btn'); if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
             } else if (id === 'game-area') {
-                const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); 
+                const cb = document.getElementById('chat-btn'); cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); 
             }
         }
         
@@ -2145,62 +1984,29 @@ app.get('/', (req, res) => {
         function trySayUno() { if(myHand.length > 2) { const b=document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes anunciar si no es verdad!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); toggleUnoMenu(); return; } sayUno(); }
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
         
-        function toggleUnoMenu() { 
-            if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return; 
-            const m = document.getElementById('uno-menu'); m.style.display = (m.style.display==='flex'?'none':'flex'); closeDenounceList(); 
-        }
-        
+        function toggleUnoMenu() { if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return; const m = document.getElementById('uno-menu'); m.style.display = (m.style.display==='flex'?'none':'flex'); closeDenounceList(); }
         function showDenounceList() {
-            document.getElementById('uno-main-opts').style.display = 'none'; document.getElementById('uno-denounce-opts').style.display = 'block';
-            const cont = document.getElementById('denounce-list-container'); cont.innerHTML = '';
-            currentPlayers.forEach(p => {
-                if (p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) {
-                    const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.style.margin = '2px 0'; b.innerText = p.name;
-                    b.onclick = () => { socket.emit('reportUno', p.id); toggleUnoMenu(); }; cont.appendChild(b);
-                }
-            });
+            document.getElementById('uno-main-opts').style.display = 'none'; document.getElementById('uno-denounce-opts').style.display = 'block'; const cont = document.getElementById('denounce-list-container'); cont.innerHTML = '';
+            currentPlayers.forEach(p => { if (p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) { const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.style.margin = '2px 0'; b.innerText = p.name; b.onclick = () => { socket.emit('reportUno', p.id); toggleUnoMenu(); }; cont.appendChild(b); } });
         }
         function closeDenounceList() { document.getElementById('uno-main-opts').style.display = 'block'; document.getElementById('uno-denounce-opts').style.display = 'none'; }
 
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
-        function toggleChat(){ 
-            const w = document.getElementById('chat-win'); 
-            if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } 
-            else { 
-                w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; 
-            } 
-        }
+        function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } }
         
         function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
-        function toggleManual() { 
-            const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; 
-        }
+        function toggleManual() { const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
 
-        function pickCol(c){ 
-            document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; 
-            if(pendingGrace) { socket.emit('playGraceDefense',c); } else { socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null; }
-        }
+        function pickCol(c){ document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; if(pendingGrace) { socket.emit('playGraceDefense',c); } else { socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null; } }
         function ripResp(d){ socket.emit('ripDecision',d); } function pick(c){ socket.emit('duelPick',c); }
         
         let pendingReviveCardId = null;
         socket.on('askReviveConfirmation', (data) => { pendingReviveCardId = data.cardId; document.getElementById('revive-name').innerText = data.name; document.getElementById('revive-confirm-screen').style.display = 'flex'; });
-        function confirmRevive(confirmed) { 
-            document.getElementById('revive-confirm-screen').style.display = 'none'; 
-            if(pendingReviveCardId) { socket.emit('confirmReviveSingle', { cardId: pendingReviveCardId, confirmed: confirmed, chosenColor: pendingColorForRevive, libreContext: pendingLibreContext }); } 
-            pendingReviveCardId = null; pendingLibreContext = null;
-        }
-
-        socket.on('ladderAnimate', (data) => {
-            data.cards.forEach((c, i) => { setTimeout(() => { const el = document.createElement('div'); el.className = 'flying-card'; el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; el.innerText = getCardText(c); el.style.bottom = '150px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%)'; document.body.appendChild(el); setTimeout(() => { el.style.bottom = '50%'; el.style.opacity = '0'; el.style.transform = 'translate(-50%, -50%) scale(0.5)'; }, 50); setTimeout(() => el.remove(), 600); }, i * 200); });
-        });
+        function confirmRevive(confirmed) { document.getElementById('revive-confirm-screen').style.display = 'none'; if(pendingReviveCardId) { socket.emit('confirmReviveSingle', { cardId: pendingReviveCardId, confirmed: confirmed, chosenColor: pendingColorForRevive, libreContext: pendingLibreContext }); } pendingReviveCardId = null; pendingLibreContext = null; }
 
         socket.on('roundStarted', data => {
-            forceCloseModals(); 
-            const banner = document.getElementById('round-start-banner');
-            document.getElementById('rsb-round').innerText = "RONDA " + data.round;
-            document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
-            banner.style.display = 'flex'; void banner.offsetWidth; banner.classList.add('show');
-            setTimeout(() => { banner.classList.remove('show'); setTimeout(() => banner.style.display = 'none', 500); }, 3000);
+            forceCloseModals(); const banner = document.getElementById('round-start-banner'); document.getElementById('rsb-round').innerText = "RONDA " + data.round; document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
+            banner.style.display = 'flex'; void banner.offsetWidth; banner.classList.add('show'); setTimeout(() => { banner.classList.remove('show'); setTimeout(() => banner.style.display = 'none', 500); }, 3000);
         });
 
         function requestLeave() { socket.emit('requestLeave'); }
@@ -2208,21 +2014,9 @@ app.get('/', (req, res) => {
         socket.on('showLeaveAdminPrompt', () => { document.getElementById('leave-admin-modal').style.display = 'flex'; });
         function confirmLeave(choice) { document.getElementById('leave-normal-modal').style.display = 'none'; document.getElementById('leave-admin-modal').style.display = 'none'; socket.emit('confirmLeave', choice); }
         
-        socket.on('gamePaused', (data) => {
-            document.getElementById('pause-msg').innerText = data.message;
-            document.getElementById('pause-overlay').style.display = 'flex';
-            setTimeout(() => { document.getElementById('pause-overlay').style.display = 'none'; }, data.duration);
-        });
+        socket.on('gamePaused', (data) => { document.getElementById('pause-msg').innerText = data.message; document.getElementById('pause-overlay').style.display = 'flex'; setTimeout(() => { document.getElementById('pause-overlay').style.display = 'none'; }, data.duration); });
 
-        socket.on('roomCancelled', () => {
-            document.getElementById('action-bar').style.display = 'none';
-            document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
-            document.getElementById('round-overlay').style.display = 'none';
-            const goScreen = document.getElementById('game-over-screen');
-            goScreen.style.display = 'flex';
-            goScreen.innerHTML = '<h1 style="color:#e74c3c;">SALA CERRADA</h1><h2 style="color:white; margin-top:20px;">EL ANFITRIÓN ELIMINÓ ESTA PARTIDA</h2>';
-            setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 4000);
-        });
+        socket.on('roomCancelled', () => { document.getElementById('action-bar').style.display = 'none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); document.getElementById('round-overlay').style.display = 'none'; const goScreen = document.getElementById('game-over-screen'); goScreen.style.display = 'flex'; goScreen.innerHTML = '<h1 style="color:#e74c3c;">SALA CERRADA</h1><h2 style="color:white; margin-top:20px;">EL ANFITRIÓN ELIMINÓ ESTA PARTIDA</h2>'; setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 4000); });
 
         socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseModals(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
@@ -2234,8 +2028,7 @@ app.get('/', (req, res) => {
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
         
         socket.on('roundOver', async d => {
-            forceCloseModals(); 
-            document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
+            forceCloseModals(); document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';
             document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
             const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = 0; wPtsEl.innerText = "0 pts"; 
@@ -2263,31 +2056,15 @@ app.get('/', (req, res) => {
 
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'flex';
             const rankList = document.getElementById('ranking-list'); rankList.innerHTML = '';
-            d.leaderboard.forEach((u, i) => {
-                const row = document.createElement('div'); row.className = 'rank-row ' + (i===0 ? 'rank-gold' : '');
-                row.innerHTML = '<span>' + (i+1) + '. ' + u.name + '</span><span>' + parseFloat(u.score).toFixed(1) + ' pts</span>'; rankList.appendChild(row);
-            });
-            const rows = document.querySelectorAll('.rank-row');
-            for (let row of rows) { await new Promise(r => setTimeout(r, 600)); row.classList.add('visible'); }
+            d.leaderboard.forEach((u, i) => { const row = document.createElement('div'); row.className = 'rank-row ' + (i===0 ? 'rank-gold' : ''); row.innerHTML = '<span>' + (i+1) + '. ' + u.name + '</span><span>' + parseFloat(u.score).toFixed(1) + ' pts</span>'; rankList.appendChild(row); });
+            const rows = document.querySelectorAll('.rank-row'); for (let row of rows) { await new Promise(r => setTimeout(r, 600)); row.classList.add('visible'); }
         });
 
         socket.on('gameOver', d => {
-            forceCloseModals(); 
-            document.getElementById('action-bar').style.display = 'none'; 
-            document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
-            document.getElementById('round-overlay').style.display='none';
-            document.getElementById('game-over-screen').style.display='flex'; 
-            document.getElementById('winner-name').innerText = d.winner; 
-            
+            forceCloseModals(); document.getElementById('action-bar').style.display = 'none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
+            document.getElementById('round-overlay').style.display='none'; document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText = d.winner; 
             const fs = document.getElementById('final-score');
-            if (d.reason === 'desertion') {
-                fs.innerText = "¡Ganaste por deserción de tu oponente!";
-            } else if (d.reason === 'cancelled') {
-                fs.innerText = "El anfitrión terminó la partida.";
-            } else {
-                fs.innerText = "Puntaje Final: " + parseFloat(d.totalScore).toFixed(1);
-            }
-            
+            if (d.reason === 'desertion') { fs.innerText = "¡Ganaste por deserción de tu oponente!"; } else if (d.reason === 'cancelled') { fs.innerText = "El anfitrión terminó la partida."; } else { fs.innerText = "Puntaje Final: " + parseFloat(d.totalScore).toFixed(1); }
             setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},10000);
         });
         

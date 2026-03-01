@@ -859,6 +859,13 @@ function applyCardEffect(roomId, player, card, chosenColor) {
     if (player.hand.length === 0) initiateRoundEnd(roomId, player); else { advanceTurn(roomId, steps); updateAll(roomId); }
 }
 
+function getDuelNarrative(attName, defName, attChoice, defChoice) {
+    if (attChoice === defChoice) return `¡Choque de fuerzas! Ambos usaron ${attChoice}.`;
+    const winMap = { 'fuego': 'hielo', 'hielo': 'agua', 'agua': 'fuego' };
+    if (winMap[attChoice] === defChoice) return `¡El ${attChoice} de ${attName} venció al ${defChoice} de ${defName}!`;
+    return `¡La defensa de ${defChoice} de ${defName} soportó el ataque!`;
+}
+
 function resolveDuelRound(roomId, isTimeout = false) {
     try {
         const room = rooms[roomId]; if (!room) return;
@@ -973,7 +980,6 @@ app.get('/', (req, res) => {
         .bg-cycle { animation: bgCycle 20s infinite ease-in-out; }
         @keyframes bgCycle { 0% { background-color: #c0392b; } 25% { background-color: #2980b9; } 50% { background-color: #27ae60; } 75% { background-color: #f1c40f; } 100% { background-color: #c0392b; } }
         
-        /* CORRECCIÓN GENERAL: text-align center y white-space nowrap en todas las representaciones visuales de cartas */
         .falling-bg-card, .card-pile, .hand-card, .universal-flying-card, .mini-card { text-align: center; white-space: nowrap; }
 
         .falling-bg-card { position: absolute; top: -110px; border: 2px solid #fff; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; z-index: 1; pointer-events: none; opacity: 0.6; animation: fall linear forwards; box-shadow: 0 0 10px black; }
@@ -1291,7 +1297,6 @@ app.get('/', (req, res) => {
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
-        // Mantiene el diseño base de las partículas
         function createFallingCard() {
             if(document.body.classList.contains('playing-state')) return; 
             

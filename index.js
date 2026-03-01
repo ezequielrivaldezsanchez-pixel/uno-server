@@ -561,7 +561,6 @@ io.on('connection', (socket) => {
 
         let isLibreDiscard = false;
 
-        // EJECUCIÓN DEL COMBO LIBRE ALBEDRÍO
         if (libreContext) {
             const lIdx = player.hand.findIndex(c => c.id === libreContext.libreId);
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
@@ -946,7 +945,6 @@ function removeCards(player, ids) {
     ids.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
 }
 
-// CORRECCIÓN PUNTO 4 (Cuelgue "Recolectando" en ronda 4)
 function applyCardEffect(roomId, player, card, chosenColor) {
     const room = rooms[roomId]; let steps = 1;
     if (card.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
@@ -964,7 +962,6 @@ function applyCardEffect(roomId, player, card, chosenColor) {
         if (['+12', 'SALTEO SUPREMO'].includes(card.value)) {
             const nextPIdx = getNextPlayerIndex(roomId, 1); const victim = room.players[nextPIdx];
             if (player.hand.length === 0) {
-                // Si la última carta fue un Castigo Supremo, gana igual
                 room.gameState = 'animating_win'; updateAll(roomId);
                 setTimeout(() => calculateAndFinishRound(roomId, player), 1000);
                 return;
@@ -978,7 +975,6 @@ function applyCardEffect(roomId, player, card, chosenColor) {
             room.currentTurn = nextPIdx; updateAll(roomId); return;
         }
         
-        // Si la última carta fue un +2 o +4, debe ganar antes de pasar turno
         if (player.hand.length === 0) {
             room.gameState = 'animating_win'; updateAll(roomId);
             setTimeout(() => calculateAndFinishRound(roomId, player), 1000);
@@ -1027,7 +1023,6 @@ function resolveDuelRound(roomId, isTimeout = false) {
             else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
             room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
             
-            // Animación del choque elemental en pantallas
             io.to(roomId).emit('duelClash', { att, def });
         }
         
@@ -1196,7 +1191,6 @@ function calculateAndFinishRound(roomId, winner) {
     try {
         const room = rooms[roomId]; if(!room) return;
         
-        // CORRECCIÓN PUNTO 4: Fulminar timers al instante para evitar expulsión falsa "Recolectando"
         if (room.actionTimer) clearTimeout(room.actionTimer);
         if (room.turnTimer) clearTimeout(room.turnTimer);
         if (room.afkTimer) clearTimeout(room.afkTimer);
@@ -1357,17 +1351,28 @@ app.get('/', (req, res) => {
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
-        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; background: transparent; }
         
-        /* ESTILOS DE LA PANTALLA DE INICIO Y LOBBY */
-        .login-bg { z-index: 2000; background: linear-gradient(-45deg, #1a252f, #2c3e50, #2980b9, #8e44ad); background-size: 400% 400%; animation: gradientBG 10s ease infinite; }
-        @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-        
-        .lobby-mutating { animation: colorCycleLobby 20s infinite alternate linear; background-size: 400% 400%; }
+        /* FONDO ANIMADO PROFUNDO */
+        .mutating-bg { animation: colorCycleLobby 20s infinite alternate linear; background-size: 400% 400%; }
         @keyframes colorCycleLobby { 0% { background-color: #ff5252; } 33% { background-color: #ffd740; } 66% { background-color: #69f0ae; } 100% { background-color: #448aff; } }
 
-        .falling-bg-card { position: fixed; top: -100px; z-index: 1; background: #222; border: 2px solid #555; border-radius: 8px; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; font-size: 24px; width: 60px; height: 85px; animation: fallDown 8s linear infinite; opacity: 0.4; text-align: center; white-space: nowrap; pointer-events: none; }
-        @keyframes fallDown { to { transform: translateY(120vh) rotate(360deg); } }
+        /* ESTILO IDÉNTICO AL JUEGO PARA LAS CARTAS QUE CAEN */
+        .falling-bg-card { 
+            position: absolute; top: -120px; z-index: 1; 
+            width: 70px; height: 100px; 
+            border-radius: 8px; border: 2px solid white; 
+            display: flex; justify-content: center; align-items: center; 
+            font-size: 24px; font-weight: bold; color: white; 
+            animation: fallAndRotate 10s linear infinite; 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.6);
+        }
+        @keyframes fallAndRotate { 
+            0% { transform: translateY(-100px) rotate(-15deg); opacity: 0; } 
+            10% { opacity: 0.9; } 
+            90% { opacity: 0.9; } 
+            100% { transform: translateY(120vh) rotate(345deg); opacity: 0; } 
+        }
 
         .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(255,255,255,0.4); animation: floatLogo 3s ease-in-out infinite; z-index: 5; }
         @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(255,255,255,0.6); } 100% { transform: translateY(0px); } }
@@ -1495,21 +1500,25 @@ app.get('/', (req, res) => {
     </style>
 </head>
 <body>
+    <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>
+
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
-    <div id="login" class="screen login-bg" style="display:flex;">
+    <div id="login" class="screen" style="display:flex;">
         <h1 class="logo-title">UNO y 1/2</h1>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15" onfocus="playUI()">
         <button id="btn-create" class="btn-main" onclick="playUI(); showCreate()">Crear Sala</button>
         <button id="btn-join-menu" class="btn-main" onclick="playUI(); showJoin()" style="background:#2980b9">Unirse a Sala</button>
     </div>
-    <div id="join-menu" class="screen login-bg">
+    
+    <div id="join-menu" class="screen">
         <h1 class="logo-title">Unirse</h1>
         <input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;" onfocus="playUI()">
         <button class="btn-main" onclick="playUI(); joinRoom()">Entrar</button>
         <button class="btn-main" onclick="playUI(); backToLogin()">Volver</button>
     </div>
-    <div id="lobby" class="screen lobby-mutating">
+    
+    <div id="lobby" class="screen">
         <button onclick="playUI(); toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
         <h1 class="logo-title" style="font-size: 40px;">Sala: <span id="lobby-code" style="color:gold;"></span></h1>
         <div id="lobby-link-container"><button onclick="playUI(); copyLink()" style="padding:10px 20px; font-weight:bold; cursor:pointer; border-radius:15px;">🔗 Copiar Link</button></div>
@@ -1738,21 +1747,50 @@ app.get('/', (req, res) => {
     <script src="/socket.io/socket.io.js"></script>
     <script>
         // --- FUNCIÓN DE LLUVIA DE CARTAS EN EL LOBBY ---
+        let fallingInterval;
         function createFallingCards() {
-            const colors = ['#ff5252', '#448aff', '#69f0ae', '#ffd740', '#212121'];
-            const values = ['+4', 'C', '+12', 'RIP', 'SS', 'LIBRE'];
-            setInterval(() => {
-                if (document.getElementById('lobby').style.display === 'flex' || document.getElementById('login').style.display === 'flex') {
+            const bgContainer = document.getElementById('animated-bg');
+            if(!bgContainer) return;
+
+            const specialValues = [
+                {c: '#212121', v: '+4'}, {c: '#212121', v: 'C'}, {c: '#000000', v: '+12'},
+                {c: 'black', v: 'RIP'}, {c: '#2c3e50', v: 'SS'}, {c: '#000', v: 'LIBRE'},
+                {c: 'white', v: '❤️', t: 'red'}
+            ];
+            
+            const colorValues = [
+                {c: '#ff5252', v: 'R'}, {c: '#448aff', v: 'R'}, {c: '#69f0ae', v: 'R'}, {c: '#ffd740', v: 'R'},
+                {c: '#ff5252', v: 'X'}, {c: '#448aff', v: 'X'}, {c: '#69f0ae', v: 'X'}, {c: '#ffd740', v: 'X'}
+            ];
+            
+            const allCards = [...specialValues, ...colorValues];
+
+            fallingInterval = setInterval(() => {
+                if (document.getElementById('login').style.display === 'flex' ||
+                    document.getElementById('join-menu').style.display === 'flex' ||
+                    document.getElementById('lobby').style.display === 'flex') {
+
+                    const card = allCards[Math.floor(Math.random() * allCards.length)];
                     const el = document.createElement('div');
                     el.className = 'falling-bg-card';
                     el.style.left = Math.random() * 90 + 'vw';
-                    el.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-                    el.innerText = values[Math.floor(Math.random() * values.length)];
-                    if(el.innerText === 'RIP') el.style.backgroundColor = 'black';
-                    document.body.appendChild(el);
-                    setTimeout(() => el.remove(), 8000); 
+                    el.style.backgroundColor = card.c;
+                    el.style.color = card.t || ((card.c==='#ffd740'||card.c==='#69f0ae') ? 'black' : 'white');
+                    
+                    el.innerText = card.v;
+                    if(card.v === 'RIP') el.innerText = '🪦';
+                    if(card.v === 'LIBRE') el.innerText = '🕊️';
+
+                    const dur = 8 + Math.random() * 5;
+                    el.style.animationDuration = dur + 's';
+
+                    bgContainer.appendChild(el);
+                    
+                    setTimeout(() => { if(el.parentNode) el.remove(); }, dur * 1000);
+                } else {
+                    bgContainer.innerHTML = ''; 
                 }
-            }, 1500);
+            }, 1200);
         }
         window.onload = createFallingCards;
 
@@ -1868,7 +1906,6 @@ app.get('/', (req, res) => {
             document.getElementById('hand-zone').style.display = 'none'; 
         });
 
-        // Eventos de Verificación AFK
         socket.on('showAFKPrompt', () => {
             document.getElementById('afk-modal').style.display = 'flex';
             const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3');
@@ -1949,7 +1986,6 @@ app.get('/', (req, res) => {
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         
-        // --- ANIMACIÓN UNIVERSAL DE DESCARTES ---
         socket.on('universalDiscardAnim', data => {
             const c = data.card;
             const el = document.createElement('div');
@@ -1960,12 +1996,10 @@ app.get('/', (req, res) => {
             el.style.fontSize = (c.value === '1 y 1/2') ? '20px' : '24px';
 
             if (data.playerId === socket.id && !data.isLibreDiscard) {
-                // Yo descarto: desde mi mano
                 el.style.bottom = '150px';
                 el.style.left = '50%';
                 el.style.transform = 'translate(-50%, 0)';
             } else {
-                // Otro descarta (o es descarte de Libre): vuela desde la derecha
                 el.style.top = '40%';
                 el.style.right = '-100px';
                 el.style.transform = 'translate(0, -50%)';
@@ -1988,7 +2022,6 @@ app.get('/', (req, res) => {
             }, 400);
         });
 
-        // --- ANIMACIÓN DE DUELO (CHOQUE) ---
         socket.on('duelClash', data => {
             const getEmoji = (w) => w==='fuego'?'🔥':(w==='hielo'?'❄️':(w==='agua'?'💧':'❔'));
             const attE = getEmoji(data.att);
@@ -2007,7 +2040,7 @@ app.get('/', (req, res) => {
         });
 
         socket.on('updateState', s => {
-            document.getElementById('afk-modal').style.display = 'none'; // Previene bloqueos fantasma
+            document.getElementById('afk-modal').style.display = 'none'; 
             currentPlayers = s.players;
             
             if(s.state === 'waiting' || s.state === 'playing') {
@@ -2093,7 +2126,6 @@ app.get('/', (req, res) => {
                 } else { 
                     document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; 
-                    // SOLUCIÓN PUNTO 1: Espectadores ven un mensaje claro en la sala de espera
                     document.getElementById('duel-turn-msg').innerText = "Viendo el duelo..."; 
                 }
             }
@@ -2113,7 +2145,6 @@ app.get('/', (req, res) => {
                     document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
                     if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).classList.add('selected'); } else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
                 } else { 
-                    // SOLUCIÓN PUNTO 1: Espectadores ven un mensaje claro
                     document.getElementById('duel-turn-msg').innerText = "Viendo el duelo..."; 
                 }
             }
@@ -2223,14 +2254,18 @@ app.get('/', (req, res) => {
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
             document.getElementById(id).style.display='flex'; 
             
-            if (id === 'lobby') {
-                const cb = document.getElementById('chat-btn');
-                cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; 
-                const lv = document.getElementById('global-leave-btn');
-                if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
-            } else if (id === 'game-area') {
+            if (id === 'game-area') {
+                document.getElementById('animated-bg').style.display = 'none';
                 const cb = document.getElementById('chat-btn');
                 cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); 
+            } else {
+                document.getElementById('animated-bg').style.display = 'block';
+                if (id === 'lobby') {
+                    const cb = document.getElementById('chat-btn');
+                    cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; 
+                    const lv = document.getElementById('global-leave-btn');
+                    if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
+                }
             }
         }
         

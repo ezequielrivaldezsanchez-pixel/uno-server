@@ -1364,9 +1364,9 @@ app.get('/', (req, res) => {
         @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         
         .lobby-mutating { animation: colorCycleLobby 20s infinite alternate linear; background-size: 400% 400%; }
-        @keyframes colorCycleLobby { 0% { background-color: #4a1c1c; } 33% { background-color: #1c2a4a; } 66% { background-color: #1c4a2a; } 100% { background-color: #4a451c; } }
+        @keyframes colorCycleLobby { 0% { background-color: #ff5252; } 33% { background-color: #ffd740; } 66% { background-color: #69f0ae; } 100% { background-color: #448aff; } }
 
-        .falling-bg-card { position: fixed; top: -100px; z-index: 1; background: #222; border: 2px solid #555; border-radius: 8px; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; font-size: 24px; width: 60px; height: 85px; animation: fallDown linear infinite; opacity: 0.4; text-align: center; white-space: nowrap; }
+        .falling-bg-card { position: fixed; top: -100px; z-index: 1; background: #222; border: 2px solid #555; border-radius: 8px; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; font-size: 24px; width: 60px; height: 85px; animation: fallDown 8s linear infinite; opacity: 0.4; text-align: center; white-space: nowrap; pointer-events: none; }
         @keyframes fallDown { to { transform: translateY(120vh) rotate(360deg); } }
 
         .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(255,255,255,0.4); animation: floatLogo 3s ease-in-out infinite; z-index: 5; }

@@ -52,7 +52,7 @@ function initRoom(roomId) {
         pendingSkip: 0,
         scores: {}, 
         roundCount: 1,
-        librePending: null, // NUEVO: Bloqueo de mesa por Libre Albedrío
+        librePending: null, 
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
             round: 1, scoreAttacker: 0, scoreDefender: 0, 
@@ -172,12 +172,12 @@ function handleTimeout(roomId, targetUuid, stateContext) {
         const target = room.players[targetIdx];
         
         if (stateContext === 'penalty_decision' && room.gameState === 'penalty_decision') {
-            io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} perdió la chance de batirse a duelo y recibe el castigo automáticamente.`);
+            io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} recibió el castigo automáticamente.`);
             room.gameState = 'playing';
             updateAll(roomId);
         } 
         else if (stateContext === 'rip_decision' && room.gameState === 'rip_decision') {
-            io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} se quedó paralizado por el miedo y fue eliminado.`);
+            io.to(roomId).emit('notification', `⏳ Tiempo agotado. ${target.name} se quedó paralizado y fue eliminado.`);
             eliminatePlayer(roomId, targetUuid);
             checkWinCondition(roomId);
             if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
@@ -442,7 +442,7 @@ io.on('connection', (socket) => {
             room.activeColor = finalColor; 
 
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name, playerId: player.id });
-            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó ${count} cartas "1 y 1/2" y formó un ${targetVal}.`); 
+            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó ${count} cartas "1 y 1/2".`); 
             io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
             
@@ -524,7 +524,6 @@ io.on('connection', (socket) => {
         }
     }));
 
-    // NUEVO: FASE 1 DE LIBRE ALBEDRÍO (Vuela la carta, se bloquea la mesa)
     socket.on('playLibreInitial', safe((cardId) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; 
@@ -562,12 +561,12 @@ io.on('connection', (socket) => {
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator || player.hasLeft) return;
         
         if (player.personalDebt > 0) {
-            socket.emit('notification', '🚫 Tienes una deuda de cartas. Toca el mazo rojo para pagarla primero.');
+            socket.emit('notification', '🚫 Tienes una deuda de cartas. Toca el mazo rojo.');
             return;
         }
 
         if (room.pendingPenalty > 0 && room.resumeTurnFrom !== null && room.resumeTurnFrom !== undefined) {
-            socket.emit('notification', '🚫 Castigo de duelo ineludible. Toca el mazo rojo para robar obligatoriamente.');
+            socket.emit('notification', '🚫 Castigo ineludible. Toca el mazo rojo.');
             return;
         }
 
@@ -576,7 +575,6 @@ io.on('connection', (socket) => {
         let card = null;
 
         if (libreContext) {
-            // FASE 2 DE LIBRE ALBEDRÍO: Se resuelve la donación y el descarte vuela a la mesa
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
             const dIdx = player.hand.findIndex(c => c.id === libreContext.discardId);
             const target = room.players.find(p => p.id === libreContext.targetId);
@@ -597,12 +595,12 @@ io.on('connection', (socket) => {
             io.to(roomId).emit('playSound', 'soft');
             
             isLibreDiscard = true;
-            cardIndex = -2; // Bypassea validaciones extra
+            cardIndex = -2;
             
             if (player.hand.length === 0) { 
-                 io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
+                 io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} regaló una carta y ganó.`);
             } else {
-                 io.to(roomId).emit('notification', `🕊️ ${player.name} regaló una carta a ${target.name} y descartó.`);
+                 io.to(roomId).emit('notification', `🕊️ ${player.name} regaló una carta y descartó.`);
             }
             
             if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; 
@@ -636,7 +634,7 @@ io.on('connection', (socket) => {
                 if (player.hand.length === 0) { initiateRoundEnd(roomId, player); return; }
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             } else {
-                socket.emit('notification', '🚫 Frente a un castigo supremo, solo puedes usar GRACIA DIVINA o batirte a duelo.'); return; 
+                socket.emit('notification', '🚫 Solo puedes usar GRACIA DIVINA o batirte a duelo.'); return; 
             }
         }
 
@@ -657,21 +655,21 @@ io.on('connection', (socket) => {
                     if (room.pendingPenalty > 0 || room.librePending) return; 
                     if (player.hand.length === 1) { socket.emit('notification', '🚫 Prohibido ganar con SAFF.'); return; }
                     isSaff = true; room.currentTurn = pIndex; room.pendingPenalty = 0;
-                    io.to(roomId).emit('notification', `⚡ ¡${player.name} robó el turno haciendo S.A.F.F.!`); io.to(roomId).emit('playSound', 'saff');
+                    io.to(roomId).emit('notification', `⚡ ¡${player.name} robó el turno con S.A.F.F.!`); io.to(roomId).emit('playSound', 'saff');
                 } else { return; }
             }
 
             if (pIndex === room.currentTurn && !isSaff) {
                 if (room.pendingPenalty > 0) { 
-                    if (card.value === 'SALTEO SUPREMO') { socket.emit('notification', '🚫 SALTEO SUPREMO no puede usarse para defender castigos.'); return; }
+                    if (card.value === 'SALTEO SUPREMO') { socket.emit('notification', '🚫 No puedes usar SS aquí.'); return; }
                     if (card.value === 'GRACIA') { } else {
                         const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
                         const cardVal = getVal(card.value); const topVal = getVal(top.value);
-                        if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Debes tirar un castigo igual/mayor, Gracia o Libre.`); return; }
+                        if (cardVal === 0 || cardVal < topVal) { socket.emit('notification', `🚫 Castigo inválido.`); return; }
                     }
                 } else { 
                     let valid = (card.color === 'negro' || card.value === 'GRACIA' || card.color === room.activeColor || card.value === top.value);
-                    if (!valid) { socket.emit('notification', `❌ Carta inválida. Color o símbolo no coincide.`); return; }
+                    if (!valid) { socket.emit('notification', `❌ Carta inválida.`); return; }
                 }
             }
         }
@@ -744,7 +742,7 @@ io.on('connection', (socket) => {
             io.to(roomId).emit('cardDrawnEffect', { playerName: room.players[pIndex].name });
             io.to(roomId).emit('playSound', 'soft');
             if (room.players[pIndex].personalDebt === 0) {
-                io.to(roomId).emit('notification', `✅ ${room.players[pIndex].name} ha saldado su deuda de cartas.`);
+                io.to(roomId).emit('notification', `✅ ${room.players[pIndex].name} saldó su deuda.`);
             }
             updateAll(roomId); return;
         }
@@ -754,18 +752,10 @@ io.on('connection', (socket) => {
                 drawCards(roomId, pIndex, 1); room.pendingPenalty--; io.to(roomId).emit('playSound', 'soft');
                 io.to(roomId).emit('cardDrawnEffect', { playerName: room.players[pIndex].name });
                 
-                if (room.pendingPenalty > 0) { 
-                    updateAll(roomId); 
-                } else { 
-                    if (room.pendingSkip > 0) {
-                        io.to(roomId).emit('notification', `⛔ ¡${room.players[pIndex].name} PIERDE ${room.pendingSkip} TURNOS!`); 
-                        room.players[pIndex].missedTurns += room.pendingSkip; room.pendingSkip = 0;
-                    } else { 
-                        io.to(roomId).emit('notification', `✅ Fin del castigo para ${room.players[pIndex].name}.`); 
-                    }
-                    if (room.resumeTurnFrom !== undefined && room.resumeTurnFrom !== null) {
-                        room.currentTurn = room.resumeTurnFrom; room.resumeTurnFrom = null;
-                    }
+                if (room.pendingPenalty > 0) { updateAll(roomId); } else { 
+                    if (room.pendingSkip > 0) { io.to(roomId).emit('notification', `⛔ ¡${room.players[pIndex].name} PIERDE ${room.pendingSkip} TURNOS!`); room.players[pIndex].missedTurns += room.pendingSkip; room.pendingSkip = 0; } 
+                    else { io.to(roomId).emit('notification', `✅ Fin del castigo.`); }
+                    if (room.resumeTurnFrom !== undefined && room.resumeTurnFrom !== null) { room.currentTurn = room.resumeTurnFrom; room.resumeTurnFrom = null; }
                     advanceTurn(roomId, 1); updateAll(roomId); 
                 }
             } else {
@@ -775,7 +765,7 @@ io.on('connection', (socket) => {
                     io.to(roomId).emit('playSound', 'soft'); 
                     io.to(roomId).emit('cardDrawnEffect', { playerName: room.players[pIndex].name });
                     updateAll(roomId); 
-                } else { socket.emit('notification', 'Ya robaste. Debes jugar o pasar.'); }
+                } else { socket.emit('notification', 'Ya robaste.'); }
             }
         }
     }));
@@ -790,7 +780,6 @@ io.on('connection', (socket) => {
     socket.on('ripDecision', safe((d) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'rip_decision' && room.gameState !== 'penalty_decision') return;
-        
         const myUUID = room.players.find(x => x.id === socket.id)?.uuid;
         if (myUUID !== room.duelState.defenderId) return;
 
@@ -798,185 +787,94 @@ io.on('connection', (socket) => {
             if(room.duelState.type === 'rip') { 
                 eliminatePlayer(roomId, room.duelState.defenderId); 
                 checkWinCondition(roomId); 
-                if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') {
-                    room.gameState = 'playing';
-                    room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
-                    advanceTurn(roomId, 1); updateAll(roomId);
-                }
+                if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') { room.gameState = 'playing'; room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId); advanceTurn(roomId, 1); updateAll(roomId); }
             }
         }
-        else if (d === 'accept_penalty') {
-             const p = room.players.find(x => x.uuid === myUUID);
-             io.to(roomId).emit('notification', `${p.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId);
-        }
-        else { 
-            io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling';
-            room.duelState.narrative = `⚔️ ¡Duelo iniciado! Esperando el primer movimiento...`; 
-            room.duelState.turn = room.duelState.attackerId; updateAll(roomId); 
-        }
+        else if (d === 'accept_penalty') { const p = room.players.find(x => x.uuid === myUUID); io.to(roomId).emit('notification', `${p.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId); }
+        else { io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling'; room.duelState.narrative = `⚔️ ¡Duelo iniciado! Turno de ataque...`; room.duelState.turn = room.duelState.attackerId; updateAll(roomId); }
     }));
 
     socket.on('duelPick', safe((c) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'dueling') return;
-        
         const myUUID = room.players.find(x => x.id === socket.id)?.uuid;
         if (myUUID !== room.duelState.turn) return;
 
-        if (myUUID === room.duelState.attackerId) { 
-            room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId;
-            room.duelState.narrative = `⚔️ ${room.duelState.attackerName} preparó su ataque. Turno de defensa de ${room.duelState.defenderName}...`;
-            updateAll(roomId);
-        } 
-        else if (myUUID === room.duelState.defenderId) { 
-            room.duelState.defenderChoice = c; room.duelState.narrative = `¡IMPACTO INMINENTE!`;
-            io.to(roomId).emit('duelClash', { attName: room.duelState.attackerName, defName: room.duelState.defenderName, attChoice: room.duelState.attackerChoice, defChoice: room.duelState.defenderChoice });
-            io.to(roomId).emit('playSound', 'attack'); 
-            setTimeout(() => { resolveDuelRound(roomId, false); }, 3500); 
-        }
+        if (myUUID === room.duelState.attackerId) { room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId; room.duelState.narrative = `⚔️ Turno de defensa de ${room.duelState.defenderName}...`; updateAll(roomId); } 
+        else if (myUUID === room.duelState.defenderId) { room.duelState.defenderChoice = c; room.duelState.narrative = `¡IMPACTO INMINENTE!`; io.to(roomId).emit('duelClash', { attName: room.duelState.attackerName, defName: room.duelState.defenderName, attChoice: room.duelState.attackerChoice, defChoice: room.duelState.defenderChoice }); io.to(roomId).emit('playSound', 'attack'); setTimeout(() => { resolveDuelRound(roomId, false); }, 3500); }
     }));
     
     socket.on('sayUno', safe(() => {
-        const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; 
-        if (room.gameState !== 'playing') return;
+        const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; if (room.gameState !== 'playing') return;
         const p = room.players.find(x => x.id === socket.id);
         if(p && p.hand.length === 1) { p.saidUno = true; io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`); io.to(roomId).emit('playSound', 'uno'); manageTimers(roomId); }
     }));
 
     socket.on('reportUno', safe((targetId) => {
-        const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; 
-        if (room.gameState !== 'playing') { socket.emit('notification', '⛔ No puedes denunciar ahora.'); return; }
+        const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; if (room.gameState !== 'playing') return;
         const accuser = room.players.find(x => x.id === socket.id); const target = room.players.find(x => x.id === targetId);
-        
-        if(!target || target.hand.length !== 1 || target.saidUno) { socket.emit('notification', '🚫 No puedes hacer denuncias falsas.'); return; }
+        if(!target || target.hand.length !== 1 || target.saidUno) { socket.emit('notification', '🚫 Denuncia falsa.'); return; }
         const timeDiff = Date.now() - target.lastOneCardTime;
-        if (timeDiff < 2000) { socket.emit('notification', '¡Espera! Tiene tiempo de gracia (2s).'); return; }
-        
-        target.personalDebt += 2; target.saidUno = true; 
-        io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Castigo: +2 cartas.`); updateAll(roomId);
+        if (timeDiff < 2000) { socket.emit('notification', '¡Espera!'); return; }
+        target.personalDebt += 2; target.saidUno = true; io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}!`); updateAll(roomId);
     }));
 
     socket.on('sendChat', safe((text) => { 
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return;
         const room = rooms[roomId]; const p = room.players.find(x => x.id === socket.id); 
-        if (p) {
-            const msg = { name: p.name, text }; room.chatHistory.push(msg);
-            if(room.chatHistory.length > 50) room.chatHistory.shift();
-            io.to(roomId).emit('chatMessage', msg); manageTimers(roomId);
-        }
+        if (p) { const msg = { name: p.name, text }; room.chatHistory.push(msg); if(room.chatHistory.length > 50) room.chatHistory.shift(); io.to(roomId).emit('chatMessage', msg); manageTimers(roomId); }
     }));
 
-    socket.on('disconnect', () => {
-        try {
-            const roomId = getRoomId(socket);
-            if (roomId && rooms[roomId]) { 
-                const room = rooms[roomId]; const p = room.players.find(pl => pl.id === socket.id); 
-                if(p) { p.isConnected = false; updateAll(roomId); }
-            }
-        } catch(e) { console.error("Error desconexión:", e); }
-    });
+    socket.on('disconnect', () => { try { const roomId = getRoomId(socket); if (roomId && rooms[roomId]) { const room = rooms[roomId]; const p = room.players.find(pl => pl.id === socket.id); if(p) { p.isConnected = false; updateAll(roomId); } } } catch(e) { console.error(e); } });
 });
 
-// --- HELPERS ---
+// --- HELPERS SERVIDOR ---
 
-function createPlayerObj(socketId, uuid, name, isAdmin) {
-    return { id: socketId, uuid, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin, isConnected: true, saidUno: false, lastOneCardTime: 0, missedTurns: 0, hasLeft: false, personalDebt: 0 };
-}
-
-function checkUnoCheck(roomId, player) {
-    if (player.hand.length === 1) { player.lastOneCardTime = Date.now(); player.saidUno = false; } 
-    else { player.saidUno = false; player.lastOneCardTime = 0; }
-}
-
+function createPlayerObj(socketId, uuid, name, isAdmin) { return { id: socketId, uuid, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin, isConnected: true, saidUno: false, lastOneCardTime: 0, missedTurns: 0, hasLeft: false, personalDebt: 0 }; }
+function checkUnoCheck(roomId, player) { if (player.hand.length === 1) { player.lastOneCardTime = Date.now(); player.saidUno = false; } else { player.saidUno = false; player.lastOneCardTime = 0; } }
 function removeCards(player, ids) { ids.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); }); }
 
 function applyCardEffect(roomId, player, card, chosenColor) {
     const room = rooms[roomId]; let steps = 1;
     if (card.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
     if (card.value === 'X') steps = 2;
-    
-    // DELAY DRAMÁTICO PARA CASTIGOS (+12, SS, RIP)
     if (['+2', '+4', '+12', 'SALTEO SUPREMO'].includes(card.value)) {
-        let val = 0; let skips = 0;
-        if(card.value === '+2') val=2; if(card.value === '+4') val=4; if(card.value === '+12') val=12;
-        if(card.value === 'SALTEO SUPREMO') { val=4; skips=4; }
-
-        room.pendingPenalty += val; room.pendingSkip += skips;
-        io.to(roomId).emit('notification', `💥 ¡${card.value}! Total: ${room.pendingPenalty}`); io.to(roomId).emit('playSound', 'attack');
-        if (val > 4) io.to(roomId).emit('shakeScreen');
-
+        let val = 0; let skips = 0; if(card.value === '+2') val=2; if(card.value === '+4') val=4; if(card.value === '+12') val=12; if(card.value === 'SALTEO SUPREMO') { val=4; skips=4; }
+        room.pendingPenalty += val; room.pendingSkip += skips; io.to(roomId).emit('notification', `💥 ¡Total: ${room.pendingPenalty}`); io.to(roomId).emit('playSound', 'attack'); if (val > 4) io.to(roomId).emit('shakeScreen');
         if (['+12', 'SALTEO SUPREMO'].includes(card.value)) {
-            const nextPIdx = getNextPlayerIndex(roomId, 1); const victim = room.players[nextPIdx];
-            room.gameState = 'animating_penalty'; // Estado intermedio para esperar la animación visual
-            room.duelState = { 
-                attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
-                round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-                turn: player.uuid, narrative: `⚔️ ¡${victim.name} puede batirse a duelo para evitar el castigo!`, type: 'penalty', originalPenalty: room.pendingPenalty, originalSkip: room.pendingSkip, triggerCard: card.value 
-            };
+            const nextPIdx = getNextPlayerIndex(roomId, 1); const victim = room.players[nextPIdx]; room.gameState = 'animating_penalty';
+            room.duelState = { attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: player.uuid, narrative: `⚔️ ¡Duelo?`, type: 'penalty', originalPenalty: room.pendingPenalty, originalSkip: room.pendingSkip, triggerCard: card.value };
             room.currentTurn = nextPIdx; updateAll(roomId); 
-            setTimeout(() => { if(rooms[roomId] && rooms[roomId].gameState === 'animating_penalty') { rooms[roomId].gameState = 'penalty_decision'; updateAll(roomId); } }, 1200);
-            return;
+            setTimeout(() => { if(rooms[roomId] && rooms[roomId].gameState === 'animating_penalty') { rooms[roomId].gameState = 'penalty_decision'; updateAll(roomId); } }, 1200); return;
         }
         advanceTurn(roomId, 1); updateAll(roomId); return; 
     }
-
     if (card.value === 'RIP') {
         if (getAlivePlayersCount(roomId) < 2) { advanceTurn(roomId, 1); updateAll(roomId); return; }
-        const victimIdx = getNextPlayerIndex(roomId, 1);
-        if (victimIdx === room.players.indexOf(player)) return; // Previsto arriba
-        const victim = room.players[victimIdx];
-        io.to(roomId).emit('playSound', 'rip');
-        room.gameState = 'animating_rip'; // Estado intermedio
-        room.duelState = { 
-            attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
-            round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
-            turn: player.uuid, narrative: `💀 ${player.name} retó a Duelo a ${victim.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
-        };
-        updateAll(roomId);
-        setTimeout(() => { if(rooms[roomId] && rooms[roomId].gameState === 'animating_rip') { rooms[roomId].gameState = 'rip_decision'; updateAll(roomId); } }, 1200);
-        return;
+        const victimIdx = getNextPlayerIndex(roomId, 1); const victim = room.players[victimIdx]; io.to(roomId).emit('playSound', 'rip'); room.gameState = 'animating_rip';
+        room.duelState = { attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: player.uuid, narrative: `💀 RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' };
+        updateAll(roomId); setTimeout(() => { if(rooms[roomId] && rooms[roomId].gameState === 'animating_rip') { rooms[roomId].gameState = 'rip_decision'; updateAll(roomId); } }, 1200); return;
     }
-
     if (card.color === 'negro') io.to(roomId).emit('playSound', 'wild'); else io.to(roomId).emit('playSound', 'soft');
     if (player.hand.length === 0) initiateRoundEnd(roomId, player); else { advanceTurn(roomId, steps); updateAll(roomId); }
-}
-
-function getDuelNarrative(attName, defName, att, def) {
-    if (att === def) return `⚡ Choque idéntico. ¡Empate!`;
-    if (att === 'fuego' && def === 'hielo') return `🔥 El Fuego de ${attName} derritió el Hielo.`;
-    if (att === 'hielo' && def === 'agua') return `❄️ El Hielo de ${attName} congeló el Agua.`;
-    if (att === 'agua' && def === 'fuego') return `💧 El Agua de ${attName} apagó el Fuego.`;
-    if (def === 'fuego' && att === 'hielo') return `🔥 El Fuego de ${defName} derritió el Hielo.`;
-    if (def === 'hielo' && att === 'agua') return `❄️ El Hielo de ${defName} congeló el Agua.`;
-    if (def === 'agua' && att === 'fuego') return `💧 El Agua de ${defName} apagó el Fuego.`;
-    return "Resultado confuso...";
 }
 
 function resolveDuelRound(roomId, isTimeout = false) {
     try {
         const room = rooms[roomId]; if (!room) return;
         let att = room.duelState.attackerChoice; let def = room.duelState.defenderChoice; let winner = 'tie';
-
-        if (isTimeout) {
-            if (!att) { winner = 'defender'; room.duelState.narrative = `⏳ ${room.duelState.defenderName} ganó la ronda por inactividad.`; } 
-            else if (!def) { winner = 'attacker'; room.duelState.narrative = `⏳ ${room.duelState.attackerName} ganó la ronda por inactividad.`; }
-        } else {
+        if (isTimeout) { if (!att) { winner = 'defender'; } else if (!def) { winner = 'attacker'; } } else {
             if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
             else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
             room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
         }
-        
         if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
-        let winNameToHistory = 'Empate'; if(winner === 'attacker') winNameToHistory = room.duelState.attackerName; if(winner === 'defender') winNameToHistory = room.duelState.defenderName;
-
-        room.duelState.history.push({ round: room.duelState.round, att: att || 'timeout', def: def || 'timeout', winnerName: winNameToHistory });
-        room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; 
-        io.to(roomId).emit('playSound', 'soft');
-        
+        room.duelState.history.push({ round: room.duelState.round, att: att || 'timeout', def: def || 'timeout', winnerName: winner === 'tie' ? 'Empate' : (winner === 'attacker' ? room.duelState.attackerName : room.duelState.defenderName) });
+        room.duelState.attackerChoice = null; room.duelState.defenderChoice = null; room.duelState.turn = room.duelState.attackerId; io.to(roomId).emit('playSound', 'soft');
         if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { setTimeout(() => finalizeDuel(roomId), 2500); } 
-        else { setTimeout(() => { try { if(rooms[roomId]) { rooms[roomId].duelState.round++; rooms[roomId].duelState.narrative = `Ronda ${rooms[roomId].duelState.round}: ${rooms[roomId].duelState.attackerName} elige arma...`; updateAll(roomId); } } catch(e){} }, 3000); }
+        else { setTimeout(() => { try { if(rooms[roomId]) { rooms[roomId].duelState.round++; rooms[roomId].duelState.narrative = `Ronda ${rooms[roomId].duelState.round}...`; updateAll(roomId); } } catch(e){} }, 3000); }
         updateAll(roomId); 
-    } catch (e) { console.error("Error en resolveDuelRound:", e); }
+    } catch (e) { console.error(e); }
 }
 
 function finalizeDuel(roomId) {
@@ -985,222 +883,77 @@ function finalizeDuel(roomId) {
         const att = room.players.find(p => p.uuid === room.duelState.attackerId); const def = room.players.find(p => p.uuid === room.duelState.defenderId);
         if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
         const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; const isPenaltyDuel = room.duelState.type === 'penalty';
-
-        if (attWins) { 
-            io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
-            if (!isPenaltyDuel) { 
-                eliminatePlayer(roomId, def.uuid); checkWinCondition(roomId); 
-                if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
-                    room.gameState = 'playing'; room.currentTurn = room.players.indexOf(att); advanceTurn(roomId, 1); updateAll(roomId);
-                }
-            } 
-            else { io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); }
-        } else { 
-            io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
-            if (!isPenaltyDuel) { 
-                io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`); 
-                room.pendingPenalty = 4; room.pendingSkip = 0; room.currentTurn = room.players.indexOf(att); room.resumeTurnFrom = room.players.indexOf(def); room.gameState = 'playing'; updateAll(roomId); 
-            } 
-            else { 
-                io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`); 
-                room.pendingPenalty = 0; room.pendingSkip = 0; room.players.forEach(p => p.hasDrawn = false); room.currentTurn = room.players.indexOf(att); room.pendingPenalty = 4; room.pendingSkip = 0; room.resumeTurnFrom = room.players.indexOf(def); room.gameState = 'playing'; updateAll(roomId); 
-            }
+        if (attWins) { io.to(roomId).emit('notification', `💀 Gana ${att.name}.`); 
+            if (!isPenaltyDuel) { eliminatePlayer(roomId, def.uuid); checkWinCondition(roomId); if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') { room.gameState = 'playing'; room.currentTurn = room.players.indexOf(att); advanceTurn(roomId, 1); updateAll(roomId); } } 
+            else { room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); }
+        } else { io.to(roomId).emit('notification', `🛡️ Gana ${def.name}.`);
+            if (!isPenaltyDuel) { room.pendingPenalty = 4; room.pendingSkip = 0; room.currentTurn = room.players.indexOf(att); room.resumeTurnFrom = room.players.indexOf(def); room.gameState = 'playing'; updateAll(roomId); } 
+            else { room.pendingPenalty = 0; room.pendingSkip = 0; room.players.forEach(p => p.hasDrawn = false); room.currentTurn = room.players.indexOf(att); room.pendingPenalty = 4; room.pendingSkip = 0; room.resumeTurnFrom = room.players.indexOf(def); room.gameState = 'playing'; updateAll(roomId); }
         }
-    } catch (e) { console.error("Error en finalizeDuel:", e); }
+    } catch (e) { console.error(e); }
 }
 
 function eliminatePlayer(roomId, uuid) { const room = rooms[roomId]; if(!room) return; const p = room.players.find(p => p.uuid === uuid); if (p) { p.isDead = true; p.isSpectator = true; p.personalDebt = 0; } }
 function getAlivePlayersCount(roomId) { const room = rooms[roomId]; if(!room) return 0; return room.players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft).length; }
-
-function getNextPlayerIndex(roomId, step) {
-    const room = rooms[roomId]; if(!room) return 0; let current = room.currentTurn;
-    for(let i=0; i<room.players.length; i++) {
-        current = (current + room.direction + room.players.length) % room.players.length;
-        if(!room.players[current].isDead && !room.players[current].isSpectator && !room.players[current].hasLeft) return current;
-    }
-    return current;
-}
-
-function advanceTurn(roomId, steps) {
-    const room = rooms[roomId]; if (!room || room.players.length === 0) return;
-    if (getAlivePlayersCount(roomId) <= 1) return; 
-    room.players.forEach(p => p.hasDrawn = false);
-    
-    let safeLoop = 0;
-    while (steps > 0 && safeLoop < 100) {
-        safeLoop++;
-        room.currentTurn = (room.currentTurn + room.direction + room.players.length) % room.players.length;
-        let cp = room.players[room.currentTurn];
-        if (!cp.isDead && !cp.isSpectator && !cp.hasLeft) {
-            if (cp.missedTurns > 0) { cp.missedTurns--; io.to(roomId).emit('notification', `⏭️ Turno de ${cp.name} salteado por castigo.`); } 
-            else { steps--; }
-        }
-    }
-    if (room.players[room.currentTurn]) room.players[room.currentTurn].hasDrawn = false;
-}
+function getNextPlayerIndex(roomId, step) { const room = rooms[roomId]; let current = room.currentTurn; for(let i=0; i<room.players.length; i++) { current = (current + room.direction + room.players.length) % room.players.length; if(!room.players[current].isDead && !room.players[current].isSpectator && !room.players[current].hasLeft) return current; } return current; }
+function advanceTurn(roomId, steps) { const room = rooms[roomId]; if (!room || room.players.length === 0 || getAlivePlayersCount(roomId) <= 1) return; room.players.forEach(p => p.hasDrawn = false); let safeLoop = 0; while (steps > 0 && safeLoop < 100) { safeLoop++; room.currentTurn = (room.currentTurn + room.direction + room.players.length) % room.players.length; let cp = room.players[room.currentTurn]; if (!cp.isDead && !cp.isSpectator && !cp.hasLeft) { if (cp.missedTurns > 0) { cp.missedTurns--; io.to(roomId).emit('notification', `⏭️ Salteado.`); } else { steps--; } } } }
 
 function startCountdown(roomId) {
     const room = rooms[roomId]; if (!room || room.players.length < 2) return;
     room.gameState = 'counting'; room.resumeTurnFrom = null; createDeck(roomId);
-    
-    let safeCard = room.deck.pop();
-    let loopCount = 0; // NUEVO: Evita bucle infinito en la extracción inicial de la 4ta ronda
-    while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
-        loopCount++; if (loopCount > 50) break; // CORTAFUEGOS
-        room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
-    }
+    let safeCard = room.deck.pop(); let loopCount = 0;
+    while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') { loopCount++; if (loopCount > 50) break; room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop(); }
     room.discardPile = [safeCard]; room.activeColor = safeCard.color === 'negro' ? 'rojo' : safeCard.color; 
-    
     let nextStarter = room.roundStarterIndex % room.players.length; let safeLoop = 0;
     while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) { nextStarter = (nextStarter + 1) % room.players.length; safeLoop++; }
-    room.roundStarterIndex = nextStarter; room.currentTurn = room.roundStarterIndex; 
-    
-    room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.librePending = null;
-    
-    room.players.forEach(p => { 
-        if(p.hasLeft) return;
-        p.hand = []; p.hasDrawn = false; p.isDead = false; p.saidUno = false; p.missedTurns = 0; p.personalDebt = 0;
-        if(room.gameState !== 'waiting') p.isSpectator = false; 
-        if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } 
-    });
-    
+    room.roundStarterIndex = nextStarter; room.currentTurn = room.roundStarterIndex; room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.librePending = null;
+    room.players.forEach(p => { if(p.hasLeft) return; p.hand = []; p.hasDrawn = false; p.isDead = false; p.saidUno = false; p.missedTurns = 0; p.personalDebt = 0; if(room.gameState !== 'waiting') p.isSpectator = false; if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } });
     io.to(roomId).emit('countdownTick', 3); let count = 3;
-    room.countdownInterval = setInterval(() => {
-        if (!rooms[roomId]) return clearInterval(room.countdownInterval);
-        io.to(roomId).emit('countdownTick', count); io.to(roomId).emit('playSound', 'soft');
-        if (count <= 0) { 
-            clearInterval(room.countdownInterval); room.gameState = 'playing'; io.to(roomId).emit('playSound', 'start'); updateAll(roomId); 
-            const starterName = room.players[room.currentTurn] ? room.players[room.currentTurn].name : "???";
-            io.to(roomId).emit('roundStarted', { round: room.roundCount, starterName: starterName });
-        } 
-        count--;
-    }, 1000);
+    room.countdownInterval = setInterval(() => { if (!rooms[roomId]) return clearInterval(room.countdownInterval); io.to(roomId).emit('countdownTick', count); io.to(roomId).emit('playSound', 'soft'); if (count <= 0) { clearInterval(room.countdownInterval); room.gameState = 'playing'; io.to(roomId).emit('playSound', 'start'); updateAll(roomId); io.to(roomId).emit('roundStarted', { round: room.roundCount, starterName: room.players[room.currentTurn].name }); } count--; }, 1000);
 }
 
-function drawCards(roomId, pid, n) { 
-    const room = rooms[roomId]; if (!room || pid < 0 || pid >= room.players.length) return; 
-    for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); if (room.deck.length > 0) room.players[pid].hand.push(room.deck.pop()); } 
-    checkUnoCheck(roomId, room.players[pid]);
-}
-
-function initiateRoundEnd(roomId, winner) {
-    const room = rooms[roomId]; if(!room) return;
-    room.gameState = 'round_ending';
-    updateAll(roomId);
-    // NUEVO: Reducción de 2.5s a 1s para acelerar el flow sin perder visibilidad
-    setTimeout(() => { if(rooms[roomId]) calculateAndFinishRound(roomId, winner); }, 1000); 
-}
+function drawCards(roomId, pid, n) { const room = rooms[roomId]; for (let i = 0; i < n; i++) { if (room.deck.length === 0) recycleDeck(roomId); if (room.deck.length > 0) room.players[pid].hand.push(room.deck.pop()); } checkUnoCheck(roomId, room.players[pid]); }
+function initiateRoundEnd(roomId, winner) { const room = rooms[roomId]; if(!room) return; room.gameState = 'round_ending'; updateAll(roomId); setTimeout(() => { if(rooms[roomId]) calculateAndFinishRound(roomId, winner); }, 1000); }
 
 function calculateAndFinishRound(roomId, winner) {
     try {
         const room = rooms[roomId]; if(!room) return;
-        let pointsAccumulated = 0; let losersDetails = [];
-        const lastCard = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null;
-        let bonus = 0; if (lastCard && lastCard.value === 'GRACIA') bonus = 50;
-
-        room.players.forEach(p => {
-            if (p.uuid !== winner.uuid && !p.isSpectator && !p.hasLeft) { 
-                const hasGrace = p.hand.some(c => c.value === 'GRACIA');
-                let pPoints = 0; if (!hasGrace) { pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0); }
-                if(pPoints > 0) { pointsAccumulated += pPoints; losersDetails.push({ name: p.name + (p.isDead ? " (RIP)" : ""), points: pPoints }); }
-            }
-        });
-
-        pointsAccumulated += bonus; if(bonus > 0) losersDetails.push({ name: "BONUS (Cierre Gracia)", points: 50 });
-
-        if(room.scores[winner.uuid] === undefined) room.scores[winner.uuid] = 0;
-        room.scores[winner.uuid] += pointsAccumulated; const winnerTotal = room.scores[winner.uuid];
-
-        if (winnerTotal >= 800) {
-            room.gameState = 'waiting'; io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); io.to(roomId).emit('playSound', 'win');
-            if (room.actionTimer) clearTimeout(room.actionTimer); if (room.turnTimer) clearTimeout(room.turnTimer); if (room.afkTimer) clearTimeout(room.afkTimer);
-            setTimeout(() => { delete rooms[roomId]; }, 10000);
-        } else {
-            room.gameState = 'round_over'; room.roundCount++;
-            const leaderboard = Object.keys(room.scores).map(uid => { const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); if(pl) return { name: pl.name, score: room.scores[uid] }; return null; }).filter(x=>x).sort((a,b) => b.score - a.score);
-            io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal });
-            io.to(roomId).emit('playSound', 'win');
-            const animationDelay = (losersDetails.length * 1500) + 2000 + (leaderboard.length * 800) + 2500 + 3000;
-            setTimeout(() => { try { if(rooms[roomId]) resetRound(roomId); } catch(e){} }, animationDelay);
-        }
-    } catch(e) { console.error("Error en calc round:", e); try { if(rooms[roomId]) resetRound(roomId); } catch(err){} }
+        let pointsAccumulated = 0; let losersDetails = []; const lastCard = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null; let bonus = 0; if (lastCard && lastCard.value === 'GRACIA') bonus = 50;
+        room.players.forEach(p => { if (p.uuid !== winner.uuid && !p.isSpectator && !p.hasLeft) { const hasGrace = p.hand.some(c => c.value === 'GRACIA'); let pPoints = 0; if (!hasGrace) { pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0); } if(pPoints > 0) { pointsAccumulated += pPoints; losersDetails.push({ name: p.name, points: pPoints }); } } });
+        pointsAccumulated += bonus; if(bonus > 0) losersDetails.push({ name: "BONUS Gracia", points: 50 });
+        if(room.scores[winner.uuid] === undefined) room.scores[winner.uuid] = 0; room.scores[winner.uuid] += pointsAccumulated; const winnerTotal = room.scores[winner.uuid];
+        if (winnerTotal >= 800) { room.gameState = 'waiting'; io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); io.to(roomId).emit('playSound', 'win'); delete rooms[roomId]; } 
+        else { room.gameState = 'round_over'; room.roundCount++; const leaderboard = Object.keys(room.scores).map(uid => { const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); if(pl) return { name: pl.name, score: room.scores[uid] }; return null; }).filter(x=>x).sort((a,b) => b.score - a.score); io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal }); io.to(roomId).emit('playSound', 'win'); setTimeout(() => { try { if(rooms[roomId]) resetRound(roomId); } catch(e){} }, (losersDetails.length * 1500) + 10000); }
+    } catch(e) { console.error(e); try { if(rooms[roomId]) resetRound(roomId); } catch(err){} }
 }
 
 function resetRound(roomId) {
     try {
-        const room = rooms[roomId]; if(!room) return;
-        room.resumeTurnFrom = null; room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
-
+        const room = rooms[roomId]; if(!room) return; room.roundStarterIndex = (room.roundStarterIndex + 1) % room.players.length;
         let nextStarter = room.roundStarterIndex; let safeLoop = 0;
         while (room.players[nextStarter] && (!room.players[nextStarter].isConnected || room.players[nextStarter].isSpectator || room.players[nextStarter].hasLeft) && safeLoop < room.players.length) { nextStarter = (nextStarter + 1) % room.players.length; safeLoop++; }
-        room.roundStarterIndex = nextStarter;
-
-        createDeck(roomId); let safeCard = room.deck.pop(); let loopCount = 0;
-        while (['+2','+4','+12','R','X','RIP','GRACIA','LIBRE','SALTEO SUPREMO'].includes(safeCard.value) || safeCard.color === 'negro') {
-            loopCount++; if(loopCount > 50) break; // CORTAFUEGOS
-            room.deck.unshift(safeCard); for (let i = room.deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [room.deck[i], room.deck[j]] = [room.deck[j], room.deck[i]]; } safeCard = room.deck.pop();
-        }
-        room.discardPile = [safeCard]; room.activeColor = safeCard.color === 'negro' ? 'rojo' : safeCard.color; 
-        
-        room.direction = 1; room.pendingPenalty = 0; room.pendingSkip = 0; room.librePending = null; room.gameState = 'playing';
-
-        room.players.forEach(p => { 
-            if(p.hasLeft) return;
-            p.hand = []; p.hasDrawn = false; p.isDead = false; p.isSpectator = false; p.saidUno = false; p.missedTurns = 0; p.personalDebt = 0;
-            for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); 
-        });
-        startCountdown(roomId);
-    } catch (e) { console.error("Error en resetRound:", e); }
+        room.roundStarterIndex = nextStarter; startCountdown(roomId);
+    } catch (e) { console.error(e); }
 }
 
 function checkWinCondition(roomId) {
-    const room = rooms[roomId]; if (!room) return;
-    if (room.gameState === 'waiting') { updateAll(roomId); return; }
-
-    const presentPlayers = room.players.filter(p => !p.isSpectator && !p.hasLeft);
-    const alivePlayers = presentPlayers.filter(p => !p.isDead);
-
-    if (presentPlayers.length <= 1) {
-        const winner = presentPlayers[0] || room.players.find(p => !p.hasLeft);
-        if (winner) {
-            room.gameState = 'game_over';
-            setTimeout(() => {
-                if (!rooms[roomId]) return;
-                io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: room.scores[winner.uuid] || 0, reason: 'desertion' });
-                io.to(roomId).emit('playSound', 'win');
-                if (room.actionTimer) clearTimeout(room.actionTimer); if (room.turnTimer) clearTimeout(room.turnTimer); if (room.afkTimer) clearTimeout(room.afkTimer);
-                setTimeout(() => { delete rooms[roomId]; }, 10000);
-            }, 3000);
-        }
-    } else if (alivePlayers.length === 1 && presentPlayers.length > 1) {
-        const roundWinner = alivePlayers[0]; initiateRoundEnd(roomId, roundWinner);
-    }
+    const room = rooms[roomId]; if (!room || room.gameState === 'waiting') return;
+    const presentPlayers = room.players.filter(p => !p.isSpectator && !p.hasLeft); const alivePlayers = presentPlayers.filter(p => !p.isDead);
+    if (presentPlayers.length <= 1) { const winner = presentPlayers[0] || room.players.find(p => !p.hasLeft); if (winner) { io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: room.scores[winner.uuid] || 0, reason: 'desertion' }); delete rooms[roomId]; } } 
+    else if (alivePlayers.length === 1) { initiateRoundEnd(roomId, alivePlayers[0]); }
 }
 
 function updateAll(roomId) {
     try {
         const room = rooms[roomId]; if(!room) return;
-        let lastRoundWinner = ""; if (room.duelState.history.length > 0) { lastRoundWinner = room.duelState.history[room.duelState.history.length - 1].winnerName; }
         const reportablePlayers = room.players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft && p.hand.length === 1 && !p.saidUno && (Date.now() - p.lastOneCardTime > 2000)).map(p => p.id);
-        const duelInfo = (['dueling','rip_decision','penalty_decision', 'animating_penalty', 'animating_rip'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, myChoice: null, turn: room.duelState.turn, lastWinner: lastRoundWinner, narrative: room.duelState.narrative, type: room.duelState.type, triggerCard: room.duelState.triggerCard } : null;
-
+        const duelInfo = (['dueling','rip_decision','penalty_decision', 'animating_penalty', 'animating_rip'].includes(room.gameState)) ? { attackerName: room.duelState.attackerName, defenderName: room.duelState.defenderName, round: room.duelState.round, scoreAttacker: room.duelState.scoreAttacker, scoreDefender: room.duelState.scoreDefender, history: room.duelState.history, attackerId: room.duelState.attackerId, defenderId: room.duelState.defenderId, turn: room.duelState.turn, narrative: room.duelState.narrative, type: room.duelState.type, triggerCard: room.duelState.triggerCard } : null;
         const leaderboard = Object.keys(room.scores).map(uid => { const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); if(pl) return { name: pl.name, score: room.scores[uid] }; return null; }).filter(x=>x).sort((a,b) => b.score - a.score);
         const activePlayers = room.players.filter(p => !p.hasLeft);
-
-        const pack = { state: room.gameState, roomId: roomId, librePending: room.librePending, players: activePlayers.map((p) => {
-            const pIndex = room.players.findIndex(x => x.uuid === p.uuid);
-            return { name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (['playing', 'animating_penalty', 'animating_rip'].includes(room.gameState) && pIndex === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected, personalDebt: p.personalDebt };
-        }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard, timerEndsAt: room.timerEndsAt };
-        
-        activePlayers.forEach(p => {
-            if(p.isConnected) {
-                const mp = JSON.parse(JSON.stringify(pack)); mp.iamAdmin = p.isAdmin;
-                if (mp.duelInfo) { if (p.uuid === room.duelState.attackerId) mp.duelInfo.myChoice = room.duelState.attackerChoice; if (p.uuid === room.duelState.defenderId) mp.duelInfo.myChoice = room.duelState.defenderChoice; }
-                io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand); io.to(p.id).emit('chatHistory', room.chatHistory);
-            }
-        });
+        const pack = { state: room.gameState, roomId: roomId, librePending: room.librePending, players: activePlayers.map((p) => { const pIndex = room.players.findIndex(x => x.uuid === p.uuid); return { name: p.name + (p.isAdmin ? " 👑" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (['playing', 'animating_penalty', 'animating_rip'].includes(room.gameState) && pIndex === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected, personalDebt: p.personalDebt }; }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard, timerEndsAt: room.timerEndsAt };
+        activePlayers.forEach(p => { if(p.isConnected) { const mp = JSON.parse(JSON.stringify(pack)); if (mp.duelInfo) { mp.duelInfo.myChoice = (p.uuid === room.duelState.attackerId) ? room.duelState.attackerChoice : room.duelState.defenderChoice; } io.to(p.id).emit('updateState', mp); if (!p.isSpectator || p.isDead) io.to(p.id).emit('handUpdate', p.hand); io.to(p.id).emit('chatHistory', room.chatHistory); } });
         manageTimers(roomId); 
-    } catch(e) { console.error("Error UpdateAll:", e); }
+    } catch(e) { console.error(e); }
 }
 
 // --- CLIENTE HTML ---
@@ -1217,18 +970,16 @@ app.get('/', (req, res) => {
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: transparent; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background-color 0.5s; }
         
-        /* NUEVO: CICLO DE FONDO ANIMADO Y PARTICULAS */
         .bg-cycle { animation: bgCycle 20s infinite ease-in-out; }
         @keyframes bgCycle { 0% { background-color: #c0392b; } 25% { background-color: #2980b9; } 50% { background-color: #27ae60; } 75% { background-color: #f1c40f; } 100% { background-color: #c0392b; } }
         
-        .falling-bg-card { position: absolute; top: -100px; background: #111; color: white; border: 2px solid #555; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; z-index: 1; pointer-events: none; opacity: 0.6; animation: fall linear forwards; box-shadow: 0 0 10px black; }
+        /* CORRECCIÓN: Fondo y color dinámico para cartas cayendo */
+        .falling-bg-card { position: absolute; top: -110px; border: 2px solid #fff; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; z-index: 1; pointer-events: none; opacity: 0.6; animation: fall linear forwards; box-shadow: 0 0 10px black; }
         @keyframes fall { to { transform: translateY(120vh) rotate(360deg); } }
 
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-        
-        .login-bg { z-index: 2000; background: transparent; }
         .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(0,0,0,0.8); animation: floatLogo 3s ease-in-out infinite; }
-        @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(0,0,0,0.9); } 100% { transform: translateY(0px); } }
+        @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0px); } }
         
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); background: #1e272e; }
         #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
@@ -1239,14 +990,14 @@ app.get('/', (req, res) => {
         .active-stage { display: flex; animation: fadeIn 0.5s; }
         .score-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 0.6s ease-in-out; text-shadow: 0 0 10px black; z-index: 160000; }
 
-        #round-start-banner { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px; color: white; padding: 30px; text-align: center; z-index: 200000; box-shadow: 0 0 30px gold; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none; }
+        #round-start-banner { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px; color: white; padding: 30px; text-align: center; z-index: 200000; box-shadow: 0 0 30px gold; transition: transform 0.5s; display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none; }
         #round-start-banner.show { transform: translate(-50%, -50%) scale(1); }
 
         .rank-row { display: flex; justify-content: space-between; width: 80%; max-width: 400px; padding: 15px; margin: 8px 0; background: rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transform: translateY(20px); transition: all 0.5s; font-size: 22px; }
         .rank-row.visible { opacity: 1; transform: translateY(0); }
         .rank-gold { border: 2px solid gold; background: rgba(255, 215, 0, 0.2); }
 
-        .floating-window { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-width: 95%; max-height: 85vh; background: #2c3e50; border: 3px solid #ecf0f1; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.9); z-index: 100000; display: none; flex-direction: column; padding: 20px; color: white; overflow-y: auto; text-align: center; }
+        .floating-window { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-width: 95%; max-height: 85vh; background: #2c3e50; border: 3px solid #ecf0f1; border-radius: 15px; z-index: 100000; display: none; flex-direction: column; padding: 20px; color: white; text-align: center; }
         .modal-close { position: absolute; top: 10px; right: 15px; font-size: 28px; cursor: pointer; color: #aaa; font-weight: bold; }
         
         #reconnect-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:90000; display:none; justify-content:center; align-items:center; color:white; font-size:20px; flex-direction:column; }
@@ -1257,11 +1008,10 @@ app.get('/', (req, res) => {
         .libre-step.active { display: block; }
         
         .hud-btn { position: fixed; width: 50px; height: 50px; border-radius: 50%; display: none; justify-content: center; align-items: center; border: 2px solid white; z-index: 50000; box-shadow: 0 4px 5px rgba(0,0,0,0.5); font-size: 20px; cursor: pointer; transition: transform 0.2s, top 0.3s ease-out, left 0.3s ease-out; }
-        .hud-btn:active { transform: scale(0.9); }
         
         #score-btn { background: gold; color: black; }
         #rules-btn { background: #9b59b6; color: white; }
-        #uno-main-btn { background: #e67e22; font-size: 10px; font-weight: bold; text-align: center; line-height: 1.1; padding: 0; }
+        #uno-main-btn { background: #e67e22; font-size: 10px; font-weight: bold; text-align: center; padding: 0; }
         #chat-btn { background: #3498db; }
         #global-leave-btn { background: #c0392b; font-size: 20px; }
 
@@ -1274,31 +1024,30 @@ app.get('/', (req, res) => {
         .flash-action { animation: flashAction 0.4s ease-out; z-index: 9999; }
 
         #alert-zone { position: fixed; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; transition: top 0.3s ease-out; gap: 10px; }
-        .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; pointer-events: auto; }
+        .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; display: none; pointer-events: auto; max-width: 90%; }
         
-        #personal-debt-display { font-size: 20px; color: white; text-shadow: 0 0 5px black; display: none; background: rgba(231, 76, 60, 0.95); padding: 15px 20px; border-radius: 10px; border: 3px solid white; pointer-events: auto; width: 90%; max-width: 350px; text-align: center; line-height: 1.3; animation: pulseRed 1s infinite alternate; box-shadow: 0 0 20px red; }
-        #penalty-display { font-size: 20px; color: #ff4757; text-shadow: 0 0 5px red; display: none; background: rgba(0,0,0,0.9); padding: 10px 15px; border-radius: 8px; border: 2px solid red; pointer-events: auto; width: 85%; max-width: 320px; text-align: center; line-height: 1.3; transform: translateY(-30px); animation: pulseRed 1s infinite alternate; }
+        #personal-debt-display { font-size: 20px; color: white; text-shadow: 0 0 5px black; display: none; background: rgba(231, 76, 60, 0.95); padding: 15px 20px; border-radius: 10px; border: 3px solid white; pointer-events: auto; width: 90%; max-width: 350px; text-align: center; animation: pulseRed 1s infinite alternate; }
+        #penalty-display { font-size: 20px; color: #ff4757; text-shadow: 0 0 5px red; display: none; background: rgba(0,0,0,0.9); padding: 10px 15px; border-radius: 8px; border: 2px solid red; pointer-events: auto; text-align: center; animation: pulseRed 1s infinite alternate; }
         @keyframes pulseRed { from { box-shadow: 0 0 10px red; } to { box-shadow: 0 0 25px red; } }
         
         #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
-        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; white-space: nowrap; overflow: hidden; }
+        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; position: relative; color: white; }
         #deck-pile { background: #e74c3c; cursor: pointer; }
         #top-card { background: #333; }
         
         #action-bar { position: fixed; bottom: 180px; left: 0; width: 100%; display: none; justify-content: center; align-items: center; padding: 10px; pointer-events: none; z-index: 20000; }
-        #uno-btn-area { pointer-events: auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; background: none; padding: 0; border-radius: 0; }
-        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; box-shadow: 0 4px 0 #d35400; }
-        #btn-ladder-play { background: #27ae60; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px gold; font-size: 14px; }
-        #btn-ladder-cancel { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px red; font-size: 14px; }
-        #btn-sort { background: #34495e; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #2c3e50; }
+        #uno-btn-area { pointer-events: auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+        .btn-pass { background: #f39c12; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display: none; }
+        #btn-ladder-play { background: #27ae60; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; }
+        #btn-ladder-cancel { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; }
+        #btn-sort { background: #34495e; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; }
 
-        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: none; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; transition: filter 0.3s; }
+        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: none; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; z-index: 10000; }
         body.state-round-ending #hand-zone { pointer-events: none; filter: grayscale(1) brightness(0.5); }
         
-        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: transform 0.2s; white-space: nowrap; }
-        .hand-card:active { transform: scale(0.95); }
-        .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
+        .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; position: relative; cursor: pointer; z-index: 1; transition: transform 0.2s; }
+        .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); z-index:10; }
         
         @keyframes slideUp { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .drawn-card { animation: slideUp 0.5s ease-out; border: 2px solid gold; }
@@ -1316,29 +1065,26 @@ app.get('/', (req, res) => {
         
         .min-c { display:inline-block; width:22px; height:32px; border-radius:3px; border:1px solid white; text-align:center; line-height:32px; font-weight:bold; font-size:12px; color:white; vertical-align:middle; margin:0 2px; }
         .mc-rojo { background:#ff5252; } .mc-azul { background:#448aff; } .mc-verde { background:#69f0ae; color:black; } .mc-amarillo { background:#ffd740; color:black; } .mc-negro { background:#212121; }
-        .mc-rip { background:black; font-size:10px; line-height:12px; display:inline-flex; align-items:center; justify-content:center; }
+        .mc-rip { background:black; font-size:10px; display:inline-flex; align-items:center; justify-content:center; }
         .mc-gra { background:white; color:red; }
 
         .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
-        .mini-card.selected { border-color: gold; transform: scale(1.1); background: #666; }
 
-        #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
+        #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; }
         #duel-opts { display:flex; justify-content:center; gap:20px; margin-top:20px; width:100%; }
         .duel-btn { font-size:50px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; padding:10px; }
-        .duel-btn:hover { opacity: 0.8; }
-        .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
-        .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
+        .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; }
+        .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; }
         
         #duel-clash-zone { display: none; flex-direction: row; justify-content: center; align-items: center; width: 100%; gap: 30px; margin: 30px 0; }
         @keyframes slideRightHit { 0% { transform: translateX(-150px); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(20px); } }
         @keyframes slideLeftHit { 0% { transform: translateX(150px); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(-20px); } }
-        .clash-player { font-size: 90px; text-align: center; text-shadow: 0 0 20px rgba(255,255,255,0.8); }
+        .clash-player { font-size: 90px; text-align: center; }
         .clash-player-name { font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.8); padding: 5px 10px; border-radius: 5px; display: block; margin-top: 10px; color: white; border: 1px solid white; }
-        @keyframes screenShake { 0% { transform: translate(1px, 1px) rotate(0deg); } 10% { transform: translate(-1px, -2px) rotate(-1deg); } 20% { transform: translate(-3px, 0px) rotate(1deg); } 30% { transform: translate(3px, 2px) rotate(0deg); } 40% { transform: translate(1px, -1px) rotate(1deg); } 50% { transform: translate(-1px, 2px) rotate(-1deg); } 60% { transform: translate(-3px, 1px) rotate(0deg); } 70% { transform: translate(3px, 1px) rotate(-1deg); } 80% { transform: translate(-1px, -1px) rotate(1deg); } 90% { transform: translate(1px, 2px) rotate(0deg); } 100% { transform: translate(1px, -2px) rotate(-1deg); } }
+        @keyframes screenShake { 0% { transform: translate(1px, 1px); } 50% { transform: translate(-3px, -2px); } 100% { transform: translate(1px, -2px); } }
 
         input { padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:10px 0; }
         .btn-main { padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer; margin: 10px; }
-        @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
         /* BLOQUEOS */
@@ -1350,12 +1096,10 @@ app.get('/', (req, res) => {
         .lobby-row { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 300px; margin-bottom: 10px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; }
         .lobby-name { display: flex; align-items: center; gap: 10px; font-size:18px; font-weight:bold; }
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
-        #lobby-link-container { margin-bottom: 30px; }
         
         #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
         
-        /* NUEVO: CLASE PARA CARTAS VOLADORAS UNIVERSALES */
-        .universal-flying-card { position: fixed; width: 70px; height: 100px; border-radius: 8px; z-index: 50000; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; box-shadow: 0 5px 15px rgba(0,0,0,0.8); transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1); pointer-events: none; }
+        .universal-flying-card { position: fixed; width: 70px; height: 100px; border-radius: 8px; z-index: 50000; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; border: 2px solid white; box-shadow: 0 5px 15px rgba(0,0,0,0.8); transition: all 0.5s; pointer-events: none; }
     </style>
 </head>
 <body class="bg-cycle">
@@ -1402,8 +1146,8 @@ app.get('/', (req, res) => {
     </div>
 
     <div id="alert-zone">
-        <div id="personal-debt-display">🛑 ¡DEBES PAGAR <span id="pd-num">0</span> CARTAS! 🛑<br><small style="color:white; font-size:14px; font-weight:normal;">Toca el mazo rojo para robarlas.</small></div>
-        <div id="penalty-display">⚠️ DEBES RECOGER <span id="pen-num">0</span> CARTAS<br><small style="color:white; font-size:14px; font-weight:normal;">(Toca el mazo rojo para robar)</small></div>
+        <div id="personal-debt-display">🛑 ¡DEBES PAGAR <span id="pd-num">0</span> CARTAS! 🛑</div>
+        <div id="penalty-display">⚠️ DEBES RECOGER <span id="pen-num">0</span> CARTAS</div>
         <div id="main-alert" class="alert-box"></div>
     </div>
 
@@ -1448,147 +1192,141 @@ app.get('/', (req, res) => {
 
     <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 800px; max-height: 90vh;">
         <div class="modal-close" onclick="toggleManual()">X</div>
-        <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
+        <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL</h1>
         <div style="padding:0 10px; text-align:left; line-height:1.7; font-size: 15px;">
-            <h3 style="color:#2ecc71;">1. OBJETIVO DEL JUEGO</h3>
-            <p>El juego se desarrolla por rondas. El objetivo es ser el primero en quedarse sin cartas. Al lograrlo, la ronda termina y <b>recolectas los puntos de las cartas de los rivales</b>. El primero en sumar <b>800 puntos</b> gana.</p>
-            
-            <h3 style="color:#2ecc71;">2. ¿CÓMO JUGAR?</h3>
-            <p>Debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la mesa. Si no tienes o no quieres, toca el mazo. Si te sirve, tírala; si no, presiona "PASAR".</p>
-            <p><b>JUGADAS MÚLTIPLES (Mantén presionada una carta para seleccionar):</b></p>
-            <ul>
-                <li><b>🪜 Escalera:</b> 3 o más cartas consecutivas del <b>mismo color</b>.</li>
-                <li><b>✨ Combo "1 y 1/2":</b> Agrupa 2, 4 o 6 cartas para formar 3, 6 o 9 respectivamente. Debe coincidir con el número de la mesa.</li>
-                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si tiras una carta EXACTAMENTE IGUAL (mismo número y color) a la de la mesa fuera de tu turno, ¡robas el turno!</li>
-            </ul>
-
-            <h3 style="color:#2ecc71;">3. CARTAS SUPREMAS Y DUELOS</h3>
-            <ul>
-                <li><span class="min-c mc-negro">+12</span> / <span class="min-c mc-negro">SS</span>: Castigos letales. Puedes aceptar robarlas o salvarte batiéndote a duelo.</li>
-                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> El siguiente jugador debe batirse a duelo a muerte (Fuego 🔥 derrite Hielo ❄️, Hielo congela Agua 💧, Agua apaga Fuego). Quien pierde queda eliminado.</li>
-                <li><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Defiende castigos numéricos. Regalas 1 carta y descartas la que quieras.</li>
-                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Anula castigos, resucita muertos (RIP) y permite elegir el color.</li>
-            </ul>
+            <p>El primer jugador en sumar <b>800 puntos</b> gana.</p>
+            <p>🪜 Escalera: 3 o más consecutivas del mismo color.</p>
+            <p>✨ Combo 1y1/2: Junta 2, 4 o 6 cartas para sumar 3, 6 o 9.</p>
+            <p>⚡ S.A.F.F.: Tira una carta IDÉNTICA fuera de turno y róbalo.</p>
+            <p>🪦 RIP: Duelo a muerte. El perdedor es eliminado.</p>
+            <p>❤️ GRACIA: Anula castigos, revive muertos y cambia color.</p>
         </div>
     </div>
 
     <div id="afk-modal" class="floating-window" style="z-index: 999999; background: #c0392b; border: 4px solid gold;">
-        <h1 style="color:white; font-size:40px; margin:10px 0;">¿ESTÁS AHÍ?</h1>
-        <p style="font-size:18px; line-height:1.4;">Tu turno está a punto de caducar por inactividad.</p>
-        <button class="btn-main" style="background:#27ae60; font-size:20px; padding:15px; width:100%; box-shadow: 0 0 15px white;" onclick="imHere()">¡SÍ, ESTOY JUGANDO!</button>
+        <h1 style="color:white; font-size:40px;">¿ESTÁS AHÍ?</h1>
+        <button class="btn-main" style="background:#27ae60; font-size:20px; width:100%;" onclick="imHere()">¡SÍ!</button>
     </div>
 
     <div id="leave-normal-modal" class="floating-window">
-        <h2 style="color:gold;">¿Abandonar Partida?</h2>
-        <p>Serás expulsado de la sala y no podrás volver.</p>
-        <button class="btn-main" onclick="confirmLeave('leave_normal')" style="background:#e74c3c;">SÍ, ABANDONAR</button>
+        <h2>¿Abandonar?</h2>
+        <button class="btn-main" onclick="confirmLeave('leave_normal')" style="background:#e74c3c;">SÍ</button>
         <button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
     <div id="leave-admin-modal" class="floating-window">
-        <h2 style="color:gold;">¿Abandonar Partida?</h2>
-        <p>Eres el anfitrión. Puedes irte y dejar que continúen o cancelar la partida para todos.</p>
-        <button class="btn-main" onclick="confirmLeave('leave_host_keep')" style="background:#f39c12; font-size:16px;">IRME Y DEJARLOS JUGANDO</button>
-        <button class="btn-main" onclick="confirmLeave('leave_host_end')" style="background:#e74c3c; font-size:16px;">FINALIZAR PARTIDA</button>
+        <h2>¿Abandonar?</h2>
+        <button class="btn-main" onclick="confirmLeave('leave_host_end')" style="background:#e74c3c;">FINALIZAR PARTIDA</button>
         <button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
 
     <div id="game-over-screen" class="screen">
-        <h1 style="color:gold;">VICTORIA SUPREMA</h1>
+        <h1 style="color:gold;">VICTORIA</h1>
         <h2 id="winner-name"></h2>
         <h3 id="final-score"></h3>
     </div>
     
-    <div id="pause-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; justify-content:center; align-items:center; flex-direction:column; color:white; text-align:center; padding: 20px;">
-        <h1 style="color:gold; font-size:50px; margin-bottom: 10px;">⏸️ PAUSA</h1>
-        <h2 id="pause-msg" style="font-weight: normal; line-height:1.4;"></h2>
+    <div id="pause-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; justify-content:center; align-items:center; flex-direction:column; color:white; text-align:center;">
+        <h1 style="color:gold; font-size:50px;">⏸️ PAUSA</h1>
+        <h2 id="pause-msg"></h2>
     </div>
 
     <div id="round-overlay">
         <div id="stage-collection" class="round-stage active-stage">
-            <h2 style="color: #2ecc71;">GANADOR DE LA RONDA</h2>
-            <h1 id="r-winner-name" style="color: gold; font-size: 40px; margin-top: 0; margin-bottom: 10px;"></h1>
-            <h3 id="r-winner-pts" style="color: white; border: 2px solid gold; padding: 10px 20px; border-radius: 10px; background: rgba(0,0,0,0.5); display: inline-block;">0 pts</h3>
-            <div id="losers-area" style="margin-top: 30px; min-height: 100px; display: flex; flex-direction: column; gap: 15px;"></div>
+            <h1 id="r-winner-name" style="color: gold; font-size: 40px;"></h1>
+            <h3 id="r-winner-pts">0 pts</h3>
+            <div id="losers-area"></div>
         </div>
         <div id="stage-ranking" class="round-stage">
-            <h1 style="color:gold; font-size: 40px; letter-spacing: 5px; margin-bottom: 5px;">RANKING</h1>
-            <h4 style="color:#aaa; margin-top: 0; margin-bottom: 30px;">Puntajes acumulados</h4>
-            <div id="ranking-list" style="width: 100%; display: flex; flex-direction: column; align-items: center;"></div>
+            <h1>RANKING</h1>
+            <div id="ranking-list"></div>
         </div>
     </div>
 
     <div id="rip-screen" class="screen">
         <h1 style="color:red;" id="rip-title">💀 RIP 💀</h1>
-        <h3 id="rip-msg-custom" style="text-align:center; padding:10px;"></h3>
-        <div id="decision-timer" style="font-size: 60px; color: #e74c3c; font-weight: bold; margin: 5px 0; text-shadow: 0 0 15px red;">15</div>
-        <button id="btn-accept-penalty" onclick="ripResp('accept_penalty')" class="btn-main" style="background:#34495e; display:none;">ACEPTAR CASTIGO</button>
-        <button id="btn-duel-start" onclick="ripResp('duel')" class="btn-main" style="background:red; border:3px solid gold;">BATIRSE A DUELO</button>
+        <h3 id="rip-msg-custom"></h3>
+        <div id="decision-timer" style="font-size: 60px; color: #e74c3c;">15</div>
+        <button id="btn-accept-penalty" onclick="ripResp('accept_penalty')" class="btn-main" style="background:#34495e; display:none;">ACEPTAR</button>
+        <button id="btn-duel-start" onclick="ripResp('duel')" class="btn-main" style="background:red;">DUELO</button>
         <button id="btn-surrender" onclick="ripResp('surrender')" class="btn-main">RENDIRSE</button>
-        <p id="duel-warning" style="font-size:12px; color:#aaa; display:none;">Nota: batirse a duelo y perder implicará una penalidad extra.</p>
-        <div id="grace-btn" style="display:none;"><button onclick="showGraceModal()" class="btn-main" style="background:white; color:red;">USAR GRACIA</button></div>
     </div>
 
     <div id="duel-screen" class="screen">
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
-        <div id="duel-timer" style="font-size: 40px; color: #e74c3c; font-weight: bold; margin-bottom: 5px; text-shadow: 0 0 10px red;">15</div>
-        <h3 id="duel-narrative">Cargando duelo...</h3>
-        <h2 id="duel-names">... vs ...</h2>
-        <h3 id="duel-sc">0 - 0</h3>
-        <p id="duel-turn-msg"></p>
+        <div id="duel-timer" style="font-size: 40px; color: #e74c3c;">15</div>
+        <h3 id="duel-narrative">Cargando...</h3>
+        <h2 id="duel-sc">0 - 0</h2>
         <div id="duel-opts">
             <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
             <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
             <button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button>
         </div>
         <div id="duel-clash-zone">
-            <div class="clash-player" style="animation: slideRightHit 0.5s forwards;"><span id="clash-att-emoji">🔥</span><br><span class="clash-player-name" id="clash-att-name">Atacante</span></div>
-            <div style="font-size:60px; font-weight:bold; color:red; text-shadow: 0 0 15px black; margin: 0 20px;">VS</div>
-            <div class="clash-player" style="animation: slideLeftHit 0.5s forwards;"><span id="clash-def-emoji">❄️</span><br><span class="clash-player-name" id="clash-def-name">Defensor</span></div>
+            <div class="clash-player"><span id="clash-att-emoji">🔥</span><br><span class="clash-player-name" id="clash-att-name"></span></div>
+            <div class="clash-player"><span id="clash-def-emoji">❄️</span><br><span class="clash-player-name" id="clash-def-name"></span></div>
         </div>
     </div>
     
-    <div id="color-picker" class="floating-window"><h3>Elige Color</h3><div style="display:flex; flex-wrap:wrap; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div></div>
-    <div id="revive-screen" class="floating-window"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div>
+    <div id="color-picker" class="floating-window"><h3>Elige Color</h3><div style="display:flex; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div></div>
+    <div id="revive-screen" class="floating-window"><h2>REVIVIR?</h2><div id="zombie-list"></div></div>
     
-    <div id="grace-color-modal" class="floating-window">
-        <h2 style="color:gold;">❤️ GRACIA DIVINA ❤️</h2>
-        <p>¿Quieres usarla como cambio de color?</p>
-        <button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button>
-        <button class="btn-main" onclick="confirmGraceColor(false)" style="background:#e74c3c">CANCELAR</button>
-    </div>
-
-    <div id="revive-confirm-screen" class="floating-window">
-        <h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2>
-        <button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button>
-        <button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button>
-    </div>
-
+    <div id="grace-color-modal" class="floating-window"><h2>❤️ GRACIA</h2><button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button><button class="btn-main" onclick="confirmGraceColor(false)">NO</button></div>
+    <div id="revive-confirm-screen" class="floating-window"><h2>REVIVIR A <span id="revive-name"></span>?</h2><button class="btn-main" onclick="confirmRevive(true)">SÍ</button><button class="btn-main" onclick="confirmRevive(false)">NO</button></div>
     <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:250000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
 
-    <div id="libre-modal" class="floating-window" style="width: 380px;">
-        <div id="step-1" class="libre-step active"><h2 style="color: gold;">¿A quién regalas 1 carta?</h2><div id="libre-targets"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
-        <div id="step-2" class="libre-step"><h2 style="color: gold;">Elige qué carta regalar</h2><div id="libre-gift-hand" style="max-height: 200px; overflow-y: auto;"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
-        <div id="step-3" class="libre-step"><h2 style="color: gold;">Elige 1 carta a descartar</h2><div id="libre-discard-hand" style="max-height: 200px; overflow-y: auto;"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
+    <div id="libre-modal" class="floating-window">
+        <div id="step-1" class="libre-step active"><h2>Regalar a?</h2><div id="libre-targets"></div></div>
+        <div id="step-2" class="libre-step"><h2>Carta a regalar?</h2><div id="libre-gift-hand"></div></div>
+        <div id="step-3" class="libre-step"><h2>Carta a descartar?</h2><div id="libre-discard-hand"></div></div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
-        let isChatOpen = false; let unreadCount = 0; let ladderMode = false; let ladderSelected = []; 
-        let myUUID = localStorage.getItem('uno_uuid');
-        
-        let pressTimer; let pendingColorForRevive = null; let pendingLibreContext = null; let clientTimerInterval = null; 
-        let hasPlayedIntro = false;
+        let myId = '', pendingCard = null, pendingGrace = false, myHand = [], currentPlayers = [], isChatOpen = false, unreadCount = 0, ladderMode = false, ladderSelected = []; 
+        let myUUID = localStorage.getItem('uno_uuid'), pressTimer, pendingColorForRevive = null, pendingLibreContext = null, clientTimerInterval = null, hasPlayedIntro = false;
 
-        // NUEVO: Generador de partículas de cartas en el menú
+        function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
+        function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
+
+        // CORRECCIÓN: Generador de partículas que respeta el diseño real
         function createFallingCard() {
             if(document.body.classList.contains('playing-state')) return; 
-            const cards = ['+12', 'SS', '🪦', '❤️', '🕊️', '+4', '🎨', 'X', 'R'];
-            const card = cards[Math.floor(Math.random() * cards.length)];
+            
+            // Pool de cartas especiales para la animación
+            const pool = [
+                {value: '+12', color: 'negro'},
+                {value: 'SALTEO SUPREMO', color: 'negro'},
+                {value: 'RIP', color: 'negro'},
+                {value: 'GRACIA', color: 'negro'},
+                {value: 'LIBRE', color: 'negro'},
+                {value: '+4', color: 'negro'},
+                {value: 'color', color: 'negro'},
+                {value: 'X', color: 'rojo'},
+                {value: 'R', color: 'azul'},
+                {value: '1 y 1/2', color: 'verde'}
+            ];
+            
+            const card = pool[Math.floor(Math.random() * pool.length)];
             const el = document.createElement('div');
             el.className = 'falling-bg-card';
-            el.innerText = card;
+            
+            // Aplicar texto y fondo real
+            el.innerText = getCardText(card);
+            const bgColor = getBgColor(card);
+            el.style.backgroundColor = bgColor;
+            
+            // Aplicar color de texto real (negro para fondo blanco o amarillo/verde)
+            if (card.color === 'amarillo' || card.color === 'verde' || card.value === 'GRACIA') {
+                el.style.color = (card.value === 'GRACIA') ? 'red' : 'black';
+            } else {
+                el.style.color = 'white';
+            }
+
+            // Bordes especiales para visibilidad
+            if (card.value === 'RIP') el.style.borderColor = '#666';
+            else if (card.value === 'GRACIA') el.style.borderColor = 'gold';
+            
             el.style.left = Math.random() * 100 + 'vw';
             el.style.animationDuration = (Math.random() * 5 + 8) + 's'; 
             document.body.appendChild(el);
@@ -1596,479 +1334,145 @@ app.get('/', (req, res) => {
         }
         setInterval(createFallingCard, 1200);
 
-        function playUI() { 
-            if(!hasPlayedIntro) { 
-                const a = new Audio('https://cdn.freesound.org/previews/511/511484_6890478-lq.mp3'); 
-                a.volume = 0.5; a.play().catch(()=>{}); 
-                hasPlayedIntro = true; 
-            } 
-        }
-
+        function playUI() { if(!hasPlayedIntro) { const a = new Audio('https://cdn.freesound.org/previews/511/511484_6890478-lq.mp3'); a.volume = 0.5; a.play().catch(()=>{}); hasPlayedIntro = true; } }
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
-        const urlParams = new URLSearchParams(window.location.search);
-        const inviteCode = urlParams.get('room');
-        if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
+        const urlParams = new URLSearchParams(window.location.search); const inviteCode = urlParams.get('room');
+        if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
         let lastInteractionTime = Date.now();
-        function reportActivity() {
-            const now = Date.now();
-            if (now - lastInteractionTime > 5000) { 
-                lastInteractionTime = now;
-                if (document.body.classList.contains('playing-state')) { socket.emit('imHere'); }
-            }
-        }
-        document.addEventListener('mousemove', reportActivity); document.addEventListener('touchstart', reportActivity);
-        document.addEventListener('click', reportActivity); document.addEventListener('keydown', reportActivity);
+        function reportActivity() { const now = Date.now(); if (now - lastInteractionTime > 5000) { lastInteractionTime = now; if (document.body.classList.contains('playing-state')) { socket.emit('imHere'); } } }
+        document.addEventListener('touchstart', reportActivity); document.addEventListener('click', reportActivity);
 
-        function forceCloseModals() {
-            document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none');
-            document.getElementById('chat-win').style.display = 'none';
-            document.getElementById('uno-menu').style.display = 'none';
-            isChatOpen = false;
-        }
-
-        function repositionHUD() {
-            const pZone = document.getElementById('players-zone');
-            if (!pZone || pZone.offsetHeight === 0) return;
-            const rect = pZone.getBoundingClientRect();
-            const baseTop = rect.bottom + 10; 
-            const buttons = [ document.getElementById('global-leave-btn'), document.getElementById('rules-btn'), document.getElementById('score-btn'), document.getElementById('chat-btn'), document.getElementById('uno-main-btn') ];
-
-            const screenW = window.innerWidth;
-            const btnSize = 50; let gap = 15; 
-            if (screenW < 360) gap = 8; if (screenW < 330) gap = 4;
-
-            const totalW = (btnSize * 5) + (gap * 4);
-            let startLeft = (screenW - totalW) / 2; 
-
-            buttons.forEach((btn, idx) => {
-                if (btn) { btn.style.top = baseTop + 'px'; btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px'; btn.style.right = 'auto'; }
-            });
-
-            const lowerElements = ['uno-menu', 'chat-win'];
-            lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) { el.style.top = (baseTop + 60) + 'px'; } });
-            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
-        }
+        function forceCloseModals() { document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none'); document.getElementById('chat-win').style.display = 'none'; document.getElementById('uno-menu').style.display = 'none'; isChatOpen = false; }
+        function repositionHUD() { const pZone = document.getElementById('players-zone'); if (!pZone || pZone.offsetHeight === 0) return; const rect = pZone.getBoundingClientRect(); const baseTop = rect.bottom + 10; const buttons = [ document.getElementById('global-leave-btn'), document.getElementById('rules-btn'), document.getElementById('score-btn'), document.getElementById('chat-btn'), document.getElementById('uno-main-btn') ]; const screenW = window.innerWidth, btnSize = 50; let gap = 15; if (screenW < 360) gap = 8; const totalW = (btnSize * 5) + (gap * 4); let startLeft = (screenW - totalW) / 2; buttons.forEach((btn, idx) => { if (btn) { btn.style.top = baseTop + 'px'; btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px'; } }); const lowerElements = ['uno-menu', 'chat-win']; lowerElements.forEach(id => { const el = document.getElementById(id); if(el) { el.style.top = (baseTop + 60) + 'px'; } }); const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 75) + 'px'; }
         window.addEventListener('resize', repositionHUD);
 
         socket.on('connect', () => { document.getElementById('reconnect-overlay').style.display = 'none'; myId = socket.id; socket.emit('checkSession', myUUID); });
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
-        
-        socket.on('requireLogin', () => { 
-            document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); 
-            document.getElementById('global-leave-btn').style.display = 'none';
-            document.getElementById('lobby-users').innerHTML = ''; document.getElementById('players-zone').innerHTML = '';
-            document.getElementById('hand-zone').innerHTML = ''; document.getElementById('hand-zone').style.display = 'none';
-        });
-
-        socket.on('showAFKPrompt', () => {
-            document.getElementById('afk-modal').style.display = 'flex';
-            const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3'); a.volume = 0.5; a.play().catch(()=>{});
-        });
-
+        socket.on('requireLogin', () => { document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); document.getElementById('global-leave-btn').style.display = 'none'; document.getElementById('lobby-users').innerHTML = ''; document.getElementById('hand-zone').innerHTML = ''; });
+        socket.on('showAFKPrompt', () => { document.getElementById('afk-modal').style.display = 'flex'; });
         function imHere() { document.getElementById('afk-modal').style.display = 'none'; socket.emit('imHere'); }
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
-        
-        socket.on('startLibreLogic', (cardId) => {
-            if(myHand.length < 3) return; 
-            document.getElementById('action-bar').style.display = 'none';
-            libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
-            document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1);
-            const div = document.getElementById('libre-targets'); div.innerHTML = '';
-            currentPlayers.forEach(p => {
-                if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) {
-                    const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name;
-                    b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); }; div.appendChild(b);
-                }
-            });
-        });
-
-        function renderGiftHand() {
-            const div = document.getElementById('libre-gift-hand'); div.innerHTML = '';
-            myHand.forEach(c => {
-                if(c.id === libreState.cardId) return;
-                const b = document.createElement('div'); b.className = 'mini-card';
-                b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); }; div.appendChild(b);
-            });
-        }
-        function renderDiscardHand() {
-            const pool = document.getElementById('libre-discard-hand'); pool.innerHTML = '';
-            myHand.forEach(c => {
-                if(c.id === libreState.cardId || c.id === libreState.giftId) return;
-                const b = document.createElement('div'); b.className = 'mini-card';
-                b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
-                b.onclick = () => { 
-                    libreState.discardId = c.id; 
-                    pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId, discardId: libreState.discardId };
-                    document.getElementById('libre-modal').style.display = 'none'; libreState.active = false;
-                    socket.emit('playCard', null, null, null, pendingLibreContext); 
-                    pendingLibreContext = null;
-                };
-                pool.appendChild(b);
-            });
-        }
-        
-        function cancelLibre() { document.getElementById('libre-modal').style.display = 'none'; if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex'; libreState = { active: false }; pendingLibreContext = null; }
+        socket.on('startLibreLogic', (cardId) => { if(myHand.length < 3) return; document.getElementById('action-bar').style.display = 'none'; libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null }; document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1); const div = document.getElementById('libre-targets'); div.innerHTML = ''; currentPlayers.forEach(p => { if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) { const b = document.createElement('button'); b.className = 'btn-main'; b.innerText = p.name; b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); }; div.appendChild(b); } }); });
+        function renderGiftHand() { const div = document.getElementById('libre-gift-hand'); div.innerHTML = ''; myHand.forEach(c => { if(c.id === libreState.cardId) return; const b = document.createElement('div'); b.className = 'mini-card'; b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c); b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); }; div.appendChild(b); }); }
+        function renderDiscardHand() { const pool = document.getElementById('libre-discard-hand'); pool.innerHTML = ''; myHand.forEach(c => { if(c.id === libreState.cardId || c.id === libreState.giftId) return; const b = document.createElement('div'); b.className = 'mini-card'; b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c); b.onclick = () => { libreState.discardId = c.id; pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId, discardId: libreState.discardId }; document.getElementById('libre-modal').style.display = 'none'; libreState.active = false; socket.emit('playCard', null, null, null, pendingLibreContext); pendingLibreContext = null; }; pool.appendChild(b); }); }
+        function cancelLibre() { document.getElementById('libre-modal').style.display = 'none'; pendingLibreContext = null; }
         function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); document.getElementById('step-'+n).classList.add('active'); }
-        
-        function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
-        function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
-
         function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
         function showJoin() { changeScreen('join-menu'); } function backToLogin() { changeScreen('login'); }
-        function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
-        function copyLink() { const code = document.getElementById('lobby-code').innerText; const url = window.location.origin + '/?room=' + code; if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(url).then(() => { alert('¡Link copiado!'); }).catch(err => { prompt("Copia:", url); }); } else { prompt("Copia:", url); } }
-        function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
-
+        function joinRoom() { const name = document.getElementById('my-name').value.trim(), code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
+        function copyLink() { const code = document.getElementById('lobby-code').innerText, url = window.location.origin + '/?room=' + code; navigator.clipboard.writeText(url); }
+        function kick(id) { socket.emit('kickPlayer', id); }
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
-        
-        socket.on('cardPlayedEffect', d => { 
-            if(d.playerName) {
-                const badges = document.querySelectorAll('.player-badge');
-                badges.forEach(b => { if(b.innerText.includes(d.playerName)) { b.classList.add('flash-action'); setTimeout(()=>b.classList.remove('flash-action'), 400); } });
-            }
-        });
-        
-        socket.on('cardDrawnEffect', d => {
-            if(d.playerName) {
-                const badges = document.querySelectorAll('.player-badge');
-                badges.forEach(b => { if(b.innerText.includes(d.playerName)) { b.classList.add('flash-action'); setTimeout(()=>b.classList.remove('flash-action'), 400); } });
-            }
-        });
+        socket.on('cardPlayedEffect', d => { if(d.playerName) { document.querySelectorAll('.player-badge').forEach(b => { if(b.innerText.includes(d.playerName)) { b.classList.add('flash-action'); setTimeout(()=>b.classList.remove('flash-action'), 400); } }); } });
+        socket.on('cardDrawnEffect', d => { if(d.playerName) { document.querySelectorAll('.player-badge').forEach(b => { if(b.innerText.includes(d.playerName)) { b.classList.add('flash-action'); setTimeout(()=>b.classList.remove('flash-action'), 400); } }); } });
 
-        // NUEVO: SISTEMA UNIVERSAL DE CARTAS VOLADORAS
         socket.on('animateCard', data => {
-            const el = document.createElement('div');
-            el.className = 'universal-flying-card';
-            el.style.backgroundColor = getBgColor(data.card);
-            el.style.color = (data.card.color==='amarillo'||data.card.color==='verde')?'black':'white';
+            const el = document.createElement('div'), isMe = (data.playerId === socket.id);
+            el.className = 'universal-flying-card'; el.style.backgroundColor = getBgColor(data.card); el.style.color = (data.card.color==='amarillo'||data.card.color==='verde'||data.card.value==='GRACIA') ? ((data.card.value==='GRACIA')?'red':'black') : 'white';
             el.innerText = getCardText(data.card);
-            
-            const isMe = (data.playerId === socket.id);
-            
-            if (isMe) {
-                el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.5)';
-            } else {
-                el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.5)';
-            }
-            
+            if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.5)'; } 
+            else { el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.5)'; }
             document.body.appendChild(el);
-            
-            setTimeout(() => {
-                const dest = document.getElementById('top-card').getBoundingClientRect();
-                el.style.top = dest.top + 'px'; el.style.left = dest.left + 'px';
-                el.style.transform = 'scale(1)';
-            }, 50);
+            setTimeout(() => { const dest = document.getElementById('top-card').getBoundingClientRect(); el.style.top = dest.top + 'px'; el.style.left = dest.left + 'px'; el.style.transform = 'scale(1)'; }, 50);
             setTimeout(() => el.remove(), 600);
         });
 
-        socket.on('ladderAnimate', (data) => {
+        socket.on('ladderAnimate', data => {
             const isMe = (data.playerId === socket.id);
-            data.cards.forEach((c, i) => { 
-                setTimeout(() => { 
-                    const el = document.createElement('div'); el.className = 'universal-flying-card'; 
-                    el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; 
-                    el.innerText = getCardText(c); 
+            data.cards.forEach((c, i) => { setTimeout(() => {
+                    const el = document.createElement('div');
+                    el.className = 'universal-flying-card'; el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; el.innerText = getCardText(c); 
                     if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.3)'; } 
                     else { el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.3)'; }
                     document.body.appendChild(el); 
-                    setTimeout(() => { 
-                        const dest = document.getElementById('top-card').getBoundingClientRect();
-                        el.style.top = dest.top + 'px'; el.style.left = dest.left + 'px'; el.style.transform = 'scale(1)'; 
-                    }, 50); 
+                    setTimeout(() => { const dest = document.getElementById('top-card').getBoundingClientRect(); el.style.top = dest.top + 'px'; el.style.left = dest.left + 'px'; el.style.transform = 'scale(1)'; }, 50); 
                     setTimeout(() => el.remove(), 600); 
                 }, i * 200); 
             });
         });
 
         socket.on('duelClash', data => {
-            document.getElementById('duel-opts').style.display = 'none'; document.getElementById('duel-narrative').style.display = 'none'; document.getElementById('duel-clash-zone').style.display = 'flex';
+            document.getElementById('duel-opts').style.display = 'none'; document.getElementById('duel-clash-zone').style.display = 'flex';
             const emMap = { 'fuego': '🔥', 'hielo': '❄️', 'agua': '💧' };
             document.getElementById('clash-att-name').innerText = data.attName; document.getElementById('clash-def-name').innerText = data.defName;
-            document.getElementById('clash-att-emoji').innerText = emMap[data.attChoice] || '❓'; document.getElementById('clash-def-emoji').innerText = emMap[data.defChoice] || '❓';
+            document.getElementById('clash-att-emoji').innerText = emMap[data.attChoice]; document.getElementById('clash-def-emoji').innerText = emMap[data.defChoice];
             document.body.style.animation = 'screenShake 0.5s'; setTimeout(() => document.body.style.animation = '', 500);
         });
 
         socket.on('updateState', s => {
             currentPlayers = s.players;
-            
-            if(s.state === 'waiting' || s.state === 'playing' || s.state === 'round_ending' || s.state === 'animating_penalty' || s.state === 'animating_rip') {
-                document.getElementById('global-leave-btn').style.display = 'flex';
-                const lc = document.getElementById('lobby-code'); if(!lc.innerText && s.roomId) lc.innerText = s.roomId;
-            } else { document.getElementById('global-leave-btn').style.display = 'none'; }
-
-            if(s.leaderboard) {
-                const slist = document.getElementById('score-list');
-                slist.innerHTML = s.leaderboard.map(function(u, i) { return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span></div>'; }).join('');
-            }
-
-            if (clientTimerInterval) { clearInterval(clientTimerInterval); clientTimerInterval = null; }
-            document.querySelectorAll('#decision-timer, #duel-timer').forEach(el => el.innerText = '');
-
-            if (s.timerEndsAt) {
-                const updateTimer = () => {
-                    let remaining = Math.ceil((s.timerEndsAt - Date.now()) / 1000); if (remaining < 0) remaining = 0;
-                    const ripTimerEl = document.getElementById('decision-timer'); const duelTimerEl = document.getElementById('duel-timer');
-                    if (ripTimerEl) ripTimerEl.innerText = remaining; if (duelTimerEl) duelTimerEl.innerText = remaining;
-                };
-                updateTimer(); clientTimerInterval = setInterval(updateTimer, 250);
-            }
-
-            const me = s.players.find(p=>p.uuid===myUUID); const amITurning = me && me.isTurn;
-            
-            if(!amITurning && (ladderMode || document.getElementById('libre-modal').style.display === 'flex')) {
-                 if (document.getElementById('libre-modal').style.display !== 'flex') { cancelLadder(); cancelLibre(); }
-            }
-
-            if(s.state === 'waiting') {
-                document.body.classList.remove('playing-state');
-                const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin && p.uuid !== myUUID ? ('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>') : '') + '</div>').join('');
-                document.getElementById('lobby-users').innerHTML = list; document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
-                changeScreen('lobby'); return;
-            }
-            
-            if(s.state === 'playing' || s.state === 'round_ending' || s.state === 'animating_penalty' || s.state === 'animating_rip') {
-                 changeScreen('game-area'); 
-                 document.body.classList.add('playing-state'); 
-                 if (s.state === 'round_ending') document.body.classList.add('state-round-ending');
-                 else document.body.classList.remove('state-round-ending');
-                 
-                 if(s.activeColor) { document.body.className = 'playing-state bg-'+s.activeColor; }
-                 
-                 document.getElementById('game-area').style.display = 'flex'; document.getElementById('hand-zone').style.display = 'flex';
-                 document.getElementById('round-overlay').style.display = 'none'; 
-                 
-                 if(document.getElementById('libre-modal').style.display !== 'flex' && s.state === 'playing') { document.getElementById('action-bar').style.display = 'flex'; }
-                 if (s.state !== 'playing') document.getElementById('action-bar').style.display = 'none'; // Oculto en animaciones
-
-                 document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
-                 
-                 document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
-                 
-                 document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex'); requestAnimationFrame(repositionHUD);
-
-                 if (me && me.personalDebt > 0) { document.getElementById('personal-debt-display').style.display = 'block'; document.getElementById('pd-num').innerText = me.personalDebt; } 
-                 else { document.getElementById('personal-debt-display').style.display = 'none'; }
-
-                 if(s.topCard) {
-                     const tc = s.topCard; const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white')); el.innerText = getCardText(tc);
-                     if(tc.value === '1 y 1/2') { el.style.fontSize = '20px'; el.style.padding = '0 5px'; } else { el.style.fontSize = '24px'; el.style.padding = '0'; }
-                 }
-                 
-                 if (me && me.isTurn && me.hasDrawn && s.pendingPenalty === 0 && me.personalDebt === 0 && s.state === 'playing' && !s.librePending) { document.getElementById('btn-pass').style.display = 'inline-block'; } 
-                 else { document.getElementById('btn-pass').style.display = 'none'; }
-
-                 if(me && me.isTurn && s.pendingPenalty > 0 && s.state === 'playing') { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText = s.pendingPenalty; } 
-                 else { document.getElementById('penalty-display').style.display='none'; }
+            if(s.state === 'waiting' || s.state === 'playing') { document.getElementById('global-leave-btn').style.display = 'flex'; document.getElementById('lobby-code').innerText = s.roomId; }
+            else { document.getElementById('global-leave-btn').style.display = 'none'; }
+            if(s.leaderboard) { document.getElementById('score-list').innerHTML = s.leaderboard.map((u, i) => '<div>' + (i+1) + '. ' + u.name + ': ' + u.score + '</div>').join(''); }
+            if (clientTimerInterval) clearInterval(clientTimerInterval);
+            if (s.timerEndsAt) { const updateTimer = () => { let rem = Math.ceil((s.timerEndsAt - Date.now()) / 1000); if (rem < 0) rem = 0; document.querySelectorAll('#decision-timer, #duel-timer').forEach(el => el.innerText = rem); }; updateTimer(); clientTimerInterval = setInterval(updateTimer, 250); }
+            const me = s.players.find(p=>p.uuid===myUUID); if(!me) return;
+            if(s.state === 'waiting') { changeScreen('lobby'); document.getElementById('lobby-users').innerHTML = s.players.map(p => '<div class="lobby-row">' + p.name + (s.iamAdmin && p.uuid !== myUUID ? '<button onclick="kick(\\''+p.id+'\\')">X</button>' : '') + '</div>').join(''); document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none'; }
+            else if(s.state === 'playing' || s.state === 'round_ending') {
+                 changeScreen('game-area'); document.body.classList.add('playing-state'); if(s.activeColor) document.body.className = 'playing-state bg-'+s.activeColor;
+                 document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + p.name + ' (' + p.cardCount + ')</div>').join('');
+                 requestAnimationFrame(repositionHUD); document.getElementById('personal-debt-display').style.display = me.personalDebt > 0 ? 'block' : 'none';
+                 if(s.topCard) { const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(s.topCard); el.innerText = getCardText(s.topCard); el.style.color = (s.topCard.color==='amarillo'||s.topCard.color==='verde')?'black':'white'; }
+                 document.getElementById('btn-pass').style.display = (me.isTurn && me.hasDrawn && s.pendingPenalty === 0 && !s.librePending) ? 'inline-block' : 'none';
+                 if(me.isTurn && s.pendingPenalty > 0) { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText = s.pendingPenalty; } else document.getElementById('penalty-display').style.display='none';
             } 
             else if (s.state === 'rip_decision' || s.state === 'penalty_decision') {
                 changeScreen('game-area'); forceCloseModals(); document.body.classList.add('state-rip');
                 if(s.duelInfo.defenderId === myUUID) { 
-                    document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; 
-                    const msgDiv = document.getElementById('rip-msg-custom'); const duelWarn = document.getElementById('duel-warning'); const btnAccept = document.getElementById('btn-accept-penalty'); const btnSurrender = document.getElementById('btn-surrender'); const btnDuel = document.getElementById('btn-duel-start');
-                    
-                    if (s.state === 'rip_decision') { 
-                        document.getElementById('rip-title').innerText = "💀 RIP 💀"; 
-                        msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te retó a Duelo usando un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid gray; background:black; padding:2px 8px; border-radius:5px;">RIP</span>'; 
-                        duelWarn.style.display = 'none'; btnAccept.style.display = 'none'; btnSurrender.style.display = 'inline-block'; btnDuel.style.display = 'inline-block'; 
-                    } else { 
-                        document.getElementById('rip-title').innerText = "⚠️ CASTIGO ⚠️"; const trig = s.duelInfo.triggerCard || "Castigo Supremo";
-                        msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te arrojó un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid red; background:black; padding:2px 8px; border-radius:5px;">' + trig + '</span>.<br><br>¿Aceptás el castigo o te batís a duelo para intentar salvarte?';
-                        duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; 
-                    }
-                } else { 
-                    document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
-                    document.getElementById('duel-clash-zone').style.display = 'none'; document.getElementById('duel-narrative').style.display = 'block';
-                    document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; 
+                    document.getElementById('rip-screen').style.display = 'flex'; 
+                    document.getElementById('rip-msg-custom').innerText = s.state === 'rip_decision' ? 'RIP por ' + s.duelInfo.attackerName : 'Castigo por ' + s.duelInfo.attackerName;
+                    document.getElementById('btn-accept-penalty').style.display = s.state === 'penalty_decision' ? 'inline-block' : 'none';
+                    document.getElementById('btn-surrender').style.display = s.state === 'rip_decision' ? 'inline-block' : 'none';
                 }
             }
             else if (s.state === 'dueling') {
                 changeScreen('game-area'); forceCloseModals(); document.body.classList.add('state-dueling');
-                document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex';
-                document.getElementById('duel-clash-zone').style.display = 'none'; document.getElementById('duel-narrative').style.display = 'block';
-
-                document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
+                document.getElementById('duel-screen').style.display = 'flex'; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
                 const amFighter = (myUUID === s.duelInfo.attackerId || myUUID === s.duelInfo.defenderId); 
-                
-                if(amFighter) {
-                    document.getElementById('duel-opts').style.display = 'flex'; const isTurn = (s.duelInfo.turn === myUUID); 
-                    document.getElementById('duel-turn-msg').innerText = isTurn ? "¡TU TURNO! Elige un ataque:" : "Esperando movimiento del oponente..."; 
-                    document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
-                    if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).classList.add('selected'); } else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
-                } else { document.getElementById('duel-opts').style.display = 'none'; document.getElementById('duel-turn-msg').innerText = ""; }
+                document.getElementById('duel-opts').style.display = amFighter ? 'flex' : 'none';
+                if(amFighter) { const isTurn = (s.duelInfo.turn === myUUID); document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn); }
             }
         });
 
         socket.on('handUpdate', h => { const oldLen = myHand.length; myHand = h; renderHand(oldLen); });
         function requestSort() { socket.emit('requestSort'); }
-
         function renderHand(oldLen) {
-            if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
             const hz = document.getElementById('hand-zone'); hz.innerHTML = '';
-            let displayHand = myHand; const newCardsCount = Math.max(0, myHand.length - oldLen); const startAnimIdx = myHand.length - newCardsCount;
-            const hasGrace = myHand.some(c=>c.value==='GRACIA'); document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
-            
-            displayHand.forEach((c, index) => {
+            myHand.forEach((c, index) => {
                 const d = document.createElement('div'); d.className = 'hand-card'; if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
-                if (oldLen !== undefined && oldLen > 0 && index >= startAnimIdx) { d.classList.add('drawn-card'); }
-                d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; d.innerText = getCardText(c);
-                if(c.value === '1 y 1/2') { d.style.fontSize = '16px'; d.style.padding = '0 5px'; }
-                
-                d.onmousedown = d.ontouchstart = (e) => { pressTimer = setTimeout(() => { if(!ladderMode) { ladderMode = true; if(navigator.vibrate) navigator.vibrate(50); toggleLadderSelection(c, d); } }, 800); };
+                d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde'||c.value==='GRACIA')?((c.value==='GRACIA')?'red':'black'):'white'; d.innerText = getCardText(c);
+                d.onmousedown = d.ontouchstart = () => { pressTimer = setTimeout(() => { if(!ladderMode) { ladderMode = true; toggleLadderSelection(c, d); } }, 800); };
                 d.onmouseup = d.onmouseleave = d.ontouchend = () => clearTimeout(pressTimer);
-                d.onclick = () => { if(ladderMode) { toggleLadderSelection(c, d); } else { handleCardClick(c); } };
+                d.onclick = () => { if(ladderMode) toggleLadderSelection(c, d); else handleCardClick(c); };
                 hz.appendChild(d);
             });
         }
         
-        function toggleLadderSelection(c, d) {
-            if(ladderSelected.includes(c.id)) { ladderSelected = ladderSelected.filter(id => id !== c.id); d.classList.remove('selected-ladder'); if(ladderSelected.length === 0) cancelLadder(); } 
-            else { ladderSelected.push(c.id); d.classList.add('selected-ladder'); } updateLadderUI();
-        }
-
+        function toggleLadderSelection(c, d) { if(ladderSelected.includes(c.id)) { ladderSelected = ladderSelected.filter(id => id !== c.id); d.classList.remove('selected-ladder'); if(ladderSelected.length === 0) cancelLadder(); } else { ladderSelected.push(c.id); d.classList.add('selected-ladder'); } updateLadderUI(); }
         function cancelLadder() { ladderMode = false; ladderSelected = []; document.querySelectorAll('.hand-card').forEach(c => c.classList.remove('selected-ladder')); updateLadderUI(); }
-        function updateLadderUI() { const active = ladderMode; document.getElementById('btn-sort').style.display = active ? 'none' : 'block'; document.getElementById('btn-ladder-play').style.display = (active && ladderSelected.length >= 2) ? 'block' : 'none'; document.getElementById('btn-ladder-cancel').style.display = active ? 'block' : 'none'; }
+        function updateLadderUI() { const act = ladderMode; document.getElementById('btn-sort').style.display = act ? 'none' : 'block'; document.getElementById('btn-ladder-play').style.display = (act && ladderSelected.length >= 2) ? 'block' : 'none'; document.getElementById('btn-ladder-cancel').style.display = act ? 'block' : 'none'; }
 
         function handleCardClick(c) {
-            if(document.getElementById('color-picker').style.display === 'flex') return;
-            if (document.getElementById('personal-debt-display').style.display === 'block' && !pendingLibreContext) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Paga tu deuda! Toca el mazo rojo."; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); return; }
-
-            const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
-            if (hasPenalty && !pendingLibreContext) {
-                if (c.value !== 'GRACIA' && c.value !== 'LIBRE') {
-                    const isPenaltyCard = ['+2', '+4', '+12', 'SALTEO SUPREMO'].includes(c.value);
-                    if (!isPenaltyCard) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡Cumple el castigo tocando el mazo, acumúlalo o defiéndete!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); return; }
-                }
-            }
-
-            if(c.value === 'LIBRE' && !pendingLibreContext) { socket.emit('playLibreInitial', c.id); return; }
-            if(c.value === 'GRACIA') {
-                const hasZombies = currentPlayers.some(p => p.isDead); const isDecisionPhase = (document.body.classList.contains('state-rip'));
-                if(isDecisionPhase) { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; return; }
-                if(!hasZombies && !hasPenalty) { showGraceModal(); pendingCard = c.id; return; }
-            }
-            
-            if(c.color==='negro' && c.value!=='GRACIA') { 
-                if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') { 
-                    if(c.value==='RIP') { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; } else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
-                } else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
-            } else { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; }
+            if (document.getElementById('personal-debt-display').style.display === 'block') return;
+            if(c.value === 'LIBRE') { socket.emit('playLibreInitial', c.id); return; }
+            if(c.color==='negro') { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
+            else socket.emit('playCard', c.id);
         }
-
-        function showGraceModal() { document.getElementById('grace-color-modal').style.display = 'flex'; }
-        function confirmGraceColor(confirmed) { document.getElementById('grace-color-modal').style.display = 'none'; if (confirmed) { pendingColorForRevive = null; pendingGrace = false; document.getElementById('color-picker').style.display='flex'; } else { socket.emit('playCard', pendingCard, null, null, pendingLibreContext); pendingLibreContext = null; pendingCard = null; } }
-        
-        function submitLadder() { 
-            const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
-            if(hasPenalty) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); cancelLadder(); return; }
-            if(ladderSelected.length < 2) return; socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
-        }
-
-        function changeScreen(id) { 
-            document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById('action-bar').style.display='none'; 
-            document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
-            document.getElementById(id).style.display='flex'; 
-            
-            if (id === 'lobby') {
-                const cb = document.getElementById('chat-btn'); cb.style.display = 'flex'; cb.style.top = '65px'; cb.style.right = '10px'; cb.style.left = 'auto'; 
-                const lv = document.getElementById('global-leave-btn'); if(lv) { lv.style.display = 'flex'; lv.style.top = '15px'; lv.style.left = '15px'; lv.style.right = 'auto'; }
-            } else if (id === 'game-area') {
-                const cb = document.getElementById('chat-btn'); cb.style.display = 'flex'; requestAnimationFrame(repositionHUD); 
-            }
-        }
-        
+        function pickCol(c){ document.getElementById('color-picker').style.display='none'; socket.emit('playCard', pendingCard, c, null, pendingLibreContext); }
+        function changeScreen(id) { document.querySelectorAll('.screen').forEach(s=>s.style.display='none'); document.getElementById('game-area').style.display='none'; document.getElementById(id).style.display='flex'; repositionHUD(); }
         function start(){ socket.emit('requestStart'); } function draw(){ socket.emit('draw'); } function pass(){ socket.emit('passTurn'); }
-        function trySayUno() { if(myHand.length > 2) { const b=document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes anunciar si no es verdad!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); toggleUnoMenu(); return; } sayUno(); }
-        function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
-        
-        function toggleUnoMenu() { if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return; const m = document.getElementById('uno-menu'); m.style.display = (m.style.display==='flex'?'none':'flex'); closeDenounceList(); }
-        function showDenounceList() {
-            document.getElementById('uno-main-opts').style.display = 'none'; document.getElementById('uno-denounce-opts').style.display = 'block'; const cont = document.getElementById('denounce-list-container'); cont.innerHTML = '';
-            currentPlayers.forEach(p => { if (p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) { const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.style.margin = '2px 0'; b.innerText = p.name; b.onclick = () => { socket.emit('reportUno', p.id); toggleUnoMenu(); }; cont.appendChild(b); } });
-        }
-        function closeDenounceList() { document.getElementById('uno-main-opts').style.display = 'block'; document.getElementById('uno-denounce-opts').style.display = 'none'; }
-
+        function trySayUno() { sayUno(); } function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
+        function toggleUnoMenu() { const m = document.getElementById('uno-menu'); m.style.display = (m.style.display==='flex'?'none':'flex'); }
+        function showDenounceList() { const cont = document.getElementById('denounce-list-container'); cont.innerHTML = ''; currentPlayers.forEach(p => { if (p.uuid !== myUUID) { const b = document.createElement('button'); b.innerText = p.name; b.onclick = () => { socket.emit('reportUno', p.id); toggleUnoMenu(); }; cont.appendChild(b); } }); }
         function sendChat(){ const i=document.getElementById('chat-in'); if(i.value){ socket.emit('sendChat',i.value); i.value=''; }}
-        function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } }
-        
-        function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
-        function toggleManual() { const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
-
-        function pickCol(c){ document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; if(pendingGrace) { socket.emit('playGraceDefense',c); } else { socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null; } }
+        function toggleChat(){ const w = document.getElementById('chat-win'); if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } else { w.style.display = 'flex'; isChatOpen = true; } }
+        function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = r.style.display === 'flex' ? 'none' : 'flex'; }
+        function toggleManual() { const r = document.getElementById('manual-modal'); r.style.display = r.style.display === 'flex' ? 'none' : 'flex'; }
         function ripResp(d){ socket.emit('ripDecision',d); } function pick(c){ socket.emit('duelPick',c); }
-        
-        let pendingReviveCardId = null;
-        socket.on('askReviveConfirmation', (data) => { pendingReviveCardId = data.cardId; document.getElementById('revive-name').innerText = data.name; document.getElementById('revive-confirm-screen').style.display = 'flex'; });
-        function confirmRevive(confirmed) { document.getElementById('revive-confirm-screen').style.display = 'none'; if(pendingReviveCardId) { socket.emit('confirmReviveSingle', { cardId: pendingReviveCardId, confirmed: confirmed, chosenColor: pendingColorForRevive, libreContext: pendingLibreContext }); } pendingReviveCardId = null; pendingLibreContext = null; }
-
-        socket.on('roundStarted', data => {
-            forceCloseModals(); const banner = document.getElementById('round-start-banner'); document.getElementById('rsb-round').innerText = "RONDA " + data.round; document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
-            banner.style.display = 'flex'; void banner.offsetWidth; banner.classList.add('show'); setTimeout(() => { banner.classList.remove('show'); setTimeout(() => banner.style.display = 'none', 500); }, 3000);
-        });
-
-        function requestLeave() { socket.emit('requestLeave'); }
-        socket.on('showLeaveNormalPrompt', () => { document.getElementById('leave-normal-modal').style.display = 'flex'; });
-        socket.on('showLeaveAdminPrompt', () => { document.getElementById('leave-admin-modal').style.display = 'flex'; });
-        function confirmLeave(choice) { document.getElementById('leave-normal-modal').style.display = 'none'; document.getElementById('leave-admin-modal').style.display = 'none'; socket.emit('confirmLeave', choice); }
-        
-        socket.on('gamePaused', (data) => { document.getElementById('pause-msg').innerText = data.message; document.getElementById('pause-overlay').style.display = 'flex'; setTimeout(() => { document.getElementById('pause-overlay').style.display = 'none'; }, data.duration); });
-
-        socket.on('roomCancelled', () => { document.getElementById('action-bar').style.display = 'none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); document.getElementById('round-overlay').style.display = 'none'; const goScreen = document.getElementById('game-over-screen'); goScreen.style.display = 'flex'; goScreen.innerHTML = '<h1 style="color:#e74c3c;">SALA CERRADA</h1><h2 style="color:white; margin-top:20px;">EL ANFITRIÓN ELIMINÓ ESTA PARTIDA</h2>'; setTimeout(() => { localStorage.removeItem('uno_uuid'); window.location = window.location.origin; }, 4000); });
-
-        socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseModals(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
-        socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
-        
-        socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
-        socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
-        
-        socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
-        socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
-        
-        socket.on('roundOver', async d => {
-            forceCloseModals(); document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
-            document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';
-            document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
-            const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = 0; wPtsEl.innerText = "0 pts"; 
-            const losersArea = document.getElementById('losers-area'); losersArea.innerHTML = '';
-
-            for (let loser of d.losersDetails) {
-                const lDiv = document.createElement('div');
-                lDiv.innerHTML = '<span style="color:white; font-size:24px;">' + loser.name + '</span> <span style="color:#ff4757; font-weight:bold; margin-left:15px; font-size:24px;">+' + loser.points + '</span>';
-                lDiv.style.opacity = '0'; lDiv.style.transition = 'opacity 0.5s'; losersArea.appendChild(lDiv);
-                
-                await new Promise(r => setTimeout(r, 400)); lDiv.style.opacity = '1'; await new Promise(r => setTimeout(r, 500));
-
-                const flyer = document.createElement('div'); flyer.className = 'score-flyer'; flyer.innerText = '+' + loser.points;
-                const rect = lDiv.getBoundingClientRect(); flyer.style.top = rect.top + 'px'; flyer.style.left = (rect.right + 20) + 'px'; document.body.appendChild(flyer);
-                await new Promise(r => setTimeout(r, 50));
-                
-                const destRect = wPtsEl.getBoundingClientRect(); flyer.style.top = destRect.top + 'px'; flyer.style.left = destRect.left + 'px'; flyer.style.opacity = '0';
-                await new Promise(r => setTimeout(r, 600)); flyer.remove();
-                
-                acumuladoRonda += loser.points; wPtsEl.innerText = acumuladoRonda + ' pts';
-                wPtsEl.style.transform = 'scale(1.3)'; wPtsEl.style.borderColor = '#2ecc71';
-                setTimeout(() => { wPtsEl.style.transform = 'scale(1)'; wPtsEl.style.borderColor = 'gold'; }, 300); lDiv.style.opacity = '0.3';
-            }
-            await new Promise(r => setTimeout(r, 2000)); 
-
-            document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'flex';
-            const rankList = document.getElementById('ranking-list'); rankList.innerHTML = '';
-            d.leaderboard.forEach((u, i) => { const row = document.createElement('div'); row.className = 'rank-row ' + (i===0 ? 'rank-gold' : ''); row.innerHTML = '<span>' + (i+1) + '. ' + u.name + '</span><span>' + parseFloat(u.score).toFixed(1) + ' pts</span>'; rankList.appendChild(row); });
-            const rows = document.querySelectorAll('.rank-row'); for (let row of rows) { await new Promise(r => setTimeout(r, 600)); row.classList.add('visible'); }
-        });
-
-        socket.on('gameOver', d => {
-            forceCloseModals(); document.getElementById('action-bar').style.display = 'none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
-            document.getElementById('round-overlay').style.display='none'; document.getElementById('game-over-screen').style.display='flex'; document.getElementById('winner-name').innerText = d.winner; 
-            const fs = document.getElementById('final-score');
-            if (d.reason === 'desertion') { fs.innerText = "¡Ganaste por deserción de tu oponente!"; } else if (d.reason === 'cancelled') { fs.innerText = "El anfitrión terminó la partida."; } else { fs.innerText = "Puntaje Final: " + parseFloat(d.totalScore).toFixed(1); }
-            setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;},10000);
-        });
-        
-        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id, pendingLibreContext); pendingLibreContext = null;}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='flex';});
+        socket.on('gameOver', d => { alert('FIN. Gana ' + d.winner); location.reload(); });
     </script>
 </body>
 </html>
@@ -2076,6 +1480,4 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+http.listen(PORT, () => {});

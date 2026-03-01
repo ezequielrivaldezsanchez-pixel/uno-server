@@ -973,6 +973,9 @@ app.get('/', (req, res) => {
         .bg-cycle { animation: bgCycle 20s infinite ease-in-out; }
         @keyframes bgCycle { 0% { background-color: #c0392b; } 25% { background-color: #2980b9; } 50% { background-color: #27ae60; } 75% { background-color: #f1c40f; } 100% { background-color: #c0392b; } }
         
+        /* CORRECCIÓN GENERAL: text-align center y white-space nowrap en todas las representaciones visuales de cartas */
+        .falling-bg-card, .card-pile, .hand-card, .universal-flying-card, .mini-card { text-align: center; white-space: nowrap; }
+
         .falling-bg-card { position: absolute; top: -110px; border: 2px solid #fff; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; z-index: 1; pointer-events: none; opacity: 0.6; animation: fall linear forwards; box-shadow: 0 0 10px black; }
         @keyframes fall { to { transform: translateY(120vh) rotate(360deg); } }
 
@@ -1288,24 +1291,14 @@ app.get('/', (req, res) => {
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
-        // CORRECCIÓN: Generador de partículas que respeta el diseño real y color variado
+        // Mantiene el diseño base de las partículas
         function createFallingCard() {
             if(document.body.classList.contains('playing-state')) return; 
             
-            // Pool expandido con variaciones de color para 'R', 'X' y '1 y 1/2'
             const pool = [
-                {value: '+12', color: 'negro'},
-                {value: 'SALTEO SUPREMO', color: 'negro'},
-                {value: 'RIP', color: 'negro'},
-                {value: 'GRACIA', color: 'negro'},
-                {value: 'LIBRE', color: 'negro'},
-                {value: '+4', color: 'negro'},
-                {value: 'color', color: 'negro'},
-                // 'X' en los 4 colores
+                {value: '+12', color: 'negro'}, {value: 'SALTEO SUPREMO', color: 'negro'}, {value: 'RIP', color: 'negro'}, {value: 'GRACIA', color: 'negro'}, {value: 'LIBRE', color: 'negro'}, {value: '+4', color: 'negro'}, {value: 'color', color: 'negro'},
                 {value: 'X', color: 'rojo'}, {value: 'X', color: 'azul'}, {value: 'X', color: 'verde'}, {value: 'X', color: 'amarillo'},
-                // 'R' en los 4 colores
                 {value: 'R', color: 'rojo'}, {value: 'R', color: 'azul'}, {value: 'R', color: 'verde'}, {value: 'R', color: 'amarillo'},
-                // '1y1/2' en los 4 colores y con nombre completo
                 {value: '1 y 1/2', color: 'rojo'}, {value: '1 y 1/2', color: 'azul'}, {value: '1 y 1/2', color: 'verde'}, {value: '1 y 1/2', color: 'amarillo'}
             ];
             
@@ -1319,12 +1312,13 @@ app.get('/', (req, res) => {
             
             if (card.color === 'amarillo' || card.color === 'verde' || card.value === 'GRACIA') {
                 el.style.color = (card.value === 'GRACIA') ? 'red' : 'black';
-            } else {
-                el.style.color = 'white';
-            }
+            } else { el.style.color = 'white'; }
 
             if (card.value === 'RIP') el.style.borderColor = '#666';
             else if (card.value === 'GRACIA') el.style.borderColor = 'gold';
+
+            // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en partículas
+            if (card.value === '1 y 1/2') el.style.fontSize = '12px';
             
             el.style.left = Math.random() * 100 + 'vw';
             el.style.animationDuration = (Math.random() * 5 + 8) + 's'; 
@@ -1372,6 +1366,10 @@ app.get('/', (req, res) => {
             const el = document.createElement('div'), isMe = (data.playerId === socket.id);
             el.className = 'universal-flying-card'; el.style.backgroundColor = getBgColor(data.card); el.style.color = (data.card.color==='amarillo'||data.card.color==='verde'||data.card.value==='GRACIA') ? ((data.card.value==='GRACIA')?'red':'black') : 'white';
             el.innerText = getCardText(data.card);
+            
+            // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en carta voladora
+            if (data.card.value === '1 y 1/2') el.style.fontSize = '14px';
+
             if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.5)'; } 
             else { el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.5)'; }
             document.body.appendChild(el);
@@ -1384,6 +1382,10 @@ app.get('/', (req, res) => {
             data.cards.forEach((c, i) => { setTimeout(() => {
                     const el = document.createElement('div');
                     el.className = 'universal-flying-card'; el.style.backgroundColor = getBgColor(c); el.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; el.innerText = getCardText(c); 
+                    
+                    // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en animación de escalera
+                    if (c.value === '1 y 1/2') el.style.fontSize = '14px';
+
                     if (isMe) { el.style.bottom = '100px'; el.style.left = '50%'; el.style.transform = 'translateX(-50%) scale(1.3)'; } 
                     else { el.style.top = '30%'; el.style.right = '-50px'; el.style.transform = 'scale(1.3)'; }
                     document.body.appendChild(el); 
@@ -1414,7 +1416,11 @@ app.get('/', (req, res) => {
                  changeScreen('game-area'); document.body.classList.add('playing-state'); if(s.activeColor) document.body.className = 'playing-state bg-'+s.activeColor;
                  document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + p.name + ' (' + p.cardCount + ')</div>').join('');
                  requestAnimationFrame(repositionHUD); document.getElementById('personal-debt-display').style.display = me.personalDebt > 0 ? 'block' : 'none';
-                 if(s.topCard) { const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(s.topCard); el.innerText = getCardText(s.topCard); el.style.color = (s.topCard.color==='amarillo'||s.topCard.color==='verde')?'black':'white'; }
+                 if(s.topCard) { 
+                     const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(s.topCard); el.innerText = getCardText(s.topCard); el.style.color = (s.topCard.color==='amarillo'||s.topCard.color==='verde')?'black':'white'; 
+                     // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en la carta superior del mazo de descarte
+                     el.style.fontSize = (s.topCard.value === '1 y 1/2') ? '16px' : '24px';
+                 }
                  document.getElementById('btn-pass').style.display = (me.isTurn && me.hasDrawn && s.pendingPenalty === 0 && !s.librePending) ? 'inline-block' : 'none';
                  if(me.isTurn && s.pendingPenalty > 0) { document.getElementById('penalty-display').style.display='block'; document.getElementById('pen-num').innerText = s.pendingPenalty; } else document.getElementById('penalty-display').style.display='none';
             } 
@@ -1443,6 +1449,10 @@ app.get('/', (req, res) => {
             myHand.forEach((c, index) => {
                 const d = document.createElement('div'); d.className = 'hand-card'; if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
                 d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde'||c.value==='GRACIA')?((c.value==='GRACIA')?'red':'black'):'white'; d.innerText = getCardText(c);
+                
+                // CORRECCIÓN: Ajuste de fuente dinámico garantizado para "1 y 1/2" en la mano del jugador
+                if (c.value === '1 y 1/2') d.style.fontSize = '20px';
+
                 d.onmousedown = d.ontouchstart = () => { pressTimer = setTimeout(() => { if(!ladderMode) { ladderMode = true; toggleLadderSelection(c, d); } }, 800); };
                 d.onmouseup = d.onmouseleave = d.ontouchend = () => clearTimeout(pressTimer);
                 d.onclick = () => { if(ladderMode) toggleLadderSelection(c, d); else handleCardClick(c); };

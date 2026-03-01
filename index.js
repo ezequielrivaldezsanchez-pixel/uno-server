@@ -433,7 +433,7 @@ io.on('connection', (socket) => {
             }
             const targetVal = (count * 1.5).toString();
             if (top.value !== targetVal) {
-                socket.emit('notification', `🚫 Coincidencia numérica requerida. Debes arrojarlas sobre un ${targetVal}.`); return;
+                socket.emit('notification', `🚫 Coincidencia numérica requerida.`); return;
             }
 
             const finalColor = playCards[playCards.length - 1].color;
@@ -442,7 +442,7 @@ io.on('connection', (socket) => {
             room.activeColor = finalColor; 
 
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name, playerId: player.id });
-            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó ${count} cartas "1 y 1/2".`); 
+            io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó cartas "1 y 1/2".`); 
             io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
             
@@ -475,7 +475,7 @@ io.on('connection', (socket) => {
                     if (isAsc) playCards.sort((a,b) => ladderOrder.indexOf(a.value) - ladderOrder.indexOf(b.value));
                     if (isDesc) playCards.sort((a,b) => ladderOrder.indexOf(b.value) - ladderOrder.indexOf(a.value));
                 } else { socket.emit('notification', '🚫 No conectan con la mesa.'); return; }
-            } else { socket.emit('notification', '🚫 Color/Número mesa inválido.'); return; }
+            } else { socket.emit('notification', '🚫 Color mesa inválido.'); return; }
         } else {
              let colorMatch = (firstColor === room.activeColor);
              let valueMatch = false;
@@ -973,7 +973,6 @@ app.get('/', (req, res) => {
         .bg-cycle { animation: bgCycle 20s infinite ease-in-out; }
         @keyframes bgCycle { 0% { background-color: #c0392b; } 25% { background-color: #2980b9; } 50% { background-color: #27ae60; } 75% { background-color: #f1c40f; } 100% { background-color: #c0392b; } }
         
-        /* CORRECCIÓN: Fondo y color dinámico para cartas cayendo */
         .falling-bg-card { position: absolute; top: -110px; border: 2px solid #fff; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; z-index: 1; pointer-events: none; opacity: 0.6; animation: fall linear forwards; box-shadow: 0 0 10px black; }
         @keyframes fall { to { transform: translateY(120vh) rotate(360deg); } }
 
@@ -1068,7 +1067,7 @@ app.get('/', (req, res) => {
         .mc-rip { background:black; font-size:10px; display:inline-flex; align-items:center; justify-content:center; }
         .mc-gra { background:white; color:red; }
 
-        .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; }
+        .mini-card { display: inline-block; padding: 10px; margin: 5px; border: 2px solid white; border-radius: 5px; cursor: pointer; background: #444; letter-spacing: -0.07em; }
 
         #duel-narrative { position: relative; z-index: 999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; }
         #duel-opts { display:flex; justify-content:center; gap:20px; margin-top:20px; width:100%; }
@@ -1289,11 +1288,11 @@ app.get('/', (req, res) => {
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
-        // CORRECCIÓN: Generador de partículas que respeta el diseño real
+        // CORRECCIÓN: Generador de partículas que respeta el diseño real y color variado
         function createFallingCard() {
             if(document.body.classList.contains('playing-state')) return; 
             
-            // Pool de cartas especiales para la animación
+            // Pool expandido con variaciones de color para 'R', 'X' y '1 y 1/2'
             const pool = [
                 {value: '+12', color: 'negro'},
                 {value: 'SALTEO SUPREMO', color: 'negro'},
@@ -1302,28 +1301,28 @@ app.get('/', (req, res) => {
                 {value: 'LIBRE', color: 'negro'},
                 {value: '+4', color: 'negro'},
                 {value: 'color', color: 'negro'},
-                {value: 'X', color: 'rojo'},
-                {value: 'R', color: 'azul'},
-                {value: '1 y 1/2', color: 'verde'}
+                // 'X' en los 4 colores
+                {value: 'X', color: 'rojo'}, {value: 'X', color: 'azul'}, {value: 'X', color: 'verde'}, {value: 'X', color: 'amarillo'},
+                // 'R' en los 4 colores
+                {value: 'R', color: 'rojo'}, {value: 'R', color: 'azul'}, {value: 'R', color: 'verde'}, {value: 'R', color: 'amarillo'},
+                // '1y1/2' en los 4 colores y con nombre completo
+                {value: '1 y 1/2', color: 'rojo'}, {value: '1 y 1/2', color: 'azul'}, {value: '1 y 1/2', color: 'verde'}, {value: '1 y 1/2', color: 'amarillo'}
             ];
             
             const card = pool[Math.floor(Math.random() * pool.length)];
             const el = document.createElement('div');
             el.className = 'falling-bg-card';
             
-            // Aplicar texto y fondo real
             el.innerText = getCardText(card);
             const bgColor = getBgColor(card);
             el.style.backgroundColor = bgColor;
             
-            // Aplicar color de texto real (negro para fondo blanco o amarillo/verde)
             if (card.color === 'amarillo' || card.color === 'verde' || card.value === 'GRACIA') {
                 el.style.color = (card.value === 'GRACIA') ? 'red' : 'black';
             } else {
                 el.style.color = 'white';
             }
 
-            // Bordes especiales para visibilidad
             if (card.value === 'RIP') el.style.borderColor = '#666';
             else if (card.value === 'GRACIA') el.style.borderColor = 'gold';
             

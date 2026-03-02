@@ -128,7 +128,6 @@ const safe = (fn) => {
     return (...args) => { try { fn(...args); } catch (err) { console.error("Socket Error Prevenido:", err); } };
 };
 
-// EXPULSIÓN POR INACTIVIDAD EXTREMA
 function forceKickAFK(roomId, uuid) {
     try {
         const room = rooms[roomId]; if(!room) return;
@@ -165,7 +164,6 @@ function forceKickAFK(roomId, uuid) {
     } catch (e) { console.error("Error en forceKickAFK:", e); }
 }
 
-// AUTO-RESOLUCIÓN DE DECISIONES DE RIESGO
 function handleTimeout(roomId, targetUuid, stateContext) {
     try {
         const room = rooms[roomId]; if (!room) return;
@@ -200,7 +198,6 @@ function handleTimeout(roomId, targetUuid, stateContext) {
     } catch (e) { console.error("Error en handleTimeout:", e); }
 }
 
-// SISTEMA MAESTRO DE TEMPORIZADORES
 function manageTimers(roomId) {
     const room = rooms[roomId]; if (!room) return;
     
@@ -1099,7 +1096,13 @@ function finalizeDuel(roomId) {
     } catch (e) { console.error("Error en finalizeDuel:", e); }
 }
 
-function eliminatePlayer(roomId, uuid) { const room = rooms[roomId]; if(!room) return; const p = room.players.find(p => p.uuid === uuid); if (p) { p.isDead = true; p.isSpectator = true; } }
+// CORRECCIÓN DE BUG: Solo marca muerto, no espectador.
+function eliminatePlayer(roomId, uuid) { 
+    const room = rooms[roomId]; if(!room) return; 
+    const p = room.players.find(p => p.uuid === uuid); 
+    if (p) { p.isDead = true; } 
+}
+
 function getAlivePlayersCount(roomId) { const room = rooms[roomId]; if(!room) return 0; return room.players.filter(p => !p.isDead && !p.isSpectator && !p.hasLeft).length; }
 
 function getNextPlayerIndex(roomId, step) {
@@ -1353,26 +1356,11 @@ app.get('/', (req, res) => {
         
         .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; flex-direction: column; justify-content: center; align-items: center; z-index: 10; background: transparent; }
         
-        /* FONDO ANIMADO PROFUNDO */
         .mutating-bg { animation: colorCycleLobby 20s infinite alternate linear; background-size: 400% 400%; }
         @keyframes colorCycleLobby { 0% { background-color: #ff5252; } 33% { background-color: #ffd740; } 66% { background-color: #69f0ae; } 100% { background-color: #448aff; } }
 
-        /* ESTILO IDÉNTICO AL JUEGO PARA LAS CARTAS QUE CAEN */
-        .falling-bg-card { 
-            position: absolute; top: -120px; z-index: 1; 
-            width: 70px; height: 100px; 
-            border-radius: 8px; border: 2px solid white; 
-            display: flex; justify-content: center; align-items: center; 
-            font-size: 24px; font-weight: bold; color: white; 
-            animation: fallAndRotate 10s linear infinite; 
-            box-shadow: 0 4px 8px rgba(0,0,0,0.6);
-        }
-        @keyframes fallAndRotate { 
-            0% { transform: translateY(-100px) rotate(-15deg); opacity: 0; } 
-            10% { opacity: 0.9; } 
-            90% { opacity: 0.9; } 
-            100% { transform: translateY(120vh) rotate(345deg); opacity: 0; } 
-        }
+        .falling-bg-card { position: absolute; top: -120px; z-index: 1; width: 70px; height: 100px; border-radius: 8px; border: 2px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; animation: fallAndRotate 10s linear infinite; box-shadow: 0 4px 8px rgba(0,0,0,0.6); }
+        @keyframes fallAndRotate { 0% { transform: translateY(-100px) rotate(-15deg); opacity: 0; } 10% { opacity: 0.9; } 90% { opacity: 0.9; } 100% { transform: translateY(120vh) rotate(345deg); opacity: 0; } }
 
         .logo-title { font-size:60px; margin:0; margin-bottom: 20px; color: white; text-shadow: 0 0 20px rgba(255,255,255,0.4); animation: floatLogo 3s ease-in-out infinite; z-index: 5; }
         @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(255,255,255,0.6); } 100% { transform: translateY(0px); } }
@@ -1386,13 +1374,7 @@ app.get('/', (req, res) => {
         .active-stage { display: flex; animation: fadeIn 0.5s; }
         .score-flyer { position: absolute; font-size: 24px; color: gold; font-weight: bold; transition: all 0.6s ease-in-out; text-shadow: 0 0 10px black; z-index: 160000; }
 
-        #round-start-banner {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0);
-            background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px;
-            color: white; padding: 30px; text-align: center; z-index: 200000;
-            box-shadow: 0 0 30px gold; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none;
-        }
+        #round-start-banner { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); background: rgba(0,0,0,0.95); border: 4px solid gold; border-radius: 15px; color: white; padding: 30px; text-align: center; z-index: 200000; box-shadow: 0 0 30px gold; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); display: none; flex-direction: column; justify-content: center; align-items: center; pointer-events: none; }
         #round-start-banner.show { transform: translate(-50%, -50%) scale(1); }
 
         .rank-row { display: flex; justify-content: space-between; width: 80%; max-width: 400px; padding: 15px; margin: 8px 0; background: rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transform: translateY(20px); transition: all 0.5s; font-size: 22px; }
@@ -1472,8 +1454,8 @@ app.get('/', (req, res) => {
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
         
-        /* Animación Choque de Duelo */
-        #duel-clash-zone { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 999999; display: flex; gap: 50px; font-size: 100px; pointer-events: none; opacity: 0; }
+        /* Animación Choque de Duelo - Ajustado para móviles */
+        #duel-clash-zone { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 999999; display: flex; justify-content: center; align-items: center; gap: clamp(10px, 5vw, 50px); font-size: clamp(50px, 15vw, 100px); pointer-events: none; opacity: 0; width: 100%; white-space: nowrap; text-align: center; }
         .clash-anim { animation: clashIn 1.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         @keyframes clashIn { 0% { transform: translate(-50%, -50%) scale(0) translateX(-100px); opacity: 0; } 50% { transform: translate(-50%, -50%) scale(1.5) translateX(0); opacity: 1; } 80% { transform: translate(-50%, -50%) scale(1.2) translateX(0); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(0); opacity: 0; } }
 
@@ -1482,7 +1464,6 @@ app.get('/', (req, res) => {
         @keyframes pop { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-        /* BLOQUEO ABSOLUTO DE CHAT Y BOTONES EN DUELOS / RIP */
         body.state-dueling #game-area, body.state-dueling #hand-zone, body.state-dueling #action-bar, body.state-dueling .hud-btn, body.state-dueling #chat-win, body.state-dueling #alert-zone { display: none !important; }
         body.state-dueling #duel-screen { display: flex !important; }
         body.state-rip #game-area, body.state-rip #hand-zone, body.state-rip #action-bar, body.state-rip .hud-btn, body.state-rip #chat-win, body.state-rip #alert-zone { display: none !important; }
@@ -1501,7 +1482,6 @@ app.get('/', (req, res) => {
 </head>
 <body>
     <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>
-
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
     <div id="login" class="screen" style="display:flex;">
@@ -1535,16 +1515,12 @@ app.get('/', (req, res) => {
     </div>
 
     <div id="global-leave-btn" class="hud-btn" onclick="requestLeave()" title="Abandonar Partida">🚪</div>
-    
     <div id="rules-btn" class="hud-btn" onclick="toggleManual()">📖</div>
     <div id="score-btn" class="hud-btn" onclick="toggleScores()">🏆</div>
     <div id="chat-btn" class="hud-btn" onclick="toggleChat()">💬<div id="chat-badge">0</div></div>
     <div id="uno-main-btn" class="hud-btn" onclick="toggleUnoMenu()">UNO<br>y 1/2</div>
 
-    <div id="round-start-banner">
-        <h1 id="rsb-round" style="color: gold; font-size: 50px; margin: 0; text-shadow: 2px 2px 5px black;">RONDA 1</h1>
-        <h2 id="rsb-starter" style="font-size: 24px; margin-top: 10px;">Comienza Fulanito</h2>
-    </div>
+    <div id="round-start-banner"><h1 id="rsb-round" style="color: gold; font-size: 50px; margin: 0; text-shadow: 2px 2px 5px black;">RONDA 1</h1><h2 id="rsb-starter" style="font-size: 24px; margin-top: 10px;">Comienza Fulanito</h2></div>
 
     <div id="alert-zone">
         <div id="penalty-display">⚠️ DEBES RECOGER <span id="pen-num">0</span> CARTAS<br><small style="color:white; font-size:14px; font-weight:normal;">(Toca el mazo rojo para robar)</small></div>
@@ -1567,8 +1543,7 @@ app.get('/', (req, res) => {
             <button class="btn-main" style="width:100%; font-size:14px; padding:10px; margin:2px; background:#c0392b;" onclick="toggleUnoMenu()">CERRAR</button>
         </div>
         <div id="uno-denounce-opts" style="display:none; text-align:center;">
-            <h3 style="margin-top:0; font-size:16px;">¿A quién denunciar?</h3>
-            <div id="denounce-list-container" style="width:100%;"></div>
+            <h3 style="margin-top:0; font-size:16px;">¿A quién denunciar?</h3><div id="denounce-list-container" style="width:100%;"></div>
             <button class="btn-main" style="width:100%; font-size:12px; padding:8px; margin:5px 0 0 0; background:#c0392b;" onclick="closeDenounceList()">VOLVER</button>
         </div>
     </div>
@@ -1584,120 +1559,65 @@ app.get('/', (req, res) => {
         </div>
     </div>
     
-    <div id="score-modal" class="floating-window">
-        <div class="modal-close" onclick="toggleScores()">X</div>
-        <h2 style="color:gold;">PUNTAJES</h2>
-        <div id="score-list" style="text-align:left; color:white; font-size:16px;"></div>
-    </div>
-
+    <div id="score-modal" class="floating-window"><div class="modal-close" onclick="toggleScores()">X</div><h2 style="color:gold;">PUNTAJES</h2><div id="score-list" style="text-align:left; color:white; font-size:16px;"></div></div>
+    
     <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 800px; max-height: 90vh;">
         <div class="modal-close" onclick="toggleManual()">X</div>
         <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
         <div style="padding:0 10px; text-align:left; line-height:1.7; font-size: 15px;">
             <h3 style="color:#2ecc71;">1. OBJETIVO DEL JUEGO</h3>
             <p>El juego se desarrolla por rondas. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano. Cuando un jugador lo logra, la ronda termina y <b>recolecta los puntos de las cartas que les quedaron a los demás jugadores</b> en sus manos (incluso a los que hayan muerto durante la partida). El primer jugador en acumular <b>800 puntos</b> en el conteo general, será el ganador absoluto de la partida.</p>
-            
             <h3 style="color:#2ecc71;">2. CANTIDAD DE JUGADORES</h3>
-            <p>La cantidad óptima y recomendada para disfrutar de toda la intensidad del juego es de <b>6 jugadores</b>. Sin embargo, el juego soporta una mayor cantidad de participantes y un mínimo de 2 (aunque jugar de a dos es muy poco recomendable y resta estrategia).</p>
-            
+            <p>La cantidad óptima y recomendada para disfrutar de toda la intensidad del juego es de <b>6 jugadores</b>.</p>
             <h3 style="color:#2ecc71;">3. ¿CÓMO DESCARTAR CARTAS?</h3>
-            <p>Al iniciar, cada jugador recibe 7 cartas. En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta que se encuentra en el tope de la mesa. Si no tienes una carta válida (o no quieres jugarla), debes tocar el mazo central para robar una carta. Si la carta robada te sirve, puedes tirarla en ese mismo instante; de lo contrario, debes presionar "PASAR" para ceder el turno.</p>
-            <p><b>JUGADAS ESPECIALES DE DESCARTE:</b> (Se logran manteniendo presionada una carta para activar la Selección Múltiple)</p>
+            <p>Al iniciar, cada jugador recibe 7 cartas. En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta que se encuentra en el tope de la mesa. Si no tienes una carta válida, debes tocar el mazo central para robar.</p>
+            <p><b>JUGADAS ESPECIALES DE DESCARTE:</b></p>
             <ul>
-                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente, pero <b>tienen que ser todas del mismo color</b>. También puedes hacer una escalera usando la carta del tope de la mesa como base, descartando solo 2 cartas consecutivas de tu mano que conecten con ella.</li>
-                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta <span class="min-c mc-rojo">1 ½</span> permite sumas. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2". Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9". <b>Condición estricta:</b> El número que formes DEBE coincidir con el número que ya está en la mesa. El color que quedará activo en la mesa será el de la <i>última</i> carta que hayas tocado.</li>
-                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL</b> (Mismo número y mismo color), no tienes que esperar a que sea tu turno. Arrójala inmediatamente y el juego saltará automáticamente a ti, robándole el turno al resto.</li>
-            </ul>
-
-            <h3 style="color:#2ecc71;">4. CARTAS ESPECIALES (Básicas)</h3>
-            <p>Tienen colores y solo pueden jugarse si el color coincide, o si el símbolo de la mesa es el mismo.</p>
-            <ul>
-                <li><span class="min-c mc-verde">+2</span> <b>Más Dos:</b> El siguiente jugador recibe 2 cartas de castigo y pierde su turno, a menos que se defienda tirando otro castigo igual o mayor (+2, +4, +12, GRACIA DIVINA o LIBRE ALBEDRÍO). Los castigos se acumulan.</li>
-                <li><span class="min-c mc-amarillo">⮂</span> <b>Reversa:</b> Cambia la dirección en la que giran los turnos.</li>
-                <li><span class="min-c mc-azul">⊘</span> <b>Salteo:</b> El siguiente jugador pierde su turno automáticamente.</li>
-            </ul>
-
-            <h3 style="color:#2ecc71;">5. CARTAS ESPECIALES PLUS</h3>
-            <p>Son de fondo negro. Pueden tirarse <b>sobre cualquier color</b> (incluso si no coincide).</p>
-            <ul>
-                <li><span class="min-c mc-negro">C</span> <b>Cambio de Color:</b> Te permite elegir el nuevo color con el que seguirá el juego.</li>
-                <li><span class="min-c mc-negro">+4</span> <b>Más Cuatro:</b> Funciona igual que el Cambio de Color, pero además aplica un castigo de 4 cartas al siguiente jugador.</li>
-            </ul>
-
-            <h3 style="color:#2ecc71;">6. CARTAS SUPREMAS</h3>
-            <p>Cartas únicas de fondo negro o blanco, con reglas destructivas o salvadoras.</p>
-            <ul>
-                <li><span class="min-c mc-negro">+12</span> <b>Más Doce:</b> Aplica un castigo masivo de 12 cartas. El jugador que lo recibe entra en fase de "Decisión de Castigo": puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
-                <li><span class="min-c mc-negro">SS</span> <b>SALTEO SUPREMO:</b> El siguiente jugador recibe 4 cartas de castigo y además pierde 4 turnos. Puede aceptar el castigo o intentar salvarse batiéndose a duelo.</li>
-                <li><span class="min-c mc-negro">🕊️</span> <b>LIBRE ALBEDRÍO:</b> Sirve para defender castigos numéricos. Abre una ventana donde: 1) Regalas 1 carta a cualquier jugador. 2) Eliges la carta que quieras de tu mano para descartar y definir cómo sigue el juego.</li>
-                <li><span class="min-c mc-rip">🪦</span> <b>RIP:</b> La víctima (automáticamente el siguiente jugador) entra en un Duelo a Muerte (Piedra/Papel/Tijera elemental: Fuego/Hielo/Agua). Quien pierde el duelo es eliminado (zombie) y ya no juega en esta ronda. Si el atacante pierde, la víctima se salva y el atacante roba 4 cartas.</li>
-                <li><span class="min-c mc-gra">❤️</span> <b>GRACIA DIVINA:</b> Es la carta de salvación absoluta. Anula cualquier castigo si la tiras encima. Si alguien está muerto (RIP), tírala y podrás resucitarlo. Decides el nuevo color de la mesa.</li>
-            </ul>
-
-            <h3 style="color:#2ecc71;">7. DUELOS</h3>
-            <p>Se juega al mejor de 3 rondas bajo la siguiente regla: <b>El Fuego derrite al Hielo. El Hielo congela el Agua. El Agua apaga el Fuego.</b></p>
-            
-            <h3 style="color:#2ecc71;">8. RECUENTO DE PUNTOS</h3>
-            <ul>
-                <li><b>Numéricas (0-9):</b> Valen su número.</li>
-                <li><b>1 y 1/2:</b> Vale 1.5 puntos.</li>
-                <li><b>Más Dos, Reversa, Salteo:</b> Valen 20 puntos.</li>
-                <li><b>Cambio Color, Más Cuatro:</b> Valen 40 puntos.</li>
-                <li><b>Más Doce, LIBRE ALBEDRÍO, SALTEO SUPREMO:</b> Valen 80 puntos.</li>
-                <li><b>RIP:</b> Vale 100 puntos.</li>
-                <li><b>GRACIA DIVINA:</b> Protege al perdedor que la tenga en la mano (suma 0). Si el ganador cierra la ronda con ella, obtiene Bonus de +50 puntos.</li>
+                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente del mismo color.</li>
+                <li><b>✨ Combo Matemático "1 y 1/2":</b> Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2". Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9".</li>
+                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL</b>, puedes robarle el turno.</li>
             </ul>
         </div>
     </div>
 
     <div id="afk-modal" class="floating-window" style="z-index: 999999; background: #c0392b; border: 4px solid gold;">
         <h1 style="color:white; font-size:40px; margin:10px 0;">¿ESTÁS AHÍ?</h1>
-        <p style="font-size:18px; line-height:1.4;">Tu turno está a punto de caducar por inactividad. Si no respondes, serás expulsado de la partida.</p>
+        <p style="font-size:18px; line-height:1.4;">Tu turno está a punto de caducar por inactividad.</p>
         <button class="btn-main" style="background:#27ae60; font-size:20px; padding:15px; width:100%; box-shadow: 0 0 15px white;" onclick="imHere()">¡SÍ, ESTOY JUGANDO!</button>
     </div>
 
     <div id="leave-normal-modal" class="floating-window">
-        <h2 style="color:gold;">¿Abandonar Partida?</h2>
-        <p>Serás expulsado de la sala y no podrás volver.</p>
+        <h2 style="color:gold;">¿Abandonar Partida?</h2><p>Serás expulsado de la sala y no podrás volver.</p>
         <button class="btn-main" onclick="confirmLeave('leave_normal')" style="background:#e74c3c;">SÍ, ABANDONAR</button>
         <button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
     <div id="leave-admin-modal" class="floating-window">
-        <h2 style="color:gold;">¿Abandonar Partida?</h2>
-        <p>Eres el anfitrión. Puedes irte y dejar que continúen o cancelar la partida para todos.</p>
+        <h2 style="color:gold;">¿Abandonar Partida?</h2><p>Eres el anfitrión. Puedes irte y dejar que continúen o cancelar la partida para todos.</p>
         <button class="btn-main" onclick="confirmLeave('leave_host_keep')" style="background:#f39c12; font-size:16px;">IRME Y DEJARLOS JUGANDO</button>
         <button class="btn-main" onclick="confirmLeave('leave_host_end')" style="background:#e74c3c; font-size:16px;">FINALIZAR PARTIDA PARA TODOS</button>
         <button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
 
-    <div id="game-over-screen" class="screen">
-        <h1 style="color:gold;">VICTORIA SUPREMA</h1>
-        <h2 id="winner-name"></h2>
-        <h3 id="final-score"></h3>
-    </div>
+    <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA SUPREMA</h1><h2 id="winner-name"></h2><h3 id="final-score"></h3></div>
     
     <div id="pause-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; justify-content:center; align-items:center; flex-direction:column; color:white; text-align:center; padding: 20px;">
-        <h1 style="color:gold; font-size:50px; margin-bottom: 10px;">⏸️ PAUSA</h1>
-        <h2 id="pause-msg" style="font-weight: normal; line-height:1.4;"></h2>
+        <h1 style="color:gold; font-size:50px; margin-bottom: 10px;">⏸️ PAUSA</h1><h2 id="pause-msg" style="font-weight: normal; line-height:1.4;"></h2>
     </div>
 
     <div id="round-overlay">
         <div id="stage-collection" class="round-stage active-stage">
-            <h2 style="color: #2ecc71;">GANADOR DE LA RONDA</h2>
-            <h1 id="r-winner-name" style="color: gold; font-size: 40px; margin-top: 0; margin-bottom: 10px;"></h1>
+            <h2 style="color: #2ecc71;">GANADOR DE LA RONDA</h2><h1 id="r-winner-name" style="color: gold; font-size: 40px; margin-top: 0; margin-bottom: 10px;"></h1>
             <h3 id="r-winner-pts" style="color: white; border: 2px solid gold; padding: 10px 20px; border-radius: 10px; background: rgba(0,0,0,0.5); display: inline-block;">0 pts</h3>
             <div id="losers-area" style="margin-top: 30px; min-height: 100px; display: flex; flex-direction: column; gap: 15px;"></div>
         </div>
         <div id="stage-ranking" class="round-stage">
-            <h1 style="color:gold; font-size: 40px; letter-spacing: 5px; margin-bottom: 5px;">RANKING</h1>
-            <h4 style="color:#aaa; margin-top: 0; margin-bottom: 30px;">Puntajes acumulados</h4>
+            <h1 style="color:gold; font-size: 40px; letter-spacing: 5px; margin-bottom: 5px;">RANKING</h1><h4 style="color:#aaa; margin-top: 0; margin-bottom: 30px;">Puntajes acumulados</h4>
             <div id="ranking-list" style="width: 100%; display: flex; flex-direction: column; align-items: center;"></div>
         </div>
     </div>
 
     <div id="rip-screen" class="screen">
-        <h1 style="color:red;" id="rip-title">💀 RIP 💀</h1>
-        <h3 id="rip-msg-custom" style="text-align:center; padding:10px;"></h3>
+        <h1 style="color:red;" id="rip-title">💀 RIP 💀</h1><h3 id="rip-msg-custom" style="text-align:center; padding:10px;"></h3>
         <div id="decision-timer" style="font-size: 60px; color: #e74c3c; font-weight: bold; margin: 5px 0; text-shadow: 0 0 15px red;">15</div>
         <button id="btn-accept-penalty" onclick="ripResp('accept_penalty')" class="btn-main" style="background:#34495e; display:none;">ACEPTAR CASTIGO</button>
         <button id="btn-duel-start" onclick="ripResp('duel')" class="btn-main" style="background:red; border:3px solid gold;">BATIRSE A DUELO</button>
@@ -1707,12 +1627,8 @@ app.get('/', (req, res) => {
     </div>
 
     <div id="duel-screen" class="screen">
-        <h1 style="color:gold;">⚔️ DUELO ⚔️</h1>
-        <div id="duel-timer" style="font-size: 40px; color: #e74c3c; font-weight: bold; margin-bottom: 5px; text-shadow: 0 0 10px red;">15</div>
-        <h3 id="duel-narrative">Cargando duelo...</h3>
-        <h2 id="duel-names">... vs ...</h2>
-        <h3 id="duel-sc">0 - 0</h3>
-        <p id="duel-turn-msg"></p>
+        <h1 style="color:gold;">⚔️ DUELO ⚔️</h1><div id="duel-timer" style="font-size: 40px; color: #e74c3c; font-weight: bold; margin-bottom: 5px; text-shadow: 0 0 10px red;">15</div>
+        <h3 id="duel-narrative">Cargando duelo...</h3><h2 id="duel-names">... vs ...</h2><h3 id="duel-sc">0 - 0</h3><p id="duel-turn-msg"></p>
         <div id="duel-opts">
             <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button>
             <button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button>
@@ -1722,20 +1638,8 @@ app.get('/', (req, res) => {
     
     <div id="color-picker" class="floating-window"><h3>Elige Color</h3><div style="display:flex; flex-wrap:wrap; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div></div>
     <div id="revive-screen" class="floating-window"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div>
-    
-    <div id="grace-color-modal" class="floating-window">
-        <h2 style="color:gold;">❤️ GRACIA DIVINA ❤️</h2>
-        <p>¿Quieres usarla como cambio de color?</p>
-        <button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button>
-        <button class="btn-main" onclick="confirmGraceColor(false)" style="background:#e74c3c">CANCELAR</button>
-    </div>
-
-    <div id="revive-confirm-screen" class="floating-window">
-        <h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2>
-        <button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button>
-        <button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button>
-    </div>
-
+    <div id="grace-color-modal" class="floating-window"><h2 style="color:gold;">❤️ GRACIA DIVINA ❤️</h2><p>¿Quieres usarla como cambio de color?</p><button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button><button class="btn-main" onclick="confirmGraceColor(false)" style="background:#e74c3c">CANCELAR</button></div>
+    <div id="revive-confirm-screen" class="floating-window"><h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2><button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button><button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button></div>
     <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:250000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
 
     <div id="libre-modal" class="floating-window" style="width: 380px;">
@@ -1746,191 +1650,93 @@ app.get('/', (req, res) => {
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        // --- FUNCIÓN DE LLUVIA DE CARTAS EN EL LOBBY ---
         let fallingInterval;
         function createFallingCards() {
             const bgContainer = document.getElementById('animated-bg');
             if(!bgContainer) return;
 
-            const specialValues = [
-                {c: '#212121', v: '+4'}, {c: '#212121', v: 'C'}, {c: '#000000', v: '+12'},
-                {c: 'black', v: 'RIP'}, {c: '#2c3e50', v: 'SS'}, {c: '#000', v: 'LIBRE'},
-                {c: 'white', v: '❤️', t: 'red'}
-            ];
-            
-            const colorValues = [
-                {c: '#ff5252', v: 'R'}, {c: '#448aff', v: 'R'}, {c: '#69f0ae', v: 'R'}, {c: '#ffd740', v: 'R'},
-                {c: '#ff5252', v: 'X'}, {c: '#448aff', v: 'X'}, {c: '#69f0ae', v: 'X'}, {c: '#ffd740', v: 'X'}
-            ];
-            
+            const specialValues = [ {c: '#212121', v: '+4'}, {c: '#212121', v: 'C'}, {c: '#000000', v: '+12'}, {c: 'black', v: 'RIP'}, {c: '#2c3e50', v: 'SS'}, {c: '#000', v: 'LIBRE'}, {c: 'white', v: '❤️', t: 'red'} ];
+            const colorValues = [ {c: '#ff5252', v: 'R'}, {c: '#448aff', v: 'R'}, {c: '#69f0ae', v: 'R'}, {c: '#ffd740', v: 'R'}, {c: '#ff5252', v: 'X'}, {c: '#448aff', v: 'X'}, {c: '#69f0ae', v: 'X'}, {c: '#ffd740', v: 'X'} ];
             const allCards = [...specialValues, ...colorValues];
 
             fallingInterval = setInterval(() => {
-                if (document.getElementById('login').style.display === 'flex' ||
-                    document.getElementById('join-menu').style.display === 'flex' ||
-                    document.getElementById('lobby').style.display === 'flex') {
-
+                if (document.getElementById('login').style.display === 'flex' || document.getElementById('join-menu').style.display === 'flex' || document.getElementById('lobby').style.display === 'flex') {
                     const card = allCards[Math.floor(Math.random() * allCards.length)];
                     const el = document.createElement('div');
                     el.className = 'falling-bg-card';
                     el.style.left = Math.random() * 90 + 'vw';
                     el.style.backgroundColor = card.c;
                     el.style.color = card.t || ((card.c==='#ffd740'||card.c==='#69f0ae') ? 'black' : 'white');
-                    
                     el.innerText = card.v;
                     if(card.v === 'RIP') el.innerText = '🪦';
                     if(card.v === 'LIBRE') el.innerText = '🕊️';
-
                     const dur = 8 + Math.random() * 5;
                     el.style.animationDuration = dur + 's';
-
                     bgContainer.appendChild(el);
-                    
                     setTimeout(() => { if(el.parentNode) el.remove(); }, dur * 1000);
-                } else {
-                    bgContainer.innerHTML = ''; 
-                }
+                } else { bgContainer.innerHTML = ''; }
             }, 1200);
         }
         window.onload = createFallingCards;
 
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
-        let isChatOpen = false; let unreadCount = 0;
-        let ladderMode = false; let ladderSelected = []; 
-        let myUUID = localStorage.getItem('uno_uuid');
+        let isChatOpen = false; let unreadCount = 0; let ladderMode = false; let ladderSelected = []; let myUUID = localStorage.getItem('uno_uuid');
+        let pressTimer; let pendingColorForRevive = null; let pendingLibreContext = null; let clientTimerInterval = null; 
         
-        let pressTimer;
-        let pendingColorForRevive = null;
-        let pendingLibreContext = null; 
-        let clientTimerInterval = null; 
-        
-        // --- SONIDO DE INICIO ---
         let hasPlayedIntro = false;
-        function playUI() { 
-            if(!hasPlayedIntro) { 
-                const a = new Audio('https://cdn.freesound.org/previews/511/511484_6890478-lq.mp3'); 
-                a.volume = 0.5; a.play().catch(()=>{}); 
-                hasPlayedIntro = true; 
-            } 
-        }
+        function playUI() { if(!hasPlayedIntro) { const a = new Audio('https://cdn.freesound.org/previews/511/511484_6890478-lq.mp3'); a.volume = 0.5; a.play().catch(()=>{}); hasPlayedIntro = true; } }
 
         if (!myUUID) { myUUID = Math.random().toString(36).substring(2) + Date.now().toString(36); localStorage.setItem('uno_uuid', myUUID); }
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('room');
         if (inviteCode) { document.getElementById('room-code').value = inviteCode; document.getElementById('btn-create').style.display = 'none'; document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; document.getElementById('btn-join-menu').onclick = joinRoom; }
         
-        // --- PREVENCIÓN DE AFK POR INTERACCIÓN UI ---
         let lastInteractionTime = Date.now();
         function reportActivity() {
             const now = Date.now();
-            if (now - lastInteractionTime > 5000) { 
-                lastInteractionTime = now;
-                if (document.body.classList.contains('playing-state')) {
-                    socket.emit('imHere'); 
-                }
-            }
+            if (now - lastInteractionTime > 5000) { lastInteractionTime = now; if (document.body.classList.contains('playing-state')) { socket.emit('imHere'); } }
         }
-        document.addEventListener('mousemove', reportActivity);
-        document.addEventListener('touchstart', reportActivity);
-        document.addEventListener('click', reportActivity);
-        document.addEventListener('keydown', reportActivity);
-        // ------------------------------------------
+        document.addEventListener('mousemove', reportActivity); document.addEventListener('touchstart', reportActivity); document.addEventListener('click', reportActivity); document.addEventListener('keydown', reportActivity);
 
         function forceCloseModals() {
-            document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none');
-            document.getElementById('chat-win').style.display = 'none';
-            document.getElementById('uno-menu').style.display = 'none';
-            isChatOpen = false;
+            document.querySelectorAll('.floating-window').forEach(w => w.style.display = 'none'); document.getElementById('chat-win').style.display = 'none'; document.getElementById('uno-menu').style.display = 'none'; isChatOpen = false;
         }
 
         function repositionHUD() {
             const pZone = document.getElementById('players-zone');
             if (!pZone || pZone.offsetHeight === 0) return;
             const rect = pZone.getBoundingClientRect();
-            
             const baseTop = rect.bottom + 10; 
 
-            const buttons = [
-                document.getElementById('global-leave-btn'),
-                document.getElementById('rules-btn'),
-                document.getElementById('score-btn'),
-                document.getElementById('chat-btn'),
-                document.getElementById('uno-main-btn')
-            ];
+            const buttons = [ document.getElementById('global-leave-btn'), document.getElementById('rules-btn'), document.getElementById('score-btn'), document.getElementById('chat-btn'), document.getElementById('uno-main-btn') ];
 
-            const screenW = window.innerWidth;
-            const btnSize = 50;
-            let gap = 15; 
-            
-            if (screenW < 360) gap = 8;
-            if (screenW < 330) gap = 4;
+            const screenW = window.innerWidth; const btnSize = 50; let gap = 15; 
+            if (screenW < 360) gap = 8; if (screenW < 330) gap = 4;
 
-            const totalW = (btnSize * 5) + (gap * 4);
-            let startLeft = (screenW - totalW) / 2; 
+            const totalW = (btnSize * 5) + (gap * 4); let startLeft = (screenW - totalW) / 2; 
 
-            buttons.forEach((btn, idx) => {
-                if (btn) {
-                    btn.style.top = baseTop + 'px';
-                    btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px';
-                    btn.style.right = 'auto'; 
-                }
-            });
+            buttons.forEach((btn, idx) => { if (btn) { btn.style.top = baseTop + 'px'; btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px'; btn.style.right = 'auto'; } });
 
-            const lowerElements = ['uno-menu', 'chat-win'];
-            lowerElements.forEach(function(id) {
-                const el = document.getElementById(id);
-                if(el) { el.style.top = (baseTop + 60) + 'px'; }
-            });
-
-            const alertZone = document.getElementById('alert-zone');
-            if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
+            const lowerElements = ['uno-menu', 'chat-win']; lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) { el.style.top = (baseTop + 60) + 'px'; } });
+            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
         }
         window.addEventListener('resize', repositionHUD);
 
-        socket.on('connect', () => { 
-            document.getElementById('reconnect-overlay').style.display = 'none';
-            myId = socket.id; 
-            socket.emit('checkSession', myUUID); 
-        });
-        
+        socket.on('connect', () => { document.getElementById('reconnect-overlay').style.display = 'none'; myId = socket.id; socket.emit('checkSession', myUUID); });
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
-        
-        socket.on('requireLogin', () => { 
-            document.getElementById('reconnect-overlay').style.display = 'none'; 
-            changeScreen('login'); 
-            document.getElementById('global-leave-btn').style.display = 'none';
-            document.getElementById('lobby-users').innerHTML = ''; 
-            document.getElementById('players-zone').innerHTML = '';
-            document.getElementById('hand-zone').innerHTML = '';
-            document.getElementById('hand-zone').style.display = 'none'; 
-        });
+        socket.on('requireLogin', () => { document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); document.getElementById('global-leave-btn').style.display = 'none'; document.getElementById('lobby-users').innerHTML = ''; document.getElementById('players-zone').innerHTML = ''; document.getElementById('hand-zone').innerHTML = ''; document.getElementById('hand-zone').style.display = 'none'; });
+        socket.on('showAFKPrompt', () => { document.getElementById('afk-modal').style.display = 'flex'; const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3'); a.volume = 0.5; a.play().catch(()=>{}); });
 
-        socket.on('showAFKPrompt', () => {
-            document.getElementById('afk-modal').style.display = 'flex';
-            const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3');
-            a.volume = 0.5; a.play().catch(()=>{});
-        });
-
-        function imHere() {
-            document.getElementById('afk-modal').style.display = 'none';
-            socket.emit('imHere');
-        }
+        function imHere() { document.getElementById('afk-modal').style.display = 'none'; socket.emit('imHere'); }
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
-        
         function startLibreLogic(cardId) {
             if(myHand.length < 3) return; 
-            document.getElementById('action-bar').style.display = 'none';
-            libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
-            document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1);
-            const div = document.getElementById('libre-targets'); div.innerHTML = '';
+            document.getElementById('action-bar').style.display = 'none'; libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
+            document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1); const div = document.getElementById('libre-targets'); div.innerHTML = '';
             currentPlayers.forEach(p => {
-                if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) {
-                    const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name;
-                    b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); };
-                    div.appendChild(b);
-                }
+                if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) { const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name; b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); }; div.appendChild(b); }
             });
         }
         socket.on('startLibreLogic', startLibreLogic);
@@ -1939,40 +1745,22 @@ app.get('/', (req, res) => {
             const div = document.getElementById('libre-gift-hand'); div.innerHTML = '';
             myHand.forEach(c => {
                 if(c.id === libreState.cardId) return;
-                const b = document.createElement('div'); b.className = 'mini-card';
-                b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
+                const b = document.createElement('div'); b.className = 'mini-card'; b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
                 if(c.value === '1 y 1/2') { b.style.fontSize = '12px'; }
-                b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); };
-                div.appendChild(b);
+                b.onclick = () => { libreState.giftId = c.id; showLibreStep(3); renderDiscardHand(); }; div.appendChild(b);
             });
         }
         function renderDiscardHand() {
             const pool = document.getElementById('libre-discard-hand'); pool.innerHTML = '';
             myHand.forEach(c => {
                 if(c.id === libreState.cardId || c.id === libreState.giftId) return;
-                const b = document.createElement('div'); b.className = 'mini-card';
-                b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
+                const b = document.createElement('div'); b.className = 'mini-card'; b.innerText = getCardText(c); b.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; b.style.backgroundColor = getBgColor(c);
                 if(c.value === '1 y 1/2') { b.style.fontSize = '12px'; }
-                b.onclick = () => { 
-                    libreState.discardId = c.id; 
-                    pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId };
-                    document.getElementById('libre-modal').style.display = 'none';
-                    libreState.active = false;
-                    handleCardClick(c);
-                };
-                pool.appendChild(b);
+                b.onclick = () => { libreState.discardId = c.id; pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId }; document.getElementById('libre-modal').style.display = 'none'; libreState.active = false; handleCardClick(c); }; pool.appendChild(b);
             });
         }
-        
-        function cancelLibre() {
-            document.getElementById('libre-modal').style.display = 'none';
-            if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex';
-            libreState = { active: false };
-            pendingLibreContext = null;
-        }
-
+        function cancelLibre() { document.getElementById('libre-modal').style.display = 'none'; if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex'; libreState = { active: false }; pendingLibreContext = null; }
         function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); document.getElementById('step-'+n).classList.add('active'); }
-        
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
@@ -1986,6 +1774,7 @@ app.get('/', (req, res) => {
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         
+        // CORRECCIÓN ANIMACIÓN CARTA VOLADORA
         socket.on('universalDiscardAnim', data => {
             const c = data.card;
             const el = document.createElement('div');
@@ -1996,24 +1785,27 @@ app.get('/', (req, res) => {
             el.style.fontSize = (c.value === '1 y 1/2') ? '20px' : '24px';
 
             if (data.playerId === socket.id && !data.isLibreDiscard) {
+                el.style.top = 'auto';
                 el.style.bottom = '150px';
                 el.style.left = '50%';
                 el.style.transform = 'translate(-50%, 0)';
             } else {
+                // Viene de otro jugador: arranca fuera de la pantalla a la derecha
                 el.style.top = '40%';
-                el.style.right = '-100px';
-                el.style.transform = 'translate(0, -50%)';
+                el.style.bottom = 'auto';
+                el.style.left = '120%'; // Bien a la derecha
+                el.style.transform = 'translate(-50%, -50%)';
             }
 
             document.body.appendChild(el);
+            
+            // Forzamos el reflow para que el navegador procese el punto de inicio
+            void el.offsetWidth;
 
-            setTimeout(() => {
-                el.style.top = '50%';
-                el.style.left = '50%';
-                el.style.right = 'auto';
-                el.style.bottom = 'auto';
-                el.style.transform = 'translate(-50%, -50%) rotate(' + (Math.random()*20 - 10) + 'deg)';
-            }, 20);
+            el.style.top = '50%';
+            el.style.left = '50%';
+            el.style.bottom = 'auto';
+            el.style.transform = 'translate(-50%, -50%) rotate(' + (Math.random()*20 - 10) + 'deg)';
 
             setTimeout(() => {
                 el.style.opacity = '0';
@@ -2294,15 +2086,11 @@ app.get('/', (req, res) => {
         function toggleChat(){ 
             const w = document.getElementById('chat-win'); 
             if(isChatOpen) { w.style.display = 'none'; isChatOpen = false; } 
-            else { 
-                w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; 
-            } 
+            else { w.style.display = 'flex'; isChatOpen = true; unreadCount = 0; document.getElementById('chat-badge').style.display = 'none'; document.getElementById('chat-badge').innerText = '0'; } 
         }
         
         function toggleScores() { const r = document.getElementById('score-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
-        function toggleManual() { 
-            const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; 
-        }
+        function toggleManual() { const r = document.getElementById('manual-modal'); r.style.display = (r.style.display === 'flex') ? 'none' : 'flex'; }
 
         function pickCol(c){ 
             document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; 

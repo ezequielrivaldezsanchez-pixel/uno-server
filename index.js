@@ -546,7 +546,14 @@ io.on('connection', (socket) => {
     socket.on('playCard', safe((cardId, chosenColor, reviveTargetId, libreContext) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; 
-        if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision') return;
+        
+        if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision' && room.gameState !== 'libre_choosing') return;
+        
+        // CORRECCIÓN: BLOQUEO ABSOLUTO PARA OTROS JUGADORES DURANTE LIBRE ALBEDRÍO
+        if (room.gameState === 'libre_choosing' && !libreContext) {
+            socket.emit('notification', '⏳ Acción bloqueada. Un jugador está resolviendo Libre Albedrío.');
+            return;
+        }
         
         const pIndex = room.players.findIndex(p => p.id === socket.id); if (pIndex === -1) return;
         const player = room.players[pIndex]; if (player.isDead || player.isSpectator || player.hasLeft) return;
@@ -559,18 +566,14 @@ io.on('connection', (socket) => {
         let isLibreDiscard = false;
 
         if (libreContext) {
-            const lIdx = player.hand.findIndex(c => c.id === libreContext.libreId);
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
             const target = room.players.find(p => p.id === libreContext.targetId);
-            if (lIdx === -1 || gIdx === -1 || !target) return;
+            if (gIdx === -1 || !target) return;
 
+            room.gameState = 'playing'; // Restauramos el estado del juego
             room.pendingPenalty = 0; room.pendingSkip = 0;
             
-            player.hand.splice(lIdx, 1);
-            room.discardPile.push({ color: 'negro', value: 'LIBRE', type: 'special', id: libreContext.libreId });
-
-            const realGIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
-            const giftCard = player.hand.splice(realGIdx, 1)[0];
+            const giftCard = player.hand.splice(gIdx, 1)[0];
             target.hand.push(giftCard);
             io.to(target.id).emit('handUpdate', target.hand);
             io.to(roomId).emit('playSound', 'wild');
@@ -581,6 +584,13 @@ io.on('connection', (socket) => {
                  io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} usó Libre Albedrío, regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`);
             } else {
                  io.to(roomId).emit('notification', `🕊️ ${player.name} completó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`);
+            }
+            
+            // Recalculamos la posición de la carta de descarte
+            cardIndex = player.hand.findIndex(c => c.id === cardId);
+            card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
+            if (!card) {
+                advanceTurn(roomId, 1); updateAll(roomId); return; 
             }
         }
 
@@ -651,10 +661,6 @@ io.on('connection', (socket) => {
                     if (!valid) { socket.emit('notification', `❌ Carta inválida. Color o símbolo no coincide.`); return; }
                 }
             }
-        }
-
-        if (room.pendingPenalty > 0 && card.value === 'LIBRE' && room.pendingSkip === 0 && cardIndex !== -1 && !isLibreDiscard) {
-             socket.emit('startLibreLogic', card.id); return;
         }
 
         if (card.value === 'GRACIA') {
@@ -742,6 +748,12 @@ io.on('connection', (socket) => {
         }
 
         if (card.value === 'LIBRE' && !isLibreDiscard) { 
+            if (player.hand.length < 3) {
+                socket.emit('notification', '🚫 Necesitas al menos 3 cartas para usar LIBRE ALBEDRÍO (la de uso, una para regalar y otra para descartar).');
+                return;
+            }
+            player.hand.splice(cardIndex, 1); 
+            room.discardPile.push(card);
             io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });
             io.to(roomId).emit('notification', `🕊️ ${player.name} arrojó LIBRE ALBEDRÍO y está eligiendo...`);
             room.gameState = 'libre_choosing';
@@ -1096,7 +1108,6 @@ function finalizeDuel(roomId) {
     } catch (e) { console.error("Error en finalizeDuel:", e); }
 }
 
-// CORRECCIÓN DE BUG: Solo marca muerto, no espectador.
 function eliminatePlayer(roomId, uuid) { 
     const room = rooms[roomId]; if(!room) return; 
     const p = room.players.find(p => p.uuid === uuid); 
@@ -1454,7 +1465,6 @@ app.get('/', (req, res) => {
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
         
-        /* Animación Choque de Duelo - Ajustado para móviles */
         #duel-clash-zone { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 999999; display: flex; justify-content: center; align-items: center; gap: clamp(10px, 5vw, 50px); font-size: clamp(50px, 15vw, 100px); pointer-events: none; opacity: 0; width: 100%; white-space: nowrap; text-align: center; }
         .clash-anim { animation: clashIn 1.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         @keyframes clashIn { 0% { transform: translate(-50%, -50%) scale(0) translateX(-100px); opacity: 0; } 50% { transform: translate(-50%, -50%) scale(1.5) translateX(0); opacity: 1; } 80% { transform: translate(-50%, -50%) scale(1.2) translateX(0); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(0); opacity: 0; } }
@@ -1561,21 +1571,74 @@ app.get('/', (req, res) => {
     
     <div id="score-modal" class="floating-window"><div class="modal-close" onclick="toggleScores()">X</div><h2 style="color:gold;">PUNTAJES</h2><div id="score-list" style="text-align:left; color:white; font-size:16px;"></div></div>
     
-    <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 800px; max-height: 90vh;">
+    <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 900px; max-height: 90vh; text-align: left;">
         <div class="modal-close" onclick="toggleManual()">X</div>
-        <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px;">📖 MANUAL DEL JUEGO</h1>
-        <div style="padding:0 10px; text-align:left; line-height:1.7; font-size: 15px;">
-            <h3 style="color:#2ecc71;">1. OBJETIVO DEL JUEGO</h3>
-            <p>El juego se desarrolla por rondas. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano. Cuando un jugador lo logra, la ronda termina y <b>recolecta los puntos de las cartas que les quedaron a los demás jugadores</b> en sus manos (incluso a los que hayan muerto durante la partida). El primer jugador en acumular <b>800 puntos</b> en el conteo general, será el ganador absoluto de la partida.</p>
-            <h3 style="color:#2ecc71;">2. CANTIDAD DE JUGADORES</h3>
-            <p>La cantidad óptima y recomendada para disfrutar de toda la intensidad del juego es de <b>6 jugadores</b>.</p>
-            <h3 style="color:#2ecc71;">3. ¿CÓMO DESCARTAR CARTAS?</h3>
-            <p>Al iniciar, cada jugador recibe 7 cartas. En tu turno, debes arrojar una carta que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta que se encuentra en el tope de la mesa. Si no tienes una carta válida, debes tocar el mazo central para robar.</p>
+        <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px; text-align:center;">📖 MANUAL COMPLETO DEL JUEGO</h1>
+        <div style="padding:0 10px; line-height:1.6; font-size: 15px; overflow-y: auto;">
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">1. OBJETIVO DEL JUEGO</h3>
+            <p>El juego se desarrolla por rondas. Cada jugador comienza con <b>7 cartas</b>. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano.</p>
+            <p>Al tener una sola carta, el jugador debe anunciar <b>"UNO y 1/2"</b> (usando el botón correspondiente). Si no lo hace, puede ser denunciado y castigado con 2 cartas. Cuando un jugador descarta su última carta, la ronda termina y <b>recolecta la suma de los puntos de las cartas que les quedaron a los demás jugadores</b>. El primer jugador en acumular <b>800 puntos</b> en el conteo general, es el ganador supremo de la partida.</p>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">2. CANTIDAD DE JUGADORES</h3>
+            <p>La cantidad óptima y recomendada para disfrutar de toda la intensidad y dinámica del juego es de <b>6 jugadores</b>. Si bien el sistema permite un mínimo de 2 jugadores y soporta más, la experiencia ideal de caos y estrategia se da con media docena de participantes.</p>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">3. ¿CÓMO DESCARTAR CARTAS?</h3>
+            <p>El juego es por turnos. En tu turno, debes arrojar una carta de tu mano que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta visible en el tope de la mesa. Si no tienes ninguna carta válida, estás obligado a tocar el mazo central para <b>robar 1 carta</b>. Si esa carta robada te sirve, puedes jugarla; si no, debes presionar "PASAR" para ceder el turno.</p>
             <p><b>JUGADAS ESPECIALES DE DESCARTE:</b></p>
             <ul>
-                <li><b>🪜 Escalera:</b> Puedes arrojar juntas 3 o más cartas consecutivas numéricamente del mismo color.</li>
-                <li><b>✨ Combo Matemático "1 y 1/2":</b> Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> cartas "1 y 1/2". Si tiras dos, forman un "3". Si tiras cuatro, forman un "6". Si tiras seis, forman un "9".</li>
-                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL</b>, puedes robarle el turno.</li>
+                <li><b>🪜 Escalera:</b> Puedes seleccionar en tu mano y arrojar juntas <b>3 o más cartas consecutivas numéricamente y del mismo color</b> (ej: 2, 3 y 4 azul). Solo la primera carta debe coincidir con la mesa. ¡Ideal para limpiar tu mano rápido!</li>
+                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta "1 y 1/2" es especial. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> de estas cartas para sumar su valor. Dos cartas forman un "3" (debes tirarlas sobre un 3). Cuatro cartas forman un "6". Seis cartas forman un "9". El color de la mesa quedará determinado por la última carta que selecciones.</li>
+                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL en número y color</b> (ej. alguien tira un 5 rojo y vos tenés otro 5 rojo), puedes arrojarla inmediatamente (incluso si no es tu turno) para hacer S.A.F.F. ¡Robarás el turno y el juego continuará a partir de ti! No se puede ganar la partida haciendo S.A.F.F.</li>
+            </ul>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">4. CARTAS ESPECIALES</h3>
+            <p>Estas cartas tienen el fondo de los colores básicos (rojo, azul, verde, amarillo) y aplican efectos al siguiente jugador:</p>
+            <ul>
+                <li><span class="min-c mc-azul">+2</span> <b>Más 2:</b> El siguiente jugador debe robar 2 cartas y pierde su turno (salvo que se defienda tirando otro +2 o superior, acumulando el castigo).</li>
+                <li><span class="min-c mc-rojo">R</span> <b>Reversa:</b> Cambia el sentido de la ronda (de horario a antihorario y viceversa).</li>
+                <li><span class="min-c mc-verde">X</span> <b>Salteo:</b> Saltea el turno del siguiente jugador.</li>
+            </ul>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">5. CARTAS ESPECIALES PLUS</h3>
+            <p>Cartas con fondo negro. Se pueden jugar sobre cualquier carta.</p>
+            <ul>
+                <li><span class="min-c mc-negro">C</span> <b>Cambio de Color:</b> Te permite elegir con qué color continuará el juego.</li>
+                <li><span class="min-c mc-negro">+4</span> <b>Más 4:</b> Obliga al siguiente jugador a robar 4 cartas (acumulable) y te permite cambiar el color de la mesa.</li>
+            </ul>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">6. CARTAS SUPREMAS</h3>
+            <p>Las cartas más destructivas y estratégicas del juego. Tienen reglas únicas:</p>
+            <ul>
+                <li><span class="min-c mc-negro" style="font-size:10px">+12</span> <b>Más 12:</b> Un castigo letal. El siguiente jugador roba 12 cartas. <i>Defensa:</i> El jugador atacado puede aceptar el castigo o usar el botón "BATIRSE A DUELO" para intentar salvarse (ver sección Duelos).</li>
+                <li><span class="min-c mc-negro" style="font-size:10px">SS</span> <b>Salteo Supremo:</b> Funciona como un +4, pero además <b>saltea los turnos de todos los demás jugadores</b> en la mesa, volviendo a ser tu turno de inmediato.</li>
+                <li><span class="min-c mc-negro" style="font-size:10px">🕊️</span> <b>Libre Albedrío:</b> Al jugarla, el juego se pausa. Eliges a un jugador para <b>regalarle</b> una de tus cartas, y luego eliges otra de tus cartas para <b>descartarla</b> en la mesa (ésta última define el color/número que sigue). <i>Requiere tener al menos 3 cartas en mano para usarse.</i></li>
+                <li><span class="min-c mc-rip">🪦</span> <b>R.I.P.:</b> Retas a un <b>Duelo a Muerte</b> al siguiente jugador. El perdedor del duelo queda "muerto" (eliminado de la ronda) pero sus cartas quedan en su mano para sumar puntos al ganador al final de la ronda.</li>
+                <li><span class="min-c mc-gra">❤️</span> <b>Gracia Divina:</b> La carta definitiva (color blanco). Tiene 3 usos: <b>1)</b> Anula instantáneamente cualquier castigo (+2, +4, +12) dirigido a ti. <b>2)</b> Si hay jugadores muertos, al tirarla puedes resucitar a uno. <b>3)</b> Si la usas de forma normal, actúa como un Cambio de Color. <i>Si es la última carta que juegas para ganar la ronda, te otorga un bono extra de 50 puntos.</i></li>
+            </ul>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">7. LOS DUELOS (⚔️)</h3>
+            <p>Existen dos tipos de duelo: por la carta <b>R.I.P.</b> y para defenderse de un <b>Castigo (+12 o Salteo Supremo)</b>.</p>
+            <p>Se resuelven con un sistema de piedra-papel-tijera elemental:</p>
+            <ul>
+                <li>🔥 <b>FUEGO</b> derrite al Hielo ❄️.</li>
+                <li>❄️ <b>HIELO</b> congela el Agua 💧.</li>
+                <li>💧 <b>AGUA</b> apaga el Fuego 🔥.</li>
+            </ul>
+            <p>El duelo se juega al mejor de 3 (el primero en ganar 2 rondas).<br>
+            - <b>Si el duelo es por RIP:</b> El perdedor muere y queda fuera de la ronda.<br>
+            - <b>Si el duelo es por Castigo:</b> Si gana el atacante, ¡el castigo aumenta en 4 cartas! Si gana el defensor, el ataque se refleja y el atacante debe robar las 4 cartas de la penalidad.</p>
+
+            <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">8. RECUENTO DE PUNTOS</h3>
+            <p>Al finalizar la ronda, el ganador suma los puntos de las cartas en las manos de todos los rivales (vivos o muertos):</p>
+            <ul>
+                <li><b>Cartas Numéricas (0-9):</b> Su valor facial (ej. un 5 vale 5 puntos).</li>
+                <li><b>Carta "1 y 1/2":</b> 1.5 puntos.</li>
+                <li><b>Especiales (+2, R, X):</b> 20 puntos.</li>
+                <li><b>Especiales Plus (Color, +4):</b> 40 puntos.</li>
+                <li><b>Supremas (+12, Salteo Supremo, Libre Albedrío):</b> 80 puntos.</li>
+                <li><b>R.I.P.:</b> 100 puntos.</li>
+                <li><b>Gracia Divina:</b> Quien gana jugando esta carta recibe +50 puntos de bono.</li>
             </ul>
         </div>
     </div>
@@ -1774,7 +1837,6 @@ app.get('/', (req, res) => {
         socket.on('roomCreated', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', (d) => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         
-        // CORRECCIÓN ANIMACIÓN CARTA VOLADORA
         socket.on('universalDiscardAnim', data => {
             const c = data.card;
             const el = document.createElement('div');
@@ -1790,16 +1852,14 @@ app.get('/', (req, res) => {
                 el.style.left = '50%';
                 el.style.transform = 'translate(-50%, 0)';
             } else {
-                // Viene de otro jugador: arranca fuera de la pantalla a la derecha
                 el.style.top = '40%';
                 el.style.bottom = 'auto';
-                el.style.left = '120%'; // Bien a la derecha
+                el.style.left = '120%'; 
                 el.style.transform = 'translate(-50%, -50%)';
             }
 
             document.body.appendChild(el);
             
-            // Forzamos el reflow para que el navegador procese el punto de inicio
             void el.offsetWidth;
 
             el.style.top = '50%';
@@ -1941,7 +2001,7 @@ app.get('/', (req, res) => {
                 }
             }
 
-            if(s.state === 'playing') {
+            if(s.state === 'playing' || s.state === 'libre_choosing') {
                 if(s.topCard) {
                     const tc = s.topCard; const el = document.getElementById('top-card'); el.style.backgroundColor = getBgColor(tc); el.style.border = (tc.value==='RIP'?'3px solid #666':(tc.value==='GRACIA'?'3px solid gold':'3px solid white')); el.innerText = getCardText(tc);
                     if(tc.value === '1 y 1/2') { el.style.fontSize = '20px'; el.style.padding = '0 5px'; } else { el.style.fontSize = '24px'; el.style.padding = '0'; }

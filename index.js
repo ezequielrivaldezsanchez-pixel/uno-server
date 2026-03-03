@@ -1043,7 +1043,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
             else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
             room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
             
-            io.to(roomId).emit('duelClash', { att, def });
+            io.to(roomId).emit('duelClash', { att, def, attName: room.duelState.attackerName, defName: room.duelState.defenderName, winner });
         }
         
         if (winner == 'attacker') room.duelState.scoreAttacker++; else if (winner == 'defender') room.duelState.scoreDefender++;
@@ -1476,9 +1476,29 @@ app.get('/', (req, res) => {
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
         
-        #duel-clash-zone { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 999999; display: flex; justify-content: center; align-items: center; gap: clamp(10px, 5vw, 50px); font-size: clamp(50px, 15vw, 100px); pointer-events: none; opacity: 0; width: 100%; white-space: nowrap; text-align: center; }
-        .clash-anim { animation: clashIn 1.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-        @keyframes clashIn { 0% { transform: translate(-50%, -50%) scale(0) translateX(-100px); opacity: 0; } 50% { transform: translate(-50%, -50%) scale(1.5) translateX(0); opacity: 1; } 80% { transform: translate(-50%, -50%) scale(1.2) translateX(0); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(0); opacity: 0; } }
+        /* NUEVO CSS ANIMACIONES DE DUELO */
+        #duel-clash-zone { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 999999; pointer-events: none; overflow: hidden; }
+        .clash-container { position: absolute; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; font-size: clamp(50px, 15vw, 120px); text-shadow: 0 0 30px rgba(255,255,255,0.8); }
+        .clash-name { font-size: clamp(14px, 4vw, 24px); font-weight: bold; color: white; text-shadow: 2px 2px 4px black; margin-top: 5px; background: rgba(0,0,0,0.8); padding: 5px 15px; border-radius: 10px; border: 2px solid gold; white-space: nowrap; }
+
+        .slide-left { animation: clashLeft 0.4s cubic-bezier(0.5, 0, 1, 1) forwards; }
+        .slide-right { animation: clashRight 0.4s cubic-bezier(0.5, 0, 1, 1) forwards; }
+        @keyframes clashLeft { 0% { left: -50%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { left: 45%; transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+        @keyframes clashRight { 0% { left: 150%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { left: 55%; transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+
+        .flash-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 999998; pointer-events: none; opacity: 0; animation: doFlash 0.3s ease-out; }
+        @keyframes doFlash { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+
+        .winner-anim { animation: winnerStay 1.5s ease-out forwards; z-index: 10; }
+        .loser-anim { animation: loserDie 0.4s forwards; }
+        .tie-anim-l { animation: tieBounceL 1s forwards; }
+        .tie-anim-r { animation: tieBounceR 1s forwards; }
+
+        @keyframes winnerStay { 0% { transform: translate(-50%, -50%) scale(1); left: 50%; } 20% { transform: translate(-50%, -50%) scale(1.3); left: 50%; } 80% { transform: translate(-50%, -50%) scale(1.3); left: 50%; opacity: 1; } 100% { transform: translate(-50%, -50%) scale(2); left: 50%; opacity: 0; } }
+        @keyframes loserDie { 0% { transform: translate(-50%, -50%) scale(1); filter: grayscale(0); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(0.5); filter: grayscale(1); opacity: 0; } }
+        @keyframes tieBounceL { 0% { left: 45%; transform: translate(-50%, -50%) scale(1); } 100% { left: -50%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } }
+        @keyframes tieBounceR { 0% { left: 55%; transform: translate(-50%, -50%) scale(1); } 100% { left: 150%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } }
+        /* FIN NUEVO CSS */
 
         input { padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:10px 0; z-index: 10;}
         .btn-main { padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer; margin: 10px; z-index: 10;}
@@ -1885,8 +1905,9 @@ app.get('/', (req, res) => {
             }, 400);
         });
 
+        // NUEVA FUNCIÓN CLIENTE PARA ANIMAR DUELOS
         socket.on('duelClash', data => {
-            const getEmoji = (w) => w==='fuego'?'🔥':(w==='hielo'?'❄️':(w==='agua'?'💧':'❔'));
+            const getEmoji = function(w) { return w==='fuego'?'🔥':(w==='hielo'?'❄️':(w==='agua'?'💧':'❔')); };
             const attE = getEmoji(data.att);
             const defE = getEmoji(data.def);
 
@@ -1896,10 +1917,38 @@ app.get('/', (req, res) => {
                 zone.id = 'duel-clash-zone';
                 document.body.appendChild(zone);
             }
-            zone.innerHTML = '<span>' + attE + '</span><span>💥</span><span>' + defE + '</span>';
-            zone.classList.remove('clash-anim');
-            void zone.offsetWidth; 
-            zone.classList.add('clash-anim');
+            zone.innerHTML = '';
+
+            const attDiv = document.createElement('div');
+            attDiv.className = 'clash-container slide-left';
+            attDiv.innerHTML = '<span>' + attE + '</span><div class="clash-name">' + data.attName + '</div>';
+
+            const defDiv = document.createElement('div');
+            defDiv.className = 'clash-container slide-right';
+            defDiv.innerHTML = '<span>' + defE + '</span><div class="clash-name">' + data.defName + '</div>';
+
+            zone.appendChild(attDiv);
+            zone.appendChild(defDiv);
+
+            setTimeout(function() {
+                const flash = document.createElement('div');
+                flash.className = 'flash-screen';
+                document.body.appendChild(flash);
+                setTimeout(function() { flash.remove(); }, 300);
+
+                if (data.winner === 'attacker') {
+                    attDiv.className = 'clash-container winner-anim';
+                    defDiv.className = 'clash-container loser-anim';
+                } else if (data.winner === 'defender') {
+                    defDiv.className = 'clash-container winner-anim';
+                    attDiv.className = 'clash-container loser-anim';
+                } else {
+                    attDiv.className = 'clash-container tie-anim-l';
+                    defDiv.className = 'clash-container tie-anim-r';
+                }
+
+                setTimeout(function() { zone.innerHTML = ''; }, 1500);
+            }, 400); 
         });
 
         socket.on('updateState', s => {

@@ -904,7 +904,6 @@ io.on('connection', (socket) => {
         if(p && p.hand.length === 1) { p.saidUno = true; io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`); io.to(roomId).emit('playSound', 'uno'); manageTimers(roomId); }
     }));
 
-    // CORRECCIÓN D: Rediseño completo del reporte de UNO para evitar transferencia masiva de castigos globales
     socket.on('reportUno', safe((targetId) => {
         const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; 
         if (room.gameState !== 'playing') { socket.emit('notification', '⛔ No puedes denunciar ahora.'); return; }
@@ -2216,7 +2215,7 @@ app.get('/', (req, res) => {
         // CORRECCIÓN B: Evento visual en el cliente cuando hay un milagro
         socket.on('playerRevived', data => {
             const b = document.getElementById('main-alert');
-            b.innerHTML = `✨ ¡MILAGRO! ✨<br>${data.savior} resucitó a ${data.revived}`;
+            b.innerHTML = '✨ ¡MILAGRO! ✨<br>' + data.savior + ' resucitó a ' + data.revived;
             b.style.display = 'block';
             b.style.background = 'white';
             b.style.color = 'gold';

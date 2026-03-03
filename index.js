@@ -530,9 +530,18 @@ io.on('connection', (socket) => {
 
         if(data.confirmed && deadPlayers.length === 1) {
              const target = deadPlayers[0]; target.isDead = false; target.isSpectator = false;
-             io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name }); io.to(roomId).emit('playSound', 'divine');
+             io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name }); 
+             io.to(roomId).emit('playSound', 'divine');
              
              if (data.chosenColor) room.activeColor = data.chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
+             
+             // CORRECCIÓN B: Extracción física de la carta de la mano y envío al pozo
+             if (cardIndex !== -1) {
+                 player.hand.splice(cardIndex, 1);
+                 room.discardPile.push(card);
+                 io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });
+             }
+             
              if (player.hand.length === 0) { 
                  room.gameState = 'animating_win'; updateAll(roomId); 
                  setTimeout(() => calculateAndFinishRound(roomId, player), 1000); return; 
@@ -549,7 +558,6 @@ io.on('connection', (socket) => {
         
         if (room.gameState !== 'playing' && room.gameState !== 'penalty_decision' && room.gameState !== 'libre_choosing') return;
         
-        // CORRECCIÓN: BLOQUEO ABSOLUTO PARA OTROS JUGADORES DURANTE LIBRE ALBEDRÍO
         if (room.gameState === 'libre_choosing' && !libreContext) {
             socket.emit('notification', '⏳ Acción bloqueada. Un jugador está resolviendo Libre Albedrío.');
             return;
@@ -563,11 +571,22 @@ io.on('connection', (socket) => {
             return;
         }
 
+        // CORRECCIÓN A: Reordenamiento de variables para evitar crasheo por "Temporal Dead Zone"
+        let cardIndex = player.hand.findIndex(c => c.id === cardId); 
+        let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
+
+        if (!card && reviveTargetId) {
+             const topAux = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null; 
+             if(topAux && topAux.value === 'GRACIA') card = topAux;
+        }
+        
+        if (!card) return;
+
         let isLibreDiscard = false;
 
         if (libreContext) {
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
-            const target = room.players.find(p => p.id === libreContext.targetId);
+            const target = room.players.find(p => p.uuid === libreContext.targetId); // CORRECCIÓN A: Match exacto por UUID
             if (gIdx === -1 || !target) return;
 
             room.gameState = 'playing'; // Restauramos el estado del juego
@@ -594,13 +613,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        let cardIndex = player.hand.findIndex(c => c.id === cardId); 
-        let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
-        if (!card && reviveTargetId) {
-             const topAux = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null; 
-             if(topAux && topAux.value === 'GRACIA') card = topAux;
-        }
-        if (!card) return;
         const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { value: '0', color: 'rojo' };
 
         if (room.gameState === 'penalty_decision') {
@@ -892,6 +904,7 @@ io.on('connection', (socket) => {
         if(p && p.hand.length === 1) { p.saidUno = true; io.to(roomId).emit('notification', `📢 ¡${p.name} gritó "UNO y 1/2"!`); io.to(roomId).emit('playSound', 'uno'); manageTimers(roomId); }
     }));
 
+    // CORRECCIÓN D: Rediseño completo del reporte de UNO para evitar transferencia masiva de castigos globales
     socket.on('reportUno', safe((targetId) => {
         const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; 
         if (room.gameState !== 'playing') { socket.emit('notification', '⛔ No puedes denunciar ahora.'); return; }
@@ -906,12 +919,11 @@ io.on('connection', (socket) => {
         if (timeDiff < 2000) { socket.emit('notification', '¡Espera! Tiene tiempo de gracia (2s).'); return; }
         
         target.saidUno = true; 
-        room.resumeTurnFrom = room.currentTurn;
-        room.currentTurn = room.players.indexOf(target);
-        room.pendingPenalty += 2;
-        room.interruptedTurn = true;
         
-        io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Debe recoger 2 cartas de castigo.`); updateAll(roomId);
+        drawCards(roomId, room.players.indexOf(target), 2);
+        io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Recibe 2 cartas al instante.`); 
+        io.to(roomId).emit('playSound', 'attack');
+        updateAll(roomId);
     }));
 
     socket.on('sendChat', safe((text) => { 
@@ -1701,7 +1713,7 @@ app.get('/', (req, res) => {
     
     <div id="color-picker" class="floating-window"><h3>Elige Color</h3><div style="display:flex; flex-wrap:wrap; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div></div>
     <div id="revive-screen" class="floating-window"><h2 style="color:gold;">¿A QUIÉN REVIVES?</h2><div id="zombie-list"></div></div>
-    <div id="grace-color-modal" class="floating-window"><h2 style="color:gold;">❤️ GRACIA DIVINA ❤️</h2><p>¿Quieres usarla como cambio de color?</p><button class="btn-main" onclick="confirmGraceColor(true)">SÍ</button><button class="btn-main" onclick="confirmGraceColor(false)" style="background:#e74c3c">CANCELAR</button></div>
+    
     <div id="revive-confirm-screen" class="floating-window"><h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2><button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button><button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button></div>
     <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:250000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
 
@@ -1799,7 +1811,7 @@ app.get('/', (req, res) => {
             document.getElementById('action-bar').style.display = 'none'; libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
             document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1); const div = document.getElementById('libre-targets'); div.innerHTML = '';
             currentPlayers.forEach(p => {
-                if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) { const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name; b.onclick = () => { libreState.targetId = p.id; showLibreStep(2); renderGiftHand(); }; div.appendChild(b); }
+                if(p.uuid !== myUUID && !p.isSpectator && !p.isDead && !p.hasLeft) { const b = document.createElement('button'); b.className = 'btn-main'; b.style.width = '100%'; b.innerText = p.name; b.onclick = () => { libreState.targetId = p.uuid; showLibreStep(2); renderGiftHand(); }; div.appendChild(b); }
             });
         }
         socket.on('startLibreLogic', startLibreLogic);
@@ -2026,7 +2038,6 @@ app.get('/', (req, res) => {
             if(document.body.classList.contains('state-dueling') || document.body.classList.contains('state-rip')) return;
             const hz = document.getElementById('hand-zone'); hz.innerHTML = '';
             let displayHand = myHand; const newCardsCount = Math.max(0, myHand.length - oldLen); const startAnimIdx = myHand.length - newCardsCount;
-            const hasGrace = myHand.some(c=>c.value==='GRACIA'); document.getElementById('grace-btn').style.display = hasGrace ? 'block':'none';
             
             displayHand.forEach((c, index) => {
                 const d = document.createElement('div'); d.className = 'hand-card'; if(ladderSelected.includes(c.id)) d.classList.add('selected-ladder');
@@ -2072,7 +2083,10 @@ app.get('/', (req, res) => {
             if(c.value === 'GRACIA') {
                 const hasZombies = currentPlayers.some(p => p.isDead); const isDecisionPhase = (document.body.classList.contains('state-rip'));
                 if(isDecisionPhase) { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; return; }
-                if(!hasZombies && !hasPenalty) { showGraceModal(); pendingCard = c.id; return; }
+                if(!hasZombies && !hasPenalty) {
+                    // CORRECCIÓN C: Directo al color picker
+                    pendingCard = c.id; document.getElementById('color-picker').style.display='flex'; return;
+                }
             }
             
             if(c.color==='negro' && c.value!=='GRACIA') { 
@@ -2087,13 +2101,6 @@ app.get('/', (req, res) => {
             }
         }
 
-        function showGraceModal() { document.getElementById('grace-color-modal').style.display = 'flex'; }
-        function confirmGraceColor(confirmed) { 
-            document.getElementById('grace-color-modal').style.display = 'none'; 
-            if (confirmed) { pendingColorForRevive = null; pendingGrace = false; document.getElementById('color-picker').style.display='flex'; } 
-            else { socket.emit('playCard', pendingCard, null, null, pendingLibreContext); pendingLibreContext = null; pendingCard = null; } 
-        }
-        
         function submitLadder() { 
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if(hasPenalty) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); cancelLadder(); return; }
@@ -2154,7 +2161,7 @@ app.get('/', (req, res) => {
 
         function pickCol(c){ 
             document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; 
-            if(pendingGrace) { socket.emit('playGraceDefense',c); } else { socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null; }
+            socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null;
         }
         function ripResp(d){ socket.emit('ripDecision',d); } function pick(c){ socket.emit('duelPick',c); }
         
@@ -2205,6 +2212,18 @@ app.get('/', (req, res) => {
         
         socket.on('notification',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
         socket.on('showDivine',m=>{const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
+        
+        // CORRECCIÓN B: Evento visual en el cliente cuando hay un milagro
+        socket.on('playerRevived', data => {
+            const b = document.getElementById('main-alert');
+            b.innerHTML = `✨ ¡MILAGRO! ✨<br>${data.savior} resucitó a ${data.revived}`;
+            b.style.display = 'block';
+            b.style.background = 'white';
+            b.style.color = 'gold';
+            b.style.border = '4px solid gold';
+            setTimeout(() => { b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white'; b.style.border='2px solid gold'; }, 5000);
+        });
+        
         socket.on('cardPlayedEffect', d => { if(d.color) document.body.className = 'bg-' + d.color; });
         
         socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
@@ -2272,10 +2291,3 @@ app.get('/', (req, res) => {
     </script>
 </body>
 </html>
-    `);
-});
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});

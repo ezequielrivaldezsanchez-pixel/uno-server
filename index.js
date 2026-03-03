@@ -1058,7 +1058,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
         io.to(roomId).emit('playSound', 'soft');
         
         if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
-            setTimeout(() => finalizeDuel(roomId), 2000); 
+            setTimeout(() => finalizeDuel(roomId), 3000); 
         } else { 
             setTimeout(() => { 
                 try {
@@ -1068,7 +1068,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
                         updateAll(roomId); 
                     } 
                 } catch(e){}
-            }, 3000); 
+            }, 4000); 
         }
         updateAll(roomId); 
     } catch (e) { console.error("Error en resolveDuelRound:", e); }
@@ -1476,17 +1476,17 @@ app.get('/', (req, res) => {
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
         
-        /* NUEVO CSS ANIMACIONES DE DUELO */
+        /* CSS ANIMACIONES DE DUELO + 1 SEGUNDO EN TOTAL */
         #duel-clash-zone { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 999999; pointer-events: none; overflow: hidden; }
         .clash-container { position: absolute; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; font-size: clamp(50px, 15vw, 120px); text-shadow: 0 0 30px rgba(255,255,255,0.8); }
         .clash-name { font-size: clamp(14px, 4vw, 24px); font-weight: bold; color: white; text-shadow: 2px 2px 4px black; margin-top: 5px; background: rgba(0,0,0,0.8); padding: 5px 15px; border-radius: 10px; border: 2px solid gold; white-space: nowrap; }
 
-        .slide-left { animation: clashLeft 0.4s cubic-bezier(0.5, 0, 1, 1) forwards; }
-        .slide-right { animation: clashRight 0.4s cubic-bezier(0.5, 0, 1, 1) forwards; }
+        .slide-left { animation: clashLeft 0.8s cubic-bezier(0.5, 0, 1, 1) forwards; }
+        .slide-right { animation: clashRight 0.8s cubic-bezier(0.5, 0, 1, 1) forwards; }
         @keyframes clashLeft { 0% { left: -50%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { left: 45%; transform: translate(-50%, -50%) scale(1); opacity: 1; } }
         @keyframes clashRight { 0% { left: 150%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } 100% { left: 55%; transform: translate(-50%, -50%) scale(1); opacity: 1; } }
 
-        .flash-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 999998; pointer-events: none; opacity: 0; animation: doFlash 0.3s ease-out; }
+        .flash-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 999998; pointer-events: none; opacity: 0; animation: doFlash 0.6s ease-out; }
         @keyframes doFlash { 0% { opacity: 0.9; } 100% { opacity: 0; } }
 
         .winner-anim { animation: winnerStay 1.5s ease-out forwards; z-index: 10; }
@@ -1498,7 +1498,7 @@ app.get('/', (req, res) => {
         @keyframes loserDie { 0% { transform: translate(-50%, -50%) scale(1); filter: grayscale(0); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(0.5); filter: grayscale(1); opacity: 0; } }
         @keyframes tieBounceL { 0% { left: 45%; transform: translate(-50%, -50%) scale(1); } 100% { left: -50%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } }
         @keyframes tieBounceR { 0% { left: 55%; transform: translate(-50%, -50%) scale(1); } 100% { left: 150%; transform: translate(-50%, -50%) scale(0.5); opacity: 0; } }
-        /* FIN NUEVO CSS */
+        /* FIN CSS DUELOS */
 
         input { padding:15px; font-size:20px; text-align:center; width:80%; max-width:300px; border-radius:30px; border:none; margin:10px 0; z-index: 10;}
         .btn-main { padding:15px 40px; background:#27ae60; color:white; border:none; border-radius:30px; font-size:20px; cursor:pointer; margin: 10px; z-index: 10;}
@@ -1886,7 +1886,7 @@ app.get('/', (req, res) => {
                 el.style.top = '40%';
                 el.style.bottom = 'auto';
                 el.style.left = '120%'; 
-                el.style.transform = 'translate(-50%, -50%)';
+                el.style.transform = 'translate(-50%, -50%';
             }
 
             document.body.appendChild(el);
@@ -1905,7 +1905,7 @@ app.get('/', (req, res) => {
             }, 400);
         });
 
-        // NUEVA FUNCIÓN CLIENTE PARA ANIMAR DUELOS
+        // FUNCIÓN ANIMACIÓN DUELOS (TIEMPOS EXTENDIDOS)
         socket.on('duelClash', data => {
             const getEmoji = function(w) { return w==='fuego'?'🔥':(w==='hielo'?'❄️':(w==='agua'?'💧':'❔')); };
             const attE = getEmoji(data.att);
@@ -1930,11 +1930,13 @@ app.get('/', (req, res) => {
             zone.appendChild(attDiv);
             zone.appendChild(defDiv);
 
+            // Se esperan 800ms para el choque (antes 400ms)
             setTimeout(function() {
                 const flash = document.createElement('div');
                 flash.className = 'flash-screen';
                 document.body.appendChild(flash);
-                setTimeout(function() { flash.remove(); }, 300);
+                // El flash dura 600ms (antes 300ms)
+                setTimeout(function() { flash.remove(); }, 600); 
 
                 if (data.winner === 'attacker') {
                     attDiv.className = 'clash-container winner-anim';
@@ -1947,8 +1949,9 @@ app.get('/', (req, res) => {
                     defDiv.className = 'clash-container tie-anim-r';
                 }
 
-                setTimeout(function() { zone.innerHTML = ''; }, 1500);
-            }, 400); 
+                // Limpieza a los 2200ms después del choque
+                setTimeout(function() { zone.innerHTML = ''; }, 2200);
+            }, 800); 
         });
 
         socket.on('updateState', s => {

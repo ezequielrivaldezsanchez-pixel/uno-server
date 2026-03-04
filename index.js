@@ -156,6 +156,7 @@ function forceKickAFK(roomId, uuid) {
         } else {
             if (room.currentTurn === pIndex) {
                 room.pendingPenalty = 0; room.pendingSkip = 0;
+                if (room.gameState === 'libre_choosing') room.gameState = 'playing';
                 advanceTurn(roomId, 1);
             }
             io.to(roomId).emit('gamePaused', { message: msg, duration: 4000 });
@@ -222,7 +223,7 @@ function manageTimers(roomId) {
         return; 
     }
 
-    if (room.gameState === 'playing' && getAlivePlayersCount(roomId) > 1) {
+    if ((room.gameState === 'playing' || room.gameState === 'libre_choosing') && getAlivePlayersCount(roomId) > 1) {
         const currentPlayer = room.players[room.currentTurn];
         if (currentPlayer && !currentPlayer.isDead && !currentPlayer.isSpectator && !currentPlayer.hasLeft) {
             room.timerEndsAt = null; 
@@ -1826,7 +1827,6 @@ app.get('/', (req, res) => {
         
         let libreState = { active: false, cardId: null, targetId: null, giftId: null, discardId: null };
         function startLibreLogic(cardId) {
-            if(myHand.length < 3) return; 
             document.getElementById('action-bar').style.display = 'none'; libreState = { active: true, cardId: cardId, targetId: null, giftId: null, discardId: null };
             document.getElementById('libre-modal').style.display = 'flex'; showLibreStep(1); const div = document.getElementById('libre-targets'); div.innerHTML = '';
             currentPlayers.forEach(p => {
@@ -1905,7 +1905,6 @@ app.get('/', (req, res) => {
             }, 400);
         });
 
-        // FUNCIÓN ANIMACIÓN DUELOS (TIEMPOS EXTENDIDOS)
         socket.on('duelClash', data => {
             const getEmoji = function(w) { return w==='fuego'?'🔥':(w==='hielo'?'❄️':(w==='agua'?'💧':'❔')); };
             const attE = getEmoji(data.att);
@@ -1930,12 +1929,10 @@ app.get('/', (req, res) => {
             zone.appendChild(attDiv);
             zone.appendChild(defDiv);
 
-            // Se esperan 800ms para el choque (antes 400ms)
             setTimeout(function() {
                 const flash = document.createElement('div');
                 flash.className = 'flash-screen';
                 document.body.appendChild(flash);
-                // El flash dura 600ms (antes 300ms)
                 setTimeout(function() { flash.remove(); }, 600); 
 
                 if (data.winner === 'attacker') {
@@ -1949,7 +1946,6 @@ app.get('/', (req, res) => {
                     defDiv.className = 'clash-container tie-anim-r';
                 }
 
-                // Limpieza a los 2200ms después del choque
                 setTimeout(function() { zone.innerHTML = ''; }, 2200);
             }, 800); 
         });

@@ -526,6 +526,20 @@ io.on('connection', (socket) => {
     });
 });
 
+// --- HELPERS (LAS 3 FUNCIONES QUE HABÍA BORRADO POR ERROR) ---
+function createPlayerObj(socketId, uuid, name, isAdmin) {
+    return { id: socketId, uuid, name: name.substring(0, 12), hand: [], hasDrawn: false, isSpectator: false, isDead: false, isAdmin, isConnected: true, saidUno: false, lastOneCardTime: 0, missedTurns: 0, hasLeft: false };
+}
+
+function checkUnoCheck(roomId, player) {
+    if (player.hand.length === 1) { player.lastOneCardTime = Date.now(); player.saidUno = false; } 
+    else { player.saidUno = false; player.lastOneCardTime = 0; }
+}
+
+function removeCards(player, ids) {
+    ids.forEach(id => { const idx = player.hand.findIndex(c => c.id === id); if(idx !== -1) player.hand.splice(idx, 1); });
+}
+
 function applyCardEffect(roomId, player, card, chosenColor) {
     const room = rooms[roomId]; let steps = 1;
     if (card.value === 'R') { if (getAlivePlayersCount(roomId) === 2) steps = 2; else room.direction *= -1; }
@@ -830,18 +844,21 @@ function updateAll(roomId) {
 <body>
     <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
+    
     <div id="login" class="screen" style="display:flex;">
         <h1 class="logo-title">UNO y 1/2</h1>
         <input id="my-name" type="text" placeholder="Tu Nombre" maxlength="15" onfocus="playUI()">
         <button id="btn-create" class="btn-main" onclick="playUI(); showCreate()">Crear Sala</button>
         <button id="btn-join-menu" class="btn-main" onclick="playUI(); showJoin()" style="background:#2980b9">Unirse a Sala</button>
     </div>
+    
     <div id="join-menu" class="screen">
         <h1 class="logo-title">Unirse</h1>
         <input id="room-code" type="text" placeholder="Código" style="text-transform:uppercase;" onfocus="playUI()">
         <button class="btn-main" onclick="playUI(); joinRoom()">Entrar</button>
         <button class="btn-main" onclick="playUI(); backToLogin()">Volver</button>
     </div>
+    
     <div id="lobby" class="screen">
         <button onclick="playUI(); toggleManual()" style="position: absolute; top: 10px; right: 10px; background: #8e44ad; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; z-index: 10;">📖 MANUAL</button>
         <h1 class="logo-title" style="font-size: 40px;">Sala: <span id="lobby-code" style="color:gold;"></span></h1>
@@ -850,19 +867,24 @@ function updateAll(roomId) {
         <button id="start-btn" onclick="playUI(); start()" class="btn-main" style="display:none; background:#2ecc71; border:2px solid white;">EMPEZAR</button>
         <p id="wait-msg" style="display:none; z-index: 10;">Esperando...</p>
     </div>
+    
     <div id="game-area">
         <div id="players-zone"></div>
         <div id="table-zone"><div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">📦</div><div id="top-card" class="card-pile"></div></div></div>
     </div>
+    
     <div id="global-leave-btn" class="hud-btn" onclick="requestLeave()" title="Abandonar Partida">🚪</div>
     <div id="rules-btn" class="hud-btn" onclick="toggleManual()">📖</div><div id="score-btn" class="hud-btn" onclick="toggleScores()">🏆</div>
     <div id="chat-btn" class="hud-btn" onclick="toggleChat()">💬<div id="chat-badge">0</div></div>
     <div id="uno-main-btn" class="hud-btn" onclick="toggleUnoMenu()">UNO<br>y 1/2</div>
+    
     <div id="round-start-banner"><h1 id="rsb-round" style="color: gold; font-size: 50px; margin: 0; text-shadow: 2px 2px 5px black;">RONDA 1</h1><h2 id="rsb-starter" style="font-size: 24px; margin-top: 10px;">Comienza Fulanito</h2></div>
+    
     <div id="alert-zone">
         <div id="penalty-display">⚠️ DEBES RECOGER <span id="pen-num">0</span> CARTAS<br><small style="color:white; font-size:14px; font-weight:normal;">(Toca el mazo rojo para robar)</small></div>
         <div id="main-alert" class="alert-box"></div>
     </div>
+    
     <div id="action-bar">
         <div id="uno-btn-area">
             <button id="btn-sort" onclick="requestSort()">ORDENAR</button>
@@ -871,6 +893,7 @@ function updateAll(roomId) {
             <button id="btn-ladder-cancel" onclick="cancelLadder()">CANCELAR</button>
         </div>
     </div>
+    
     <div id="uno-menu">
         <div id="uno-main-opts">
             <button class="btn-main" style="width:100%; font-size:14px; padding:10px; margin:2px; background:#e67e22;" onclick="trySayUno()">📢 ANUNCIAR</button>
@@ -882,7 +905,9 @@ function updateAll(roomId) {
             <button class="btn-main" style="width:100%; font-size:12px; padding:8px; margin:5px 0 0 0; background:#c0392b;" onclick="closeDenounceList()">VOLVER</button>
         </div>
     </div>
+    
     <div id="hand-zone"></div>
+    
     <div id="chat-win">
         <div style="text-align:right; padding:5px; border-bottom:1px solid #444;"><span style="cursor:pointer;" onclick="toggleChat()">X</span></div>
         <div id="chat-msgs" style="flex:1; overflow-y:auto; padding:10px; font-size:12px; color:#ddd;"></div>
@@ -891,6 +916,7 @@ function updateAll(roomId) {
             <button onclick="sendChat()" style="background:#2980b9; color:white; border:none; padding:0 15px; cursor:pointer;">></button>
         </div>
     </div>
+    
     <div id="score-modal" class="floating-window"><div class="modal-close" onclick="toggleScores()">X</div><h2 style="color:gold;">PUNTAJES</h2><div id="score-list" style="text-align:left; color:white; font-size:16px;"></div></div>
     
     <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 900px; max-height: 90vh; text-align: left;">
@@ -904,16 +930,21 @@ function updateAll(roomId) {
         <h1 style="color:white; font-size:40px; margin:10px 0;">¿ESTÁS AHÍ?</h1><p style="font-size:18px;">Tu turno está a punto de caducar.</p>
         <button class="btn-main" style="background:#27ae60; width:100%; box-shadow: 0 0 15px white;" onclick="imHere()">¡ESTOY JUGANDO!</button>
     </div>
+    
     <div id="leave-normal-modal" class="floating-window">
         <h2 style="color:gold;">¿Abandonar?</h2><button class="btn-main" onclick="confirmLeave('leave_normal')" style="background:#e74c3c;">SÍ, ABANDONAR</button><button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
+    
     <div id="leave-admin-modal" class="floating-window">
         <h2 style="color:gold;">¿Abandonar Partida?</h2><button class="btn-main" onclick="confirmLeave('leave_host_keep')" style="background:#f39c12;">IRME Y DEJARLOS JUGANDO</button><button class="btn-main" onclick="confirmLeave('leave_host_end')" style="background:#e74c3c;">FINALIZAR PARA TODOS</button><button class="btn-main" onclick="forceCloseModals()" style="background:#34495e;">CANCELAR</button>
     </div>
+    
     <div id="game-over-screen" class="screen"><h1 style="color:gold;">VICTORIA SUPREMA</h1><h2 id="winner-name"></h2></div>
+    
     <div id="pause-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; justify-content:center; align-items:center; flex-direction:column; color:white;">
         <h1 style="color:gold; font-size:50px;">⏸️ PAUSA</h1><h2 id="pause-msg"></h2>
     </div>
+    
     <div id="round-overlay">
         <div id="stage-collection" class="round-stage active-stage">
             <h2 style="color: #2ecc71;">GANADOR DE LA RONDA</h2><h1 id="r-winner-name" style="color: gold; font-size: 40px; margin-bottom: 10px;"></h1><h3 id="r-winner-pts" style="color: white; border: 2px solid gold; padding: 10px 20px; border-radius: 10px; background: rgba(0,0,0,0.5);">0 pts</h3>
@@ -921,6 +952,7 @@ function updateAll(roomId) {
         </div>
         <div id="stage-ranking" class="round-stage"><h1 style="color:gold; font-size: 40px;">RANKING</h1><div id="ranking-list" style="width: 100%; display: flex; flex-direction: column; align-items: center;"></div></div>
     </div>
+    
     <div id="rip-screen" class="screen">
         <h1 style="color:red;" id="rip-title">💀 RIP 💀</h1><h3 id="rip-msg-custom" style="text-align:center; padding:10px;"></h3>
         <div id="decision-timer" style="font-size: 60px; color: #e74c3c; font-weight: bold; margin: 5px 0;">15</div>
@@ -929,6 +961,7 @@ function updateAll(roomId) {
         <button id="btn-surrender" onclick="ripResp('surrender')" class="btn-main">RENDIRSE</button>
         <p id="duel-warning" style="font-size:12px; color:#aaa; display:none;">Batirse a duelo y perder implica una penalidad extra.</p>
     </div>
+    
     <div id="duel-screen" class="screen">
         <h1 style="color:gold;">⚔️ DUELO ⚔️</h1><div id="duel-timer" style="font-size: 40px; color: #e74c3c; font-weight: bold;">15</div>
         <h3 id="duel-narrative">Cargando duelo...</h3><h2 id="duel-names">... vs ...</h2><h3 id="duel-sc">0 - 0</h3><p id="duel-turn-msg"></p>
@@ -936,6 +969,7 @@ function updateAll(roomId) {
             <button id="btn-fuego" class="duel-btn" onclick="pick('fuego')">🔥</button><button id="btn-hielo" class="duel-btn" onclick="pick('hielo')">❄️</button><button id="btn-agua" class="duel-btn" onclick="pick('agua')">💧</button>
         </div>
     </div>
+    
     <div id="color-picker" class="floating-window"><h3>Elige Color</h3><div style="display:flex; justify-content:center;"><div class="color-circle" style="background:#ff5252;" onclick="pickCol('rojo')"></div><div class="color-circle" style="background:#448aff;" onclick="pickCol('azul')"></div><div class="color-circle" style="background:#69f0ae;" onclick="pickCol('verde')"></div><div class="color-circle" style="background:#ffd740;" onclick="pickCol('amarillo')"></div></div></div>
     <div id="revive-confirm-screen" class="floating-window"><h2 style="color:gold;">¿RESUCITAR A <span id="revive-name"></span>?</h2><button class="btn-main" onclick="confirmRevive(true)">SÍ, REVIVIR</button><button class="btn-main" onclick="confirmRevive(false)" style="background:#e74c3c">NO</button></div>
     <div id="countdown" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:250000; justify-content:center; align-items:center; font-size:120px; color:gold;">3</div>
@@ -1008,16 +1042,45 @@ function updateAll(roomId) {
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
 
-        function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
-        function showJoin() { changeScreen('join-menu'); } function backToLogin() { changeScreen('login'); }
-        function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
+        // --- LAS FUNCIONES FALTANTES Y LA ALERTA PARA EL NOMBRE ESTÁN ACÁ ---
+        function showCreate() { 
+            const name = document.getElementById('my-name').value.trim(); 
+            if(!name) { alert("⚠️ Por favor, escribe tu nombre primero."); return; }
+            socket.emit('createRoom', { name, uuid: myUUID }); 
+        }
+        function showJoin() { changeScreen('join-menu'); } 
+        function backToLogin() { changeScreen('login'); }
+        function joinRoom() { 
+            const name = document.getElementById('my-name').value.trim(); 
+            const code = document.getElementById('room-code').value.trim(); 
+            if(!name) { alert("⚠️ Por favor, escribe tu nombre primero."); return; }
+            if(!code) { alert("⚠️ Escribe el código de la sala."); return; }
+            socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); 
+        }
         function copyLink() { const url = window.location.origin + '/?room=' + document.getElementById('lobby-code').innerText; navigator.clipboard ? navigator.clipboard.writeText(url) : prompt("Copia:", url); }
         function kick(id) { if(confirm('Echar?')) socket.emit('kickPlayer', id); }
+
+        // --- RESTAURADA LECTURA DE LINK ---
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteCode = urlParams.get('room');
+        if (inviteCode) { 
+            document.getElementById('room-code').value = inviteCode; 
+            document.getElementById('btn-create').style.display = 'none'; 
+            document.getElementById('btn-join-menu').innerText = "ENTRAR A SALA " + inviteCode; 
+            document.getElementById('btn-join-menu').onclick = joinRoom; 
+        }
+
+        // --- RESTAURADO SISTEMA ANTI-AFK INTERNO ---
+        let lastInteractionTime = Date.now();
+        function reportActivity() {
+            const now = Date.now();
+            if (now - lastInteractionTime > 5000) { lastInteractionTime = now; if (document.body.classList.contains('playing-state')) { socket.emit('imHere'); } }
+        }
+        document.addEventListener('mousemove', reportActivity); document.addEventListener('touchstart', reportActivity); document.addEventListener('click', reportActivity); document.addEventListener('keydown', reportActivity);
 
         socket.on('roomCreated', d => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', d => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
 
-        // CHAT, CUENTA REGRESIVA Y ANIMACIONES SIN COMILLAS INVERTIDAS
         socket.on('chatHistory', msgs => { const c = document.getElementById('chat-msgs'); c.innerHTML = msgs.map(m => '<b>' + m.name + ':</b> ' + m.text).join('<br>'); c.scrollTop = c.scrollHeight; });
         socket.on('chatMessage', m => { const c = document.getElementById('chat-msgs'); c.innerHTML += '<br><b>' + m.name + ':</b> ' + m.text; c.scrollTop = c.scrollHeight; if(document.getElementById('chat-win').style.display !== 'flex') { unreadCount++; document.getElementById('chat-badge').innerText = unreadCount; document.getElementById('chat-badge').style.display = 'flex'; } });
         

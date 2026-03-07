@@ -1017,9 +1017,9 @@ function updateAll(roomId) {
         socket.on('roomCreated', d => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
         socket.on('roomJoined', d => { changeScreen('lobby'); document.getElementById('lobby-code').innerText = d.roomId; });
 
-        // --- SISTEMA RESTAURADO: CHAT, CUENTA REGRESIVA Y ANIMACIONES ---
-        socket.on('chatHistory', msgs => { const c = document.getElementById('chat-msgs'); c.innerHTML = msgs.map(m => `<b>${m.name}:</b> ${m.text}`).join('<br>'); c.scrollTop = c.scrollHeight; });
-        socket.on('chatMessage', m => { const c = document.getElementById('chat-msgs'); c.innerHTML += `<br><b>${m.name}:</b> ${m.text}`; c.scrollTop = c.scrollHeight; if(document.getElementById('chat-win').style.display !== 'flex') { unreadCount++; document.getElementById('chat-badge').innerText = unreadCount; document.getElementById('chat-badge').style.display = 'flex'; } });
+        // CHAT, CUENTA REGRESIVA Y ANIMACIONES SIN COMILLAS INVERTIDAS
+        socket.on('chatHistory', msgs => { const c = document.getElementById('chat-msgs'); c.innerHTML = msgs.map(m => '<b>' + m.name + ':</b> ' + m.text).join('<br>'); c.scrollTop = c.scrollHeight; });
+        socket.on('chatMessage', m => { const c = document.getElementById('chat-msgs'); c.innerHTML += '<br><b>' + m.name + ':</b> ' + m.text; c.scrollTop = c.scrollHeight; if(document.getElementById('chat-win').style.display !== 'flex') { unreadCount++; document.getElementById('chat-badge').innerText = unreadCount; document.getElementById('chat-badge').style.display = 'flex'; } });
         
         socket.on('countdownTick', num => { const c = document.getElementById('countdown'); if(num > 0) { c.style.display = 'flex'; c.innerText = num; } else { c.style.display = 'none'; } });
         socket.on('roundStarted', data => { document.getElementById('countdown').style.display = 'none'; const banner = document.getElementById('round-start-banner'); document.getElementById('rsb-round').innerText = 'RONDA ' + data.round; document.getElementById('rsb-starter').innerText = 'Comienza ' + data.starterName; banner.style.display = 'flex'; setTimeout(()=>banner.classList.add('show'), 10); setTimeout(()=>{ banner.classList.remove('show'); setTimeout(()=>banner.style.display='none', 500); }, 3000); });
@@ -1027,11 +1027,11 @@ function updateAll(roomId) {
         socket.on('roundOver', data => {
             forceCloseModals(); document.getElementById('game-area').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';
             document.getElementById('r-winner-name').innerText = data.winner; document.getElementById('r-winner-pts').innerText = '+' + data.roundPoints + ' pts';
-            document.getElementById('losers-area').innerHTML = data.losersDetails.map(l => `<div style="font-size:18px;">${l.name}: <span style="color:red;">-${l.points}</span></div>`).join('');
+            document.getElementById('losers-area').innerHTML = data.losersDetails.map(l => '<div style="font-size:18px;">' + l.name + ': <span style="color:red;">-' + l.points + '</span></div>').join('');
             document.querySelectorAll('.round-stage').forEach(el => el.classList.remove('active-stage')); document.getElementById('stage-collection').classList.add('active-stage');
             setTimeout(() => {
                 document.querySelectorAll('.round-stage').forEach(el => el.classList.remove('active-stage')); document.getElementById('stage-ranking').classList.add('active-stage');
-                document.getElementById('ranking-list').innerHTML = data.leaderboard.map((u, i) => `<div class="rank-row ${i===0?'rank-gold':''}"><span style="font-weight:bold;">${i+1}. ${u.name}</span><span style="color:gold; font-weight:bold;">${u.score} pts</span></div>`).join('');
+                document.getElementById('ranking-list').innerHTML = data.leaderboard.map((u, i) => '<div class="rank-row ' + (i===0?'rank-gold':'') + '"><span style="font-weight:bold;">' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + u.score + ' pts</span></div>').join('');
                 setTimeout(() => { document.querySelectorAll('.rank-row').forEach((row, idx) => { setTimeout(() => row.classList.add('visible'), idx * 300); }); }, 100);
             }, 4000);
         });
@@ -1062,7 +1062,7 @@ function updateAll(roomId) {
         socket.on('updateState', s => {
             document.getElementById('afk-modal').style.display = 'none'; currentPlayers = s.players;
             if(s.state === 'waiting' || s.state === 'playing') { document.getElementById('global-leave-btn').style.display = 'flex'; if(s.roomId) document.getElementById('lobby-code').innerText = s.roomId; } else { document.getElementById('global-leave-btn').style.display = 'none'; }
-            if(s.leaderboard) document.getElementById('score-list').innerHTML = s.leaderboard.map((u, i) => `<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>${i+1}. ${u.name}</span><span style="color:gold; font-weight:bold;">${u.score}</span></div>`).join('');
+            if(s.leaderboard) document.getElementById('score-list').innerHTML = s.leaderboard.map((u, i) => '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + u.score + '</span></div>').join('');
             if (clientTimerInterval) { clearInterval(clientTimerInterval); clientTimerInterval = null; }
             document.querySelectorAll('#decision-timer, #duel-timer').forEach(el => el.innerText = '');
             if (s.timerEndsAt) { const updateTimer = () => { let remaining = Math.ceil((s.timerEndsAt - Date.now()) / 1000); if (remaining < 0) remaining = 0; document.querySelectorAll('#decision-timer, #duel-timer').forEach(el => el.innerText = remaining); }; updateTimer(); clientTimerInterval = setInterval(updateTimer, 250); }
@@ -1119,7 +1119,6 @@ function updateAll(roomId) {
         socket.on('showLeaveNormalPrompt', () => document.getElementById('leave-normal-modal').style.display = 'flex'); socket.on('showLeaveAdminPrompt', () => document.getElementById('leave-admin-modal').style.display = 'flex');
         function start() { playUI(); socket.emit('requestStart'); } function changeScreen(id) { document.querySelectorAll('.screen').forEach(el => el.style.display = 'none'); document.getElementById(id).style.display = 'flex'; }
 
-        // --- SISTEMA RESTAURADO: LÓGICA DE ESCALERA ---
         let touchTimer;
         function startTouch(c) { touchTimer = setTimeout(() => { ladderMode = true; ladderSelected.push(c.id); document.getElementById('btn-ladder-play').style.display = 'inline-block'; document.getElementById('btn-ladder-cancel').style.display = 'inline-block'; document.getElementById('btn-pass').style.display = 'none'; renderHand(); }, 600); }
         function endTouch() { clearTimeout(touchTimer); }
@@ -1152,7 +1151,7 @@ function updateAll(roomId) {
 </body>
 </html>
 `); 
-}); // FIN DEL APP.GET Y RES.SEND
+}); 
 
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, () => { console.log('Servidor UNO y 1/2 corriendo perfectamente en el puerto', PORT); });

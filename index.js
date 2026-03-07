@@ -4,8 +4,8 @@ const http = require('http').createServer(app);
 
 // --- CONFIGURACIÓN SOCKET.IO ---
 const io = require('socket.io')(http, {
-    pingTimeout: 15000,   // CORRECCIÓN: Bajado de 60s a 15s para detectar micro-cortes rápido
-    pingInterval: 8000    // CORRECCIÓN: Pings más frecuentes para asegurar la conexión
+    pingTimeout: 15000,
+    pingInterval: 8000
 });
 
 // --- VARIABLES GLOBALES ---
@@ -797,7 +797,6 @@ io.on('connection', (socket) => {
 
     }));
 
-    // CORRECCIÓN B: Validación y respuestas explícitas de servidor
     socket.on('draw', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; 
@@ -1440,7 +1439,6 @@ app.get('/', (req, res) => {
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; white-space: nowrap; text-align: center; overflow: hidden; }
         
-        /* CORRECCIÓN C: Feedback visual obligatorio al tocar el mazo */
         #deck-pile { background: #e74c3c; cursor: pointer; transition: transform 0.1s; }
         #deck-pile:active { transform: scale(0.9); }
         
@@ -1994,7 +1992,17 @@ app.get('/', (req, res) => {
                  if (document.getElementById('libre-modal').style.display !== 'flex') { cancelLadder(); cancelLibre(); }
             }
 
+            // --- CORRECCIÓN 3: Ocultar tablero en la sala de espera ---
             if(s.state === 'waiting') {
+                document.getElementById('game-area').style.display = 'none';
+                document.getElementById('hand-zone').style.display = 'none';
+                document.getElementById('action-bar').style.display = 'none';
+                document.getElementById('round-overlay').style.display = 'none';
+                document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
+                
+                document.body.className = '';
+                document.getElementById('animated-bg').style.display = 'block'; // Volver a encender fondo animado
+
                 const list = s.players.map(p => '<div class="lobby-row"><div class="lobby-name">' + (p.isConnected?'🟢':'🔴') + ' ' + p.name + '</div>' + (s.iamAdmin && p.uuid !== myUUID ? ('<button class="kick-btn" onclick="kick(\\''+p.id+'\\')">X</button>') : '') + '</div>').join('');
                 document.getElementById('lobby-users').innerHTML = list;
                 document.getElementById('start-btn').style.display = s.iamAdmin ? 'block' : 'none';
@@ -2006,6 +2014,9 @@ app.get('/', (req, res) => {
             if(s.state === 'playing') {
                  changeScreen('game-area'); 
                  
+                 // --- CORRECCIÓN 2: Apagar fondo mutante en partida ---
+                 document.getElementById('animated-bg').style.display = 'none'; 
+
                  document.body.classList.add('playing-state'); 
                  if(s.activeColor) document.body.classList.add('bg-'+s.activeColor);
                  document.getElementById('game-area').style.display = 'flex'; document.getElementById('hand-zone').style.display = 'flex';
@@ -2017,6 +2028,15 @@ app.get('/', (req, res) => {
                  
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  requestAnimationFrame(repositionHUD);
+
+                 // --- CORRECCIÓN 1: Renderizar carta del medio (esto era lo que borré por error) ---
+                 if (s.topCard) {
+                     const tc = document.getElementById('top-card');
+                     tc.style.backgroundColor = getBgColor(s.topCard);
+                     tc.style.color = (s.topCard.color === 'amarillo' || s.topCard.color === 'verde') ? 'black' : 'white';
+                     tc.innerText = getCardText(s.topCard);
+                     tc.style.fontSize = (s.topCard.value === '1 y 1/2') ? '16px' : '24px';
+                 }
             } 
             else if (s.state === 'rip_decision' || s.state === 'penalty_decision') {
                 changeScreen('game-area'); 
@@ -2076,14 +2096,12 @@ app.get('/', (req, res) => {
             
             isMyTurn = amITurning;
             
-            // Lógica para mostrar/ocultar el botón "PASAR"
             if (isMyTurn && me && me.hasDrawn && s.pendingPenalty === 0) {
                 document.getElementById('btn-pass').style.display = 'inline-block';
             } else {
                 document.getElementById('btn-pass').style.display = 'none';
             }
             
-            // Lógica para mostrar el cartel de castigo pendiente
             if (s.pendingPenalty > 0 && isMyTurn) {
                 document.getElementById('penalty-display').style.display = 'block'; 
                 document.getElementById('pen-num').innerText = s.pendingPenalty;

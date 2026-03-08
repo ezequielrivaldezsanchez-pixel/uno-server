@@ -79,7 +79,7 @@
         #btn-ladder-cancel { background: #e74c3c; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; display:none; animation: pop 0.3s; box-shadow: 0 0 10px red; font-size: 14px; }
         #btn-sort { background: #34495e; color: white; border: 2px solid white; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 4px 0 #2c3e50; }
 
-        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: none; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; }
+        #hand-zone { position: fixed; bottom: 0; left: 0; width: 100%; height: 180px; background: rgba(20, 20, 20, 0.95); border-top: 2px solid #555; display: none; align-items: center; padding: 10px 20px; padding-bottom: calc(10px + var(--safe-bottom)); gap: 15px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; z-index: 10000; transition: opacity 0.3s; }
         .hand-card { flex: 0 0 85px; height: 130px; border-radius: 8px; border: 2px solid white; background: #444; display: flex; justify-content: center; align-items: center; font-size: 32px; font-weight: 900; color: white; scroll-snap-align: center; position: relative; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.6); user-select: none; z-index: 1; transition: transform 0.2s; white-space: nowrap; text-align: center; }
         .hand-card:active { transform: scale(0.95); }
         .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan; z-index:10; }
@@ -374,6 +374,10 @@
         <div id="step-3" class="libre-step"><h2 style="color: gold;">Elige 1 carta a descartar</h2><div id="libre-discard-hand" style="max-height: 200px; overflow-y: auto;"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
     </div><script src="/socket.io/socket.io.js"></script>
     <script>
+        // MEJORA PUNTOS 1 y 4: Variables de seguridad Anti-Spam
+        let isProcessingAction = false; 
+        let roundBannerActive = false;
+
         let fallingInterval;
         function createFallingCards() {
             const bgContainer = document.getElementById('animated-bg');
@@ -402,7 +406,6 @@
             }, 1200);
         }
         window.onload = createFallingCards;
-
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];
         let isChatOpen = false; let unreadCount = 0; let ladderMode = false; let ladderSelected = []; let myUUID = localStorage.getItem('uno_uuid');
@@ -507,31 +510,16 @@
             el.style.fontSize = (c.value === '1 y 1/2') ? '20px' : '24px';
 
             if (data.playerId === socket.id && !data.isLibreDiscard) {
-                el.style.top = 'auto';
-                el.style.bottom = '150px';
-                el.style.left = '50%';
-                el.style.transform = 'translate(-50%, 0)';
+                el.style.top = 'auto'; el.style.bottom = '150px'; el.style.left = '50%'; el.style.transform = 'translate(-50%, 0)';
             } else {
-                el.style.top = '40%';
-                el.style.bottom = 'auto';
-                el.style.left = '120%'; 
-                el.style.transform = 'translate(-50%, -50%)';
+                el.style.top = '40%'; el.style.bottom = 'auto'; el.style.left = '120%';  el.style.transform = 'translate(-50%, -50%)';
             }
 
             document.body.appendChild(el);
-            
             void el.offsetWidth;
+            el.style.top = '50%'; el.style.left = '50%'; el.style.bottom = 'auto'; el.style.transform = 'translate(-50%, -50%) rotate(' + (Math.random()*20 - 10) + 'deg)';
 
-            el.style.top = '50%';
-            el.style.left = '50%';
-            el.style.bottom = 'auto';
-            el.style.transform = 'translate(-50%, -50%) rotate(' + (Math.random()*20 - 10) + 'deg)';
-
-            setTimeout(() => {
-                el.style.opacity = '0';
-                el.style.transform = 'translate(-50%, -50%) scale(0.5)';
-                setTimeout(() => el.remove(), 200);
-            }, 400);
+            setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translate(-50%, -50%) scale(0.5)'; setTimeout(() => el.remove(), 200); }, 400);
         });
 
         socket.on('duelClash', data => {
@@ -540,46 +528,35 @@
             const defE = getEmoji(data.def);
 
             let zone = document.getElementById('duel-clash-zone');
-            if (!zone) {
-                zone = document.createElement('div');
-                zone.id = 'duel-clash-zone';
-                document.body.appendChild(zone);
-            }
+            if (!zone) { zone = document.createElement('div'); zone.id = 'duel-clash-zone'; document.body.appendChild(zone); }
             zone.innerHTML = '';
 
-            const attDiv = document.createElement('div');
-            attDiv.className = 'clash-container slide-left';
-            attDiv.innerHTML = '<span>' + attE + '</span><div class="clash-name">' + data.attName + '</div>';
+            const attDiv = document.createElement('div'); attDiv.className = 'clash-container slide-left'; attDiv.innerHTML = '<span>' + attE + '</span><div class="clash-name">' + data.attName + '</div>';
+            const defDiv = document.createElement('div'); defDiv.className = 'clash-container slide-right'; defDiv.innerHTML = '<span>' + defE + '</span><div class="clash-name">' + data.defName + '</div>';
 
-            const defDiv = document.createElement('div');
-            defDiv.className = 'clash-container slide-right';
-            defDiv.innerHTML = '<span>' + defE + '</span><div class="clash-name">' + data.defName + '</div>';
-
-            zone.appendChild(attDiv);
-            zone.appendChild(defDiv);
+            zone.appendChild(attDiv); zone.appendChild(defDiv);
 
             setTimeout(function() {
-                const flash = document.createElement('div');
-                flash.className = 'flash-screen';
-                document.body.appendChild(flash);
+                const flash = document.createElement('div'); flash.className = 'flash-screen'; document.body.appendChild(flash);
                 setTimeout(function() { flash.remove(); }, 600); 
 
                 if (data.winner === 'attacker') {
-                    attDiv.className = 'clash-container winner-anim';
-                    defDiv.className = 'clash-container loser-anim';
+                    attDiv.className = 'clash-container winner-anim'; defDiv.className = 'clash-container loser-anim';
                 } else if (data.winner === 'defender') {
-                    defDiv.className = 'clash-container winner-anim';
-                    attDiv.className = 'clash-container loser-anim';
+                    defDiv.className = 'clash-container winner-anim'; attDiv.className = 'clash-container loser-anim';
                 } else {
-                    attDiv.className = 'clash-container tie-anim-l';
-                    defDiv.className = 'clash-container tie-anim-r';
+                    attDiv.className = 'clash-container tie-anim-l'; defDiv.className = 'clash-container tie-anim-r';
                 }
-
                 setTimeout(function() { zone.innerHTML = ''; }, 2200);
             }, 800); 
         });
 
         socket.on('updateState', s => {
+            // MEJORA PUNTOS 1 y 4: Liberamos el candado de acciones porque el servidor ya actualizó
+            isProcessingAction = false;
+            const handZone = document.getElementById('hand-zone');
+            if (handZone) { handZone.style.opacity = '1'; handZone.style.pointerEvents = 'auto'; }
+
             document.getElementById('afk-modal').style.display = 'none'; 
             currentPlayers = s.players;
             
@@ -592,9 +569,7 @@
 
             if(s.leaderboard) {
                 const slist = document.getElementById('score-list');
-                slist.innerHTML = s.leaderboard.map(function(u, i) {
-                    return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span></div>';
-                }).join('');
+                slist.innerHTML = s.leaderboard.map(function(u, i) { return '<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #444;"><span>' + (i+1) + '. ' + u.name + '</span><span style="color:gold; font-weight:bold;">' + parseFloat(u.score).toFixed(1) + '</span></div>'; }).join('');
             }
 
             if (clientTimerInterval) { clearInterval(clientTimerInterval); clientTimerInterval = null; }
@@ -604,10 +579,8 @@
                 const updateTimer = () => {
                     let remaining = Math.ceil((s.timerEndsAt - Date.now()) / 1000);
                     if (remaining < 0) remaining = 0;
-                    const ripTimerEl = document.getElementById('decision-timer');
-                    const duelTimerEl = document.getElementById('duel-timer');
-                    if (ripTimerEl) ripTimerEl.innerText = remaining;
-                    if (duelTimerEl) duelTimerEl.innerText = remaining;
+                    const ripTimerEl = document.getElementById('decision-timer'); const duelTimerEl = document.getElementById('duel-timer');
+                    if (ripTimerEl) ripTimerEl.innerText = remaining; if (duelTimerEl) duelTimerEl.innerText = remaining;
                 };
                 updateTimer(); 
                 clientTimerInterval = setInterval(updateTimer, 250);
@@ -721,9 +694,26 @@
                 d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; d.innerText = getCardText(c);
                 if(c.value === '1 y 1/2') { d.style.fontSize = '16px'; d.style.padding = '0 5px'; }
                 
-                d.onmousedown = d.ontouchstart = (e) => { pressTimer = setTimeout(() => { if(!ladderMode) { ladderMode = true; if(navigator.vibrate) navigator.vibrate(50); toggleLadderSelection(c, d); } }, 800); };
+                // MEJORA PUNTO 5: touchMoved y tiempo exacto para Selección Múltiple precisa
+                let touchMoved = false;
+                d.ontouchmove = () => { touchMoved = true; };
+                d.onmousedown = d.ontouchstart = (e) => { 
+                    touchMoved = false;
+                    pressTimer = setTimeout(() => { 
+                        if(!ladderMode && !touchMoved && !isProcessingAction) { 
+                            ladderMode = true; 
+                            if(navigator.vibrate) navigator.vibrate(50); 
+                            toggleLadderSelection(c, d); 
+                        } 
+                    }, 600); 
+                };
                 d.onmouseup = d.onmouseleave = d.ontouchend = () => clearTimeout(pressTimer);
-                d.onclick = () => { if(ladderMode) { toggleLadderSelection(c, d); } else { handleCardClick(c); } };
+                
+                d.onclick = () => { 
+                    if(isProcessingAction) return;
+                    if(ladderMode) { toggleLadderSelection(c, d); } 
+                    else { handleCardClick(c); } 
+                };
                 hz.appendChild(d);
             });
         }
@@ -743,6 +733,7 @@
 
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'flex') return;
+            if(isProcessingAction) return; // Candado Anti-Spam
 
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if (hasPenalty && !pendingLibreContext) {
@@ -755,10 +746,16 @@
                 }
             }
 
-            if(c.value === 'LIBRE' && !pendingLibreContext) { socket.emit('playCard', c.id, null, null, null); return; }
+            if(c.value === 'LIBRE' && !pendingLibreContext) { 
+                isProcessingAction = true; document.getElementById('hand-zone').style.opacity = '0.5'; document.getElementById('hand-zone').style.pointerEvents = 'none';
+                socket.emit('playCard', c.id, null, null, null); return; 
+            }
             if(c.value === 'GRACIA') {
                 const hasZombies = currentPlayers.some(p => p.isDead); const isDecisionPhase = (document.body.classList.contains('state-rip'));
-                if(isDecisionPhase) { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; return; }
+                if(isDecisionPhase) { 
+                    isProcessingAction = true; document.getElementById('hand-zone').style.opacity = '0.5'; document.getElementById('hand-zone').style.pointerEvents = 'none';
+                    socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; return; 
+                }
                 if(!hasZombies && !hasPenalty) {
                     pendingCard = c.id; document.getElementById('color-picker').style.display='flex'; return;
                 }
@@ -766,20 +763,26 @@
             
             if(c.color==='negro' && c.value!=='GRACIA') { 
                 if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') { 
-                    if(c.value==='RIP') { socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; } 
+                    if(c.value==='RIP') { 
+                        isProcessingAction = true; document.getElementById('hand-zone').style.opacity = '0.5'; document.getElementById('hand-zone').style.pointerEvents = 'none';
+                        socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; 
+                    } 
                     else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
                 } 
                 else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
             } else {
+                isProcessingAction = true; document.getElementById('hand-zone').style.opacity = '0.5'; document.getElementById('hand-zone').style.pointerEvents = 'none';
                 socket.emit('playCard', c.id, null, null, pendingLibreContext);
                 pendingLibreContext = null;
             }
         }
 
         function submitLadder() { 
+            if(isProcessingAction) return;
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if(hasPenalty) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); cancelLadder(); return; }
             if(ladderSelected.length < 2) return; 
+            isProcessingAction = true; document.getElementById('hand-zone').style.opacity = '0.5'; document.getElementById('hand-zone').style.pointerEvents = 'none';
             socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
         }
 
@@ -803,7 +806,9 @@
             }
         }
         
-        function start(){ socket.emit('requestStart'); } function draw(){ socket.emit('draw'); } function pass(){ socket.emit('passTurn'); }
+        function start(){ socket.emit('requestStart'); } 
+        function draw(){ if(isProcessingAction) return; isProcessingAction=true; document.getElementById('hand-zone').style.opacity = '0.5'; socket.emit('draw'); } 
+        function pass(){ if(isProcessingAction) return; isProcessingAction=true; document.getElementById('hand-zone').style.opacity = '0.5'; socket.emit('passTurn'); }
         function trySayUno() { if(myHand.length > 2) { const b=document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes anunciar si no es verdad!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); toggleUnoMenu(); return; } sayUno(); }
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
         
@@ -813,6 +818,16 @@
         }
         
         function showDenounceList() {
+            // MEJORA PUNTO 2: Bloqueo de denuncia si hay un banner tapando
+            if(roundBannerActive) {
+                const b = document.getElementById('main-alert');
+                b.innerText="⏳ Espera a que termine el anuncio para denunciar";
+                b.style.display='block';
+                setTimeout(()=>b.style.display='none',3000);
+                toggleUnoMenu();
+                return;
+            }
+
             document.getElementById('uno-main-opts').style.display = 'none'; document.getElementById('uno-denounce-opts').style.display = 'block';
             const cont = document.getElementById('denounce-list-container'); cont.innerHTML = '';
             currentPlayers.forEach(p => {
@@ -836,6 +851,7 @@
 
         function pickCol(c){ 
             document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; 
+            isProcessingAction = true; document.getElementById('hand-zone').style.opacity = '0.5'; document.getElementById('hand-zone').style.pointerEvents = 'none';
             socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null;
         }
         function ripResp(d){ socket.emit('ripDecision',d); } function pick(c){ socket.emit('duelPick',c); }
@@ -857,8 +873,12 @@
             const banner = document.getElementById('round-start-banner');
             document.getElementById('rsb-round').innerText = "RONDA " + data.round;
             document.getElementById('rsb-starter').innerText = "Comienza " + data.starterName;
+            
+            // MEJORA PUNTO 2: Activamos el bloqueador de denuncias
+            roundBannerActive = true; 
+            
             banner.style.display = 'flex'; void banner.offsetWidth; banner.classList.add('show');
-            setTimeout(() => { banner.classList.remove('show'); setTimeout(() => banner.style.display = 'none', 500); }, 3000);
+            setTimeout(() => { banner.classList.remove('show'); setTimeout(() => { banner.style.display = 'none'; roundBannerActive = false; }, 500); }, 3000);
         });
 
         function requestLeave() { socket.emit('requestLeave'); }
@@ -891,10 +911,7 @@
         socket.on('playerRevived', data => {
             const b = document.getElementById('main-alert');
             b.innerHTML = '✨ ¡MILAGRO! ✨<br>' + data.savior + ' resucitó a ' + data.revived;
-            b.style.display = 'block';
-            b.style.background = 'white';
-            b.style.color = 'gold';
-            b.style.border = '4px solid gold';
+            b.style.display = 'block'; b.style.background = 'white'; b.style.color = 'gold'; b.style.border = '4px solid gold';
             setTimeout(() => { b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white'; b.style.border='2px solid gold'; }, 5000);
         });
         
@@ -911,25 +928,26 @@
             const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = 0; wPtsEl.innerText = "0 pts"; 
             const losersArea = document.getElementById('losers-area'); losersArea.innerHTML = '';
 
+            // MEJORA PUNTO 3: Animación 3x más rápida para ganar tiempo
             for (let loser of d.losersDetails) {
                 const lDiv = document.createElement('div');
                 lDiv.innerHTML = '<span style="color:white; font-size:24px;">' + loser.name + '</span> <span style="color:#ff4757; font-weight:bold; margin-left:15px; font-size:24px;">+' + loser.points + '</span>';
-                lDiv.style.opacity = '0'; lDiv.style.transition = 'opacity 0.5s'; losersArea.appendChild(lDiv);
+                lDiv.style.opacity = '0'; lDiv.style.transition = 'opacity 0.2s'; losersArea.appendChild(lDiv);
                 
-                await new Promise(r => setTimeout(r, 400)); lDiv.style.opacity = '1'; await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 150)); lDiv.style.opacity = '1'; await new Promise(r => setTimeout(r, 150));
 
                 const flyer = document.createElement('div'); flyer.className = 'score-flyer'; flyer.innerText = '+' + loser.points;
                 const rect = lDiv.getBoundingClientRect(); flyer.style.top = rect.top + 'px'; flyer.style.left = (rect.right + 20) + 'px'; document.body.appendChild(flyer);
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 20));
                 
                 const destRect = wPtsEl.getBoundingClientRect(); flyer.style.top = destRect.top + 'px'; flyer.style.left = destRect.left + 'px'; flyer.style.opacity = '0';
-                await new Promise(r => setTimeout(r, 600)); flyer.remove();
+                await new Promise(r => setTimeout(r, 300)); flyer.remove();
                 
                 acumuladoRonda += loser.points; wPtsEl.innerText = acumuladoRonda + ' pts';
                 wPtsEl.style.transform = 'scale(1.3)'; wPtsEl.style.borderColor = '#2ecc71';
-                setTimeout(() => { wPtsEl.style.transform = 'scale(1)'; wPtsEl.style.borderColor = 'gold'; }, 300); lDiv.style.opacity = '0.3';
+                setTimeout(() => { wPtsEl.style.transform = 'scale(1)'; wPtsEl.style.borderColor = 'gold'; }, 150); lDiv.style.opacity = '0.3';
             }
-            await new Promise(r => setTimeout(r, 1000)); 
+            await new Promise(r => setTimeout(r, 500)); 
 
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'flex';
             const rankList = document.getElementById('ranking-list'); rankList.innerHTML = '';
@@ -938,7 +956,7 @@
                 row.innerHTML = '<span>' + (i+1) + '. ' + u.name + '</span><span>' + parseFloat(u.score).toFixed(1) + ' pts</span>'; rankList.appendChild(row);
             });
             const rows = document.querySelectorAll('.rank-row');
-            for (let row of rows) { await new Promise(r => setTimeout(r, 600)); row.classList.add('visible'); }
+            for (let row of rows) { await new Promise(r => setTimeout(r, 150)); row.classList.add('visible'); }
         });
 
         socket.on('gameOver', d => {

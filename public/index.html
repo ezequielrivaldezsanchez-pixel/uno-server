@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>UNO y 1/2 Final</title>
     <style>
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; touch-action: manipulation; }
         :root { --app-height: 100dvh; --safe-bottom: env(safe-area-inset-bottom, 20px); }
         body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; background: #1e272e; color: white; overflow: hidden; height: var(--app-height); display: flex; flex-direction: column; user-select: none; transition: background 0.5s; }
         
@@ -23,7 +23,6 @@
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); }
         #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
         
-        /* ESTILOS NUEVOS ANIMACIÓN FINAL ÉPICA */
         #game-over-screen { background: radial-gradient(circle, #3a2e0d 0%, #000000 100%); z-index: 200000; text-align: center; border: 5px solid gold; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; }
         .epic-title { font-size: clamp(40px, 8vw, 70px); color: gold; text-shadow: 0 0 30px #ffaa00, 0 0 60px #ff0000; animation: pulseEpic 1.5s infinite alternate, dropIn 1s ease-out; margin-bottom: 0; z-index: 10; }
         .epic-winner { font-size: clamp(30px, 6vw, 50px); color: white; text-shadow: 2px 2px 10px black, 0 0 20px cyan; animation: zoomInEpic 1.5s forwards; z-index: 10; margin-top: 10px; }
@@ -120,7 +119,6 @@
         .duel-btn.selected { opacity: 1; transform: scale(1.3); text-shadow: 0 0 20px white; border-bottom: 3px solid gold; padding-bottom: 5px; }
         .duel-btn:disabled { opacity: 0.2; cursor: not-allowed; filter: grayscale(1); }
         
-        /* CSS ANIMACIONES DE DUELO */
         #duel-clash-zone { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 999999; pointer-events: none; overflow: hidden; }
         .clash-container { position: absolute; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; font-size: clamp(50px, 15vw, 120px); text-shadow: 0 0 30px rgba(255,255,255,0.8); }
         .clash-name { font-size: clamp(14px, 4vw, 24px); font-weight: bold; color: white; text-shadow: 2px 2px 4px black; margin-top: 5px; background: rgba(0,0,0,0.8); padding: 5px 15px; border-radius: 10px; border: 2px solid gold; white-space: nowrap; }
@@ -382,35 +380,18 @@
         <div id="step-1" class="libre-step active"><h2 style="color: gold;">¿A quién regalas 1 carta?</h2><div id="libre-targets"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
         <div id="step-2" class="libre-step"><h2 style="color: gold;">Elige qué carta regalar</h2><div id="libre-gift-hand" style="max-height: 200px; overflow-y: auto;"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
         <div id="step-3" class="libre-step"><h2 style="color: gold;">Elige 1 carta a descartar</h2><div id="libre-discard-hand" style="max-height: 200px; overflow-y: auto;"></div><button class="btn-main" style="background:#e74c3c; width:100%; margin-top:15px;" onclick="cancelLibre()">CANCELAR</button></div>
-    </div>
-    
-    <script src="/socket.io/socket.io.js"></script>
+    </div><script src="/socket.io/socket.io.js"></script>
     <script>
-        // --- SISTEMA DESBLOQUEO AUTOMÁTICO (SOLUCIÓN LAG / CONGELAMIENTO) ---
-        let isProcessingAction = false; 
+        // --- SISTEMA ANTI-SPAM INVISIBLE (Reemplaza al molesto candado visual) ---
+        let actionThrottle = false;
+        function throttle() {
+            if (actionThrottle) return true; // Si ya hay una acción en progreso, la ignora
+            actionThrottle = true;
+            setTimeout(() => { actionThrottle = false; }, 300); // Libera en 300ms
+            return false; // Permite pasar
+        }
+
         let roundBannerActive = false;
-        let actionTimeout = null;
-
-        function lockUI() {
-            if(isProcessingAction) return;
-            isProcessingAction = true;
-            document.getElementById('hand-zone').style.opacity = '0.5';
-            document.getElementById('hand-zone').style.pointerEvents = 'none';
-            // Temporizador de seguridad: si internet falla o la carta fue inválida, desbloquea solo en 2.5s.
-            actionTimeout = setTimeout(unlockUI, 2500);
-        }
-
-        function unlockUI() {
-            isProcessingAction = false;
-            if(actionTimeout) { clearTimeout(actionTimeout); actionTimeout = null; }
-            const hz = document.getElementById('hand-zone');
-            if(hz) { hz.style.opacity = '1'; hz.style.pointerEvents = 'auto'; }
-            // Desbloqueo de seguridad para los botones de duelo por si el servidor demora
-            document.querySelectorAll('.duel-btn').forEach(b => {
-                b.style.pointerEvents = 'auto';
-                b.style.opacity = b.classList.contains('selected') ? '1' : '0.5';
-            });
-        }
 
         let fallingInterval;
         function createFallingCards() {
@@ -522,7 +503,9 @@
         function cancelLibre() { document.getElementById('libre-modal').style.display = 'none'; if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex'; libreState = { active: false }; pendingLibreContext = null; }
         function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); document.getElementById('step-'+n).classList.add('active'); }
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
-        function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
+        function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }
+        
+        function showCreate() { const name = document.getElementById('my-name').value.trim(); if(name) socket.emit('createRoom', { name, uuid: myUUID }); }
         function showJoin() { changeScreen('join-menu'); }
         function backToLogin() { changeScreen('login'); }
         function joinRoom() { const name = document.getElementById('my-name').value.trim(); const code = document.getElementById('room-code').value.trim(); if(name && code) socket.emit('joinRoom', { name, uuid: myUUID, roomId: code }); }
@@ -584,7 +567,6 @@
         });
 
         socket.on('updateState', s => {
-            unlockUI(); // Confirmación de que el servidor recibió la orden, se desbloquea todo
             document.getElementById('afk-modal').style.display = 'none'; 
             currentPlayers = s.players;
             
@@ -722,22 +704,36 @@
                 d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; d.innerText = getCardText(c);
                 if(c.value === '1 y 1/2') { d.style.fontSize = '16px'; d.style.padding = '0 5px'; }
                 
+                // --- LÓGICA TÁCTIL PROFESIONAL: Cero toques fantasmas y permite scroll natural ---
+                let pressTimer;
                 let touchMoved = false;
+                let longPressed = false;
+
                 d.ontouchmove = () => { touchMoved = true; };
-                d.onmousedown = d.ontouchstart = (e) => { 
+                
+                d.ontouchstart = d.onmousedown = (e) => { 
                     touchMoved = false;
+                    longPressed = false;
+                    if (ladderMode) return; // Si ya está en modo selección, no arranca el timer
+                    
                     pressTimer = setTimeout(() => { 
-                        if(!ladderMode && !touchMoved && !isProcessingAction) { 
+                        if(!touchMoved) { 
+                            longPressed = true;
                             ladderMode = true; 
                             if(navigator.vibrate) navigator.vibrate(50); 
                             toggleLadderSelection(c, d); 
                         } 
-                    }, 600); 
+                    }, 400); // 400ms = respuesta idéntica a apps de iOS/Android
                 };
-                d.onmouseup = d.onmouseleave = d.ontouchend = () => clearTimeout(pressTimer);
                 
-                d.onclick = () => { 
-                    if(isProcessingAction) return;
+                d.ontouchend = d.onmouseup = d.onmouseleave = d.ontouchcancel = () => { 
+                    clearTimeout(pressTimer); 
+                };
+                
+                d.onclick = (e) => { 
+                    if (longPressed) { longPressed = false; return; } // Magia: Si venís de soltar el long-press, ignora el click fantasma
+                    if (throttle()) return; // Frena metralleta de clicks sin congelar la UI
+                    
                     if(ladderMode) { toggleLadderSelection(c, d); } 
                     else { handleCardClick(c); } 
                 };
@@ -760,7 +756,6 @@
 
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'flex') return;
-            if(isProcessingAction) return; // Candado Anti-Spam activado, ignora el click
 
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if (hasPenalty && !pendingLibreContext) {
@@ -774,13 +769,11 @@
             }
 
             if(c.value === 'LIBRE' && !pendingLibreContext) { 
-                lockUI();
                 socket.emit('playCard', c.id, null, null, null); return; 
             }
             if(c.value === 'GRACIA') {
                 const hasZombies = currentPlayers.some(p => p.isDead); const isDecisionPhase = (document.body.classList.contains('state-rip'));
                 if(isDecisionPhase) { 
-                    lockUI();
                     socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; return; 
                 }
                 if(!hasZombies && !hasPenalty) {
@@ -791,25 +784,22 @@
             if(c.color==='negro' && c.value!=='GRACIA') { 
                 if(c.value==='RIP' || c.value==='SALTEO SUPREMO' || c.value==='+12') { 
                     if(c.value==='RIP') { 
-                        lockUI();
                         socket.emit('playCard', c.id, null, null, pendingLibreContext); pendingLibreContext = null; 
                     } 
                     else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
                 } 
                 else { pendingCard=c.id; document.getElementById('color-picker').style.display='flex'; } 
             } else {
-                lockUI();
                 socket.emit('playCard', c.id, null, null, pendingLibreContext);
                 pendingLibreContext = null;
             }
         }
 
         function submitLadder() { 
-            if(isProcessingAction) return;
+            if(throttle()) return;
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if(hasPenalty) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); cancelLadder(); return; }
             if(ladderSelected.length < 2) return; 
-            lockUI();
             socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
         }
 
@@ -834,8 +824,8 @@
         }
         
         function start(){ socket.emit('requestStart'); } 
-        function draw(){ if(isProcessingAction) return; lockUI(); socket.emit('draw'); } 
-        function pass(){ if(isProcessingAction) return; lockUI(); socket.emit('passTurn'); }
+        function draw(){ if(throttle()) return; socket.emit('draw'); } 
+        function pass(){ if(throttle()) return; socket.emit('passTurn'); }
         function trySayUno() { if(myHand.length > 2) { const b=document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes anunciar si no es verdad!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); toggleUnoMenu(); return; } sayUno(); }
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }
         
@@ -877,13 +867,12 @@
 
         function pickCol(c){ 
             document.getElementById('color-picker').style.display='none'; pendingColorForRevive = c; 
-            lockUI();
             socket.emit('playCard', pendingCard, c, null, pendingLibreContext); pendingLibreContext = null;
         }
         function ripResp(d){ socket.emit('ripDecision',d); } 
         
-        // Función para respuesta visual instantánea en Duelos
         function pick(c){ 
+            if (throttle()) return;
             document.querySelectorAll('.duel-btn').forEach(b => { b.style.opacity = '0.2'; b.style.pointerEvents = 'none'; });
             document.getElementById('btn-' + c).style.opacity = '1';
             document.getElementById('btn-' + c).classList.add('selected');
@@ -938,8 +927,8 @@
         socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseModals(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
         socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
         
-        socket.on('notification',m=>{ unlockUI(); const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
-        socket.on('showDivine',m=>{ unlockUI(); const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
+        socket.on('notification',m=>{ const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
+        socket.on('showDivine',m=>{ const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
         
         socket.on('playerRevived', data => {
             const b = document.getElementById('main-alert');
@@ -948,11 +937,12 @@
             setTimeout(() => { b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white'; b.style.border='2px solid gold'; }, 5000);
         });
         
-        socket.on('cardPlayedEffect', d => { unlockUI(); if(d.color) document.body.className = 'bg-' + d.color; });
+        socket.on('cardPlayedEffect', d => { if(d.color) document.body.className = 'bg-' + d.color; });
         
         socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
         
+        // --- ANIMACIÓN DE PUNTOS ACELERADA AL 75% PARA DARLE TIEMPO DE LECTURA AL RANKING ---
         socket.on('roundOver', async d => {
             forceCloseModals(); 
             document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
@@ -964,22 +954,22 @@
             for (let loser of d.losersDetails) {
                 const lDiv = document.createElement('div');
                 lDiv.innerHTML = '<span style="color:white; font-size:24px;">' + loser.name + '</span> <span style="color:#ff4757; font-weight:bold; margin-left:15px; font-size:24px;">+' + loser.points + '</span>';
-                lDiv.style.opacity = '0'; lDiv.style.transition = 'opacity 0.2s'; losersArea.appendChild(lDiv);
+                lDiv.style.opacity = '0'; lDiv.style.transition = 'opacity 0.1s'; losersArea.appendChild(lDiv);
                 
-                await new Promise(r => setTimeout(r, 150)); lDiv.style.opacity = '1'; await new Promise(r => setTimeout(r, 150));
+                await new Promise(r => setTimeout(r, 40)); lDiv.style.opacity = '1'; await new Promise(r => setTimeout(r, 40));
 
                 const flyer = document.createElement('div'); flyer.className = 'score-flyer'; flyer.innerText = '+' + loser.points;
                 const rect = lDiv.getBoundingClientRect(); flyer.style.top = rect.top + 'px'; flyer.style.left = (rect.right + 20) + 'px'; document.body.appendChild(flyer);
-                await new Promise(r => setTimeout(r, 20));
+                await new Promise(r => setTimeout(r, 10));
                 
                 const destRect = wPtsEl.getBoundingClientRect(); flyer.style.top = destRect.top + 'px'; flyer.style.left = destRect.left + 'px'; flyer.style.opacity = '0';
-                await new Promise(r => setTimeout(r, 300)); flyer.remove();
+                await new Promise(r => setTimeout(r, 150)); flyer.remove();
                 
                 acumuladoRonda += loser.points; wPtsEl.innerText = acumuladoRonda + ' pts';
                 wPtsEl.style.transform = 'scale(1.3)'; wPtsEl.style.borderColor = '#2ecc71';
-                setTimeout(() => { wPtsEl.style.transform = 'scale(1)'; wPtsEl.style.borderColor = 'gold'; }, 150); lDiv.style.opacity = '0.3';
+                setTimeout(() => { wPtsEl.style.transform = 'scale(1)'; wPtsEl.style.borderColor = 'gold'; }, 100); lDiv.style.opacity = '0.3';
             }
-            await new Promise(r => setTimeout(r, 500)); 
+            await new Promise(r => setTimeout(r, 200)); 
 
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'flex';
             const rankList = document.getElementById('ranking-list'); rankList.innerHTML = '';
@@ -988,10 +978,9 @@
                 row.innerHTML = '<span>' + (i+1) + '. ' + u.name + '</span><span>' + parseFloat(u.score).toFixed(1) + ' pts</span>'; rankList.appendChild(row);
             });
             const rows = document.querySelectorAll('.rank-row');
-            for (let row of rows) { await new Promise(r => setTimeout(r, 150)); row.classList.add('visible'); }
+            for (let row of rows) { await new Promise(r => setTimeout(r, 40)); row.classList.add('visible'); }
         });
 
-        // NUEVO EVENTO GAMEOVER CON ANIMACIÓN ÉPICA Y RANKING
         socket.on('gameOver', async d => {
             forceCloseModals(); 
             document.getElementById('action-bar').style.display = 'none'; 

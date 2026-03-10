@@ -357,7 +357,7 @@
         <button id="btn-duel-start" onclick="ripResp('duel')" class="btn-main" style="background:red; border:3px solid gold;">BATIRSE A DUELO</button>
         <button id="btn-surrender" onclick="ripResp('surrender')" class="btn-main">RENDIRSE</button>
         <p id="duel-warning" style="font-size:12px; color:#aaa; display:none;">Nota: batirse a duelo y perder implicará una penalidad extra.</p>
-        <div id="grace-btn" style="display:none;"><button onclick="showGraceModal()" class="btn-main" style="background:white; color:red;">USAR GRACIA</button></div>
+        <div id="grace-btn" style="display:none; margin-top: 15px;"><button onclick="playGraceFromRip()" class="btn-main" style="background:white; color:red; border: 3px solid gold; box-shadow: 0 0 20px gold; font-weight: bold;">✨ USAR GRACIA DIVINA ✨</button></div>
     </div>
 
     <div id="duel-screen" class="screen">
@@ -646,6 +646,11 @@
                         msgDiv.innerHTML = '<span style="color:gold;">' + s.duelInfo.attackerName + '</span> te arrojó un <span style="color:white; font-size:24px; font-weight:bold; border:2px solid red; background:black; padding:2px 8px; border-radius:5px;">' + trig + '</span>.<br><br>¿Aceptás el castigo o te batís a duelo para intentar salvarte?';
                         duelWarn.style.display = 'block'; btnAccept.style.display = 'inline-block'; btnSurrender.style.display = 'none'; btnDuel.style.display = 'inline-block'; 
                     }
+
+                    // --- SOLUCIÓN: MOSTRAR BOTÓN DE GRACIA DIVINA SI LA TIENE EN LA MANO ---
+                    const hasGracia = myHand.some(c => c.value === 'GRACIA');
+                    document.getElementById('grace-btn').style.display = hasGracia ? 'block' : 'none';
+
                 } else { 
                     document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex'; 
                     document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "Esperando respuesta..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-opts').style.display = 'none'; 
@@ -665,8 +670,19 @@
                 if(amFighter) {
                     const isTurn = (s.duelInfo.turn === myUUID); 
                     document.getElementById('duel-turn-msg').innerText = isTurn ? "¡TU TURNO! Elige un ataque:" : "Esperando al oponente..."; 
-                    document.querySelectorAll('.duel-btn').forEach(b => b.disabled = !isTurn);
-                    if(s.duelInfo.myChoice) { document.getElementById('btn-' + s.duelInfo.myChoice).classList.add('selected'); } else { document.querySelectorAll('.duel-btn').forEach(b => b.classList.remove('selected')); }
+                    
+                    // --- SOLUCIÓN: DEVOLVER LA VIDA (POINTER-EVENTS) A LOS BOTONES DE DUELO ---
+                    document.querySelectorAll('.duel-btn').forEach(b => {
+                        b.disabled = !isTurn;
+                        b.style.pointerEvents = isTurn ? 'auto' : 'none';
+                        b.style.opacity = isTurn ? '1' : '0.5';
+                        if (!s.duelInfo.myChoice) b.classList.remove('selected');
+                    });
+                    
+                    if(s.duelInfo.myChoice) { 
+                        const btn = document.getElementById('btn-' + s.duelInfo.myChoice);
+                        if (btn) { btn.classList.add('selected'); btn.style.opacity = '1'; }
+                    }
                 } else { 
                     document.getElementById('duel-turn-msg').innerText = "Viendo el duelo..."; 
                 }
@@ -704,7 +720,6 @@
                 d.style.backgroundColor = getBgColor(c); d.style.color = (c.color==='amarillo'||c.color==='verde')?'black':'white'; d.innerText = getCardText(c);
                 if(c.value === '1 y 1/2') { d.style.fontSize = '16px'; d.style.padding = '0 5px'; }
                 
-                // --- LÓGICA TÁCTIL PROFESIONAL: Cero toques fantasmas y permite scroll natural ---
                 let pressTimer;
                 let touchMoved = false;
                 let longPressed = false;
@@ -714,7 +729,7 @@
                 d.ontouchstart = d.onmousedown = (e) => { 
                     touchMoved = false;
                     longPressed = false;
-                    if (ladderMode) return; // Si ya está en modo selección, no arranca el timer
+                    if (ladderMode) return;
                     
                     pressTimer = setTimeout(() => { 
                         if(!touchMoved) { 
@@ -723,7 +738,7 @@
                             if(navigator.vibrate) navigator.vibrate(50); 
                             toggleLadderSelection(c, d); 
                         } 
-                    }, 400); // 400ms = respuesta idéntica a apps de iOS/Android
+                    }, 400); 
                 };
                 
                 d.ontouchend = d.onmouseup = d.onmouseleave = d.ontouchcancel = () => { 
@@ -731,8 +746,8 @@
                 };
                 
                 d.onclick = (e) => { 
-                    if (longPressed) { longPressed = false; return; } // Magia: Si venís de soltar el long-press, ignora el click fantasma
-                    if (throttle()) return; // Frena metralleta de clicks sin congelar la UI
+                    if (longPressed) { longPressed = false; return; } 
+                    if (throttle()) return; 
                     
                     if(ladderMode) { toggleLadderSelection(c, d); } 
                     else { handleCardClick(c); } 
@@ -801,6 +816,16 @@
             if(hasPenalty) { const b = document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes hacer jugadas múltiples con castigo pendiente!"; b.style.display='block'; setTimeout(()=>b.style.display='none',3000); cancelLadder(); return; }
             if(ladderSelected.length < 2) return; 
             socket.emit('playMultiCards', ladderSelected); cancelLadder(); 
+        }
+
+        // --- SOLUCIÓN: FUNCIÓN PARA LANZAR GRACIA DESDE EL ESTADO R.I.P / CASTIGO ---
+        function playGraceFromRip() {
+            if(throttle()) return;
+            const graciaCard = myHand.find(c => c.value === 'GRACIA');
+            if(graciaCard) {
+                socket.emit('playCard', graciaCard.id, null, null, pendingLibreContext);
+                pendingLibreContext = null;
+            }
         }
 
         function changeScreen(id) { 

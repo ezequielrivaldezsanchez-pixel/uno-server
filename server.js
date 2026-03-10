@@ -230,7 +230,9 @@ function manageTimers(roomId) {
     } else {
         room.timerEndsAt = null;
     }
-}function advanceTurn(roomId, steps) {
+}
+
+function advanceTurn(roomId, steps) {
     const room = rooms[roomId]; if (!room || room.players.length === 0) return;
     if (getAlivePlayersCount(roomId) <= 1) return; 
     
@@ -585,45 +587,53 @@ function finalizeDuel(roomId) {
         if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
         const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; const isPenaltyDuel = room.duelState.type === 'penalty';
 
-        if (attWins) { 
-            io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`); 
-            if (!isPenaltyDuel) { 
-                eliminatePlayer(roomId, def.uuid); 
-                checkWinCondition(roomId); 
+        if (attWins) {
+            io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`);
+            if (!isPenaltyDuel) {
+                eliminatePlayer(roomId, def.uuid);
+                checkWinCondition(roomId);
                 if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
                     room.gameState = 'playing';
                     room.currentTurn = room.players.indexOf(att);
                     advanceTurn(roomId, 1);
                     updateAll(roomId);
                 }
-            } 
-            else { 
-                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO para ${def.name}!`); 
-                room.pendingPenalty += 4; room.gameState = 'playing'; updateAll(roomId); 
             }
-        } else { 
+            else {
+                // --- MODIFICACIÓN: ATACANTE GANA EL DUELO POR CASTIGO ---
+                const totalCastigo = room.pendingPenalty + 4;
+                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} recibe ${totalCastigo} cartas.`);
+                drawCards(roomId, room.players.indexOf(def), totalCastigo);
+                room.pendingPenalty = 0; room.pendingSkip = 0;
+
+                room.gameState = 'playing';
+                room.currentTurn = room.players.indexOf(def);
+                advanceTurn(roomId, 1);
+                updateAll(roomId);
+            }
+        } else {
             io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
-            if (!isPenaltyDuel) { 
-                io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`); 
-                room.pendingPenalty = 4; room.pendingSkip = 0; 
-                room.currentTurn = room.players.indexOf(att); 
-                room.resumeTurnFrom = room.players.indexOf(def); 
-                room.gameState = 'playing'; updateAll(roomId); 
-            } 
-            else { 
-                io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`); 
-                room.pendingPenalty = 0; room.pendingSkip = 0; 
-                room.players.forEach(p => p.hasDrawn = false); 
-                room.currentTurn = room.players.indexOf(att); 
-                room.pendingPenalty = 4; room.pendingSkip = 0; 
-                room.resumeTurnFrom = room.players.indexOf(def); 
-                room.gameState = 'playing'; updateAll(roomId); 
+            if (!isPenaltyDuel) {
+                io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`);
+                room.pendingPenalty = 4; room.pendingSkip = 0;
+                room.currentTurn = room.players.indexOf(att);
+                room.resumeTurnFrom = room.players.indexOf(def);
+                room.gameState = 'playing'; updateAll(roomId);
+            }
+            else {
+                // --- MODIFICACIÓN: DEFENSOR GANA EL DUELO POR CASTIGO ---
+                io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`);
+                drawCards(roomId, room.players.indexOf(att), 4);
+                room.pendingPenalty = 0; room.pendingSkip = 0;
+
+                room.gameState = 'playing';
+                room.currentTurn = room.players.indexOf(def);
+                advanceTurn(roomId, 1);
+                updateAll(roomId);
             }
         }
     } catch (e) { console.error("Error en finalizeDuel:", e); }
-}
-
-function eliminatePlayer(roomId, uuid) { 
+}function eliminatePlayer(roomId, uuid) { 
     const room = rooms[roomId]; if(!room) return; 
     const p = room.players.find(p => p.uuid === uuid); 
     if (p) { p.isDead = true; } 
@@ -950,9 +960,7 @@ io.on('connection', (socket) => {
         } else {
              if (cardIndex === -1) { advanceTurn(roomId, 1); updateAll(roomId); }
         }
-    }));
-
-    socket.on('playCard', safe((cardId, chosenColor, reviveTargetId, libreContext) => {
+    }));socket.on('playCard', safe((cardId, chosenColor, reviveTargetId, libreContext) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; 
         

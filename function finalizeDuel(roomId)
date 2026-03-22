@@ -593,15 +593,18 @@ function resolveDuelRound(roomId, isTimeout = false) {
             }, 4000); 
         }
         updateAll(roomId); 
-    } catch (e) { console.error("Error en resolveDuelRound:", e); }
+   } catch (e) { console.error("Error en resolveDuelRound:", e); }
 }
 
 function finalizeDuel(roomId) {
     try {
         const room = rooms[roomId]; if (!room) return;
-        const att = room.players.find(p => p.uuid === room.duelState.attackerId); const def = room.players.find(p => p.uuid === room.duelState.defenderId);
+        const att = room.players.find(p => p.uuid === room.duelState.attackerId); 
+        const def = room.players.find(p => p.uuid === room.duelState.defenderId);
         if (!att || !def) { room.gameState = 'playing'; updateAll(roomId); return; }
-        const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; const isPenaltyDuel = room.duelState.type === 'penalty';
+        
+        const attWins = room.duelState.scoreAttacker > room.duelState.scoreDefender; 
+        const isPenaltyDuel = room.duelState.type === 'penalty';
 
         if (attWins) {
             io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`);
@@ -614,11 +617,10 @@ function finalizeDuel(roomId) {
                     advanceTurn(roomId, 1);
                     updateAll(roomId);
                 }
-            }
-            else {
+            } else {
                 // --- MODIFICACIÓN: ATACANTE GANA EL DUELO POR CASTIGO ---
-             const totalCastigo = room.pendingPenalty + 4;
-                const totalSkips = room.pendingSkip; // Guardamos los salteos (4 del Salteo Supremo)
+                const totalCastigo = room.pendingPenalty + 4;
+                const totalSkips = room.pendingSkip; 
                 
                 io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} recibe ${totalCastigo} cartas y pierde sus turnos.`);
                 drawCards(roomId, room.players.indexOf(def), totalCastigo);
@@ -627,17 +629,25 @@ function finalizeDuel(roomId) {
 
                 room.pendingPenalty = 0; room.pendingSkip = 0;
                 room.gameState = 'playing';
-                // El turno pasa al siguiente después de la víctima
                 room.currentTurn = room.players.indexOf(def);
                 advanceTurn(roomId, 1); 
                 updateAll(roomId);
             }
-            else {
+        } else {
+            // --- CASO: DEFENSOR GANA EL DUELO ---
+            io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
+            if (!isPenaltyDuel) {
+                io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`);
+                room.pendingPenalty = 4; room.pendingSkip = 0;
+                room.currentTurn = room.players.indexOf(att);
+                room.resumeTurnFrom = room.players.indexOf(def);
+                room.gameState = 'playing'; 
+                updateAll(roomId);
+            } else {
                 // --- MODIFICACIÓN: DEFENSOR GANA EL DUELO POR CASTIGO ---
                 io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`);
                 drawCards(roomId, room.players.indexOf(att), 4);
                 room.pendingPenalty = 0; room.pendingSkip = 0;
-
                 room.gameState = 'playing';
                 room.currentTurn = room.players.indexOf(def);
                 advanceTurn(roomId, 1);
@@ -645,7 +655,9 @@ function finalizeDuel(roomId) {
             }
         }
     } catch (e) { console.error("Error en finalizeDuel:", e); }
-}function eliminatePlayer(roomId, uuid) { 
+}
+
+function eliminatePlayer(roomId, uuid) {
     const room = rooms[roomId]; if(!room) return; 
     const p = room.players.find(p => p.uuid === uuid); 
     if (p) { p.isDead = true; } 

@@ -321,13 +321,28 @@ function calculateAndFinishRound(roomId, winner) {
         const lastCard = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null;
         let bonus = 0; if (lastCard && lastCard.value === 'GRACIA') bonus = 50;
 
+        let graceSavedPlayers = []; // AJUSTE 5: Lista de protegidos
         room.players.forEach(p => {
             if (p.uuid !== winner.uuid && !p.isSpectator && !p.hasLeft) { 
                 const hasGrace = p.hand.some(c => c.value === 'GRACIA');
-                let pPoints = 0; if (!hasGrace) { pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0); }
-                if(pPoints > 0) { pointsAccumulated += pPoints; losersDetails.push({ name: p.name + (p.isDead ? " (RIP)" : ""), points: pPoints }); }
+                let pPoints = 0; 
+                if (!hasGrace) { 
+                    pPoints = p.hand.reduce((acc, c) => acc + getCardPoints(c), 0); 
+                } else {
+                    // Si tiene Gracia, lo guardamos para avisar al final
+                    graceSavedPlayers.push(p.name);
+                }
+                if(pPoints > 0) { 
+                    pointsAccumulated += pPoints; 
+                    losersDetails.push({ name: p.name + (p.isDead ? " (RIP)" : ""), points: pPoints }); 
+                }
             }
         });
+
+        // Enviamos la notificación inmediata si alguien se salvó
+        if(graceSavedPlayers.length > 0) {
+            io.to(roomId).emit('notification', `✨ Gracia Divina protegió a: ${graceSavedPlayers.join(", ")}. ¡No entregan puntos al ganador!`);
+        }
 
         pointsAccumulated += bonus;
         if(bonus > 0) losersDetails.push({ name: "BONUS (Cierre Gracia)", points: 50 });
@@ -351,7 +366,8 @@ function calculateAndFinishRound(roomId, winner) {
             io.to(roomId).emit('roundOver', { winner: winner.name, roundPoints: pointsAccumulated, losersDetails: losersDetails, leaderboard: leaderboard, winnerTotal: winnerTotal });
             io.to(roomId).emit('playSound', 'win');
 
-            const animationDelay = (losersDetails.length * 500) + 1000 + (leaderboard.length * 500) + 1000;
+           // AJUSTE 5: Damos 12 segundos para ver bien el ranking y las animaciones
+            const animationDelay = 10000; 
             setTimeout(() => { try { if(rooms[roomId]) resetRound(roomId); } catch(e){} }, animationDelay);
         }
     } catch(e) { console.error("Error en calc round:", e); try { if(rooms[roomId]) resetRound(roomId); } catch(err){} }
@@ -601,24 +617,20 @@ function finalizeDuel(roomId) {
             }
             else {
                 // --- MODIFICACIÓN: ATACANTE GANA EL DUELO POR CASTIGO ---
-                const totalCastigo = room.pendingPenalty + 4;
-                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} recibe ${totalCastigo} cartas.`);
+             const totalCastigo = room.pendingPenalty + 4;
+                const totalSkips = room.pendingSkip; // Guardamos los salteos (4 del Salteo Supremo)
+                
+                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} recibe ${totalCastigo} cartas y pierde sus turnos.`);
                 drawCards(roomId, room.players.indexOf(def), totalCastigo);
-                room.pendingPenalty = 0; room.pendingSkip = 0;
+                
+                if (totalSkips > 0) def.missedTurns += totalSkips;
 
+                room.pendingPenalty = 0; room.pendingSkip = 0;
                 room.gameState = 'playing';
+                // El turno pasa al siguiente después de la víctima
                 room.currentTurn = room.players.indexOf(def);
-                advanceTurn(roomId, 1);
+                advanceTurn(roomId, 1); 
                 updateAll(roomId);
-            }
-        } else {
-            io.to(roomId).emit('notification', `🛡️ ${def.name} GANA el duelo.`);
-            if (!isPenaltyDuel) {
-                io.to(roomId).emit('notification', `🩸 ¡${att.name} falló y debe recoger 4 cartas!`);
-                room.pendingPenalty = 4; room.pendingSkip = 0;
-                room.currentTurn = room.players.indexOf(att);
-                room.resumeTurnFrom = room.players.indexOf(def);
-                room.gameState = 'playing'; updateAll(roomId);
             }
             else {
                 // --- MODIFICACIÓN: DEFENSOR GANA EL DUELO POR CASTIGO ---
@@ -859,11 +871,15 @@ io.on('connection', (socket) => {
             removeCards(player, cardIds);
             room.discardPile.push(...playCards); 
             room.activeColor = finalColor; 
-
+// AJUSTE 3: La última carta seleccionada es la que manda
+room.activeColor = playCards[playCards.length - 1].color;
+            
             io.to(roomId).emit('ladderAnimate', { cards: playCards, playerName: player.name });
             io.to(roomId).emit('notification', `✨ ¡COMBO MATEMÁTICO! ${player.name} combinó ${count} cartas "1 y 1/2" y formó un ${targetVal}.`); 
             io.to(roomId).emit('playSound', 'divine'); 
             checkUnoCheck(roomId, player);
+            // AJUSTE 3: La última carta seleccionada es la que manda
+room.activeColor = playCards[playCards.length - 1].color;
             
             if(player.hand.length === 0) { 
                 room.gameState = 'animating_win'; updateAll(roomId); 
@@ -1066,7 +1082,12 @@ io.on('connection', (socket) => {
                     if (card.value === 'SALTEO SUPREMO') {
                         socket.emit('notification', '🚫 SALTEO SUPREMO no puede usarse para defender castigos.'); return;
                     }
-                    if (card.value === 'GRACIA' || (card.value === 'LIBRE' && room.pendingSkip === 0) || isLibreDiscard) { 
+                    // AJUSTE 1: LIBRE ALBEDRÍO no defiende contra castigos numéricos
+if (card.value === 'GRACIA' || isLibreDiscard) { 
+    // Gracia y descartes de regalo de LIBRE siguen funcionando
+} else if (card.value === 'LIBRE' && room.pendingPenalty === 0 && room.pendingSkip === 0) {
+    // LIBRE solo se puede tirar si NO hay castigo pendiente (+2, +4, +12 o Salteo)
+} else { 
                     } else {
                         const getVal = (v) => { if (v === '+2') return 2; if (v === '+4') return 4; if (v === '+12') return 12; return 0; };
                         const cardVal = getVal(card.value); const topVal = getVal(top.value);
@@ -1259,8 +1280,8 @@ io.on('connection', (socket) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'rip_decision' && room.gameState !== 'penalty_decision') return;
         
-        const myUUID = room.players.find(x => x.id === socket.id)?.uuid;
-        if (myUUID !== room.duelState.defenderId) return;
+        const player = room.players.find(x => x.id === socket.id);
+        if (!player || player.uuid !== room.duelState.defenderId) return;
 
         if (d === 'surrender') { 
             if(room.duelState.type === 'rip') { 
@@ -1275,8 +1296,21 @@ io.on('connection', (socket) => {
             }
         }
         else if (d === 'accept_penalty') {
-             const p = room.players.find(x => x.uuid === myUUID);
-             io.to(roomId).emit('notification', `${p.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId);
+             io.to(roomId).emit('notification', `${player.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId);
+        }
+        else if (d === 'divine_save') { // NUEVO: Manejo de Gracia Divina en RIP
+            const graceIdx = player.hand.findIndex(c => c.value === 'GRACIA');
+            if (graceIdx !== -1) {
+                const graceCard = player.hand.splice(graceIdx, 1);
+                room.discardPile.push(graceCard);
+                io.to(roomId).emit('universalDiscardAnim', { card: graceCard, playerId: socket.id, isLibreDiscard: false });
+                io.to(roomId).emit('playSound', 'divine');
+                io.to(roomId).emit('showDivine', `${player.name} usó Gracia Divina y anuló el RIP`);
+                room.gameState = 'playing';
+                room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
+                advanceTurn(roomId, 1);
+                updateAll(roomId);
+            }
         }
         else { 
             io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling';

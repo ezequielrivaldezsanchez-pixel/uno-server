@@ -564,7 +564,6 @@ function resolveDuelRound(roomId, isTimeout = false) {
             if ((att == 'fuego' && def == 'hielo') || (att == 'hielo' && def == 'agua') || (att == 'agua' && def == 'fuego')) winner = 'attacker';
             else if ((def == 'fuego' && att == 'hielo') || (def == 'hielo' && att == 'agua') || (def == 'agua' && att == 'fuego')) winner = 'defender';
             room.duelState.narrative = getDuelNarrative(room.duelState.attackerName, room.duelState.defenderName, att, def);
-            
             io.to(roomId).emit('duelClash', { att, def, attName: room.duelState.attackerName, defName: room.duelState.defenderName, winner });
         }
         
@@ -585,7 +584,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
             setTimeout(() => { 
                 try {
                     if(rooms[roomId]) { 
-rooms[roomId].duelState.round++; 
+                        rooms[roomId].duelState.round++; 
                         rooms[roomId].duelState.narrative = `Ronda ${rooms[roomId].duelState.round}: ${rooms[roomId].duelState.attackerName} elige arma...`; 
                         updateAll(roomId); 
                     } 
@@ -674,9 +673,6 @@ function getNextPlayerIndex(roomId, step) {
     }
     return current;
 }
-
-// --- SOCKETS ---
-io.on('connection', (socket) => {
     
     socket.on('checkSession', safe((uuid) => {
         let foundRoomId = null; let foundPlayer = null;

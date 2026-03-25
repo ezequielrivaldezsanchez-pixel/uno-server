@@ -1,7 +1,7 @@
 {
-  "name": "uno-y-medio",
+  "name": "juego-de-cartas",
   "version": "1.0.0",
-  "description": "Juego de cartas UNO y 1/2",
+  "description": "Juego multijugador",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

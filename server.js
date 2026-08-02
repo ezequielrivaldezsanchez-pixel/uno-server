@@ -613,15 +613,14 @@ function finalizeDuel(roomId) {
                 const totalCastigo = room.pendingPenalty + 4;
                 const totalSkips = room.pendingSkip; 
                 
-                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} recibe ${totalCastigo} cartas y pierde sus turnos.`);
-                drawCards(roomId, room.players.indexOf(def), totalCastigo);
+                io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} debe recoger ${totalCastigo} cartas y pierde sus turnos.`);
+                room.pendingPenalty = totalCastigo;
                 
                 if (totalSkips > 0) def.missedTurns += totalSkips;
 
-                room.pendingPenalty = 0; room.pendingSkip = 0;
-                room.gameState = 'playing';
                 room.currentTurn = room.players.indexOf(def);
-                advanceTurn(roomId, 1); 
+                room.resumeTurnFrom = null;
+                room.gameState = 'playing';
                 updateAll(roomId);
             }
         } else {
@@ -634,13 +633,12 @@ function finalizeDuel(roomId) {
                 room.gameState = 'playing'; updateAll(roomId);
             }
             else {
-                io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} roba 4.`);
-                drawCards(roomId, room.players.indexOf(att), 4);
-                room.pendingPenalty = 0; room.pendingSkip = 0;
-
-                room.gameState = 'playing';
-                room.currentTurn = room.players.indexOf(def);
-                advanceTurn(roomId, 1);
+                io.to(roomId).emit('notification', `✨ ¡${def.name} devuelve el ataque! Castigo anulado y ${att.name} debe recoger 4 cartas.`);
+                room.pendingPenalty = 4; 
+                room.pendingSkip = 0;
+                room.currentTurn = room.players.indexOf(att);
+                room.resumeTurnFrom = room.players.indexOf(def);
+                room.gameState = 'playing'; 
                 updateAll(roomId);
             }
         }
@@ -906,19 +904,23 @@ io.on('connection', (socket) => {
         let card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
         if (!card && reviveTargetId) { const topAux = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null; if(topAux && topAux.value === 'GRACIA') card = topAux; }
         if (!card) return;
-        let isLibreDiscard = false;
+let isLibreDiscard = false;
         if (libreContext) {
             const gIdx = player.hand.findIndex(c => c.id === libreContext.giftId);
             const target = room.players.find(p => p.uuid === libreContext.targetId);
             if (gIdx === -1 || !target) return;
             room.gameState = 'playing'; room.pendingPenalty = 0; room.pendingSkip = 0;
-            const giftCard = player.hand.splice(gIdx, 1); target.hand.push(giftCard);
-            io.to(target.id).emit('handUpdate', target.hand); io.to(roomId).emit('playSound', 'wild');
+            const giftCard = player.hand.splice(gIdx, 1)[0]; target.hand.push(giftCard);
+            io.to(target.id).emit('handUpdate', target.hand); 
+            // Forzamos doble actualización de mano para evitar el error 'undefined' en el cliente
+            io.to(target.id).emit('handUpdate', target.hand); 
+            io.to(roomId).emit('playSound', 'wild');
             isLibreDiscard = true; 
             if (player.hand.length === 1) { io.to(roomId).emit('notification', `🕊️ ¡JUGADA MAESTRA! ${player.name} usó Libre Albedrío, regaló una carta y se quedó sin nada. ¡GANA LA RONDA!`); } 
             else { io.to(roomId).emit('notification', `🕊️ ${player.name} completó LIBRE ALBEDRÍO y regaló una carta a ${target.name}.`); }
             cardIndex = player.hand.findIndex(c => c.id === cardId); card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
             if (!card) { advanceTurn(roomId, 1); updateAll(roomId); return; }
+        }
         }
         const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { value: '0', color: 'rojo' };
         if (room.gameState === 'penalty_decision') {
@@ -1021,7 +1023,7 @@ io.on('connection', (socket) => {
             setTimeout(() => { if (rooms[roomId]) { rooms[roomId].gameState = 'rip_decision'; updateAll(roomId); } }, 1000);
             return;
         }
-        if (card.value === 'LIBRE' && !isLibreDiscard) { 
+        if (card.value === 'LIBRE') { 
             if (player.hand.length < 3) { socket.emit('notification', '🚫 Necesitas al menos 3 cartas para usar LIBRE ALBEDRÍO (la de uso, una para regalar y otra para descartar).'); return; }
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });
             io.to(roomId).emit('notification', `🕊️ ${player.name} arrojó LIBRE ALBEDRÍO y está eligiendo...`);
@@ -1077,8 +1079,17 @@ io.on('connection', (socket) => {
         if (!player || player.uuid !== room.duelState.defenderId) return;
 
         if (d === 'surrender') { 
-            if(room.duelState.type === 'rip') { eliminatePlayer(roomId, room.duelState.defenderId); checkWinCondition(roomId); if (rooms[roomId] && rooms[roomId].gameState !== 'game_over') { room.gameState = 'playing'; room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId); advanceTurn(roomId, 1); updateAll(roomId); } }
-        }
+         if(room.duelState.type === 'rip') { 
+             eliminatePlayer(roomId, room.duelState.defenderId); 
+             checkWinCondition(roomId); 
+             if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') { 
+                 room.gameState = 'playing'; 
+                 room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId); 
+                 advanceTurn(roomId, 1); 
+                 updateAll(roomId); 
+             } 
+         }
+     }
         else if (d === 'accept_penalty') { io.to(roomId).emit('notification', `${player.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId); }
         else if (d === 'divine_save') { 
             const graceIdx = player.hand.findIndex(c => c.value === 'GRACIA');
@@ -1116,7 +1127,11 @@ io.on('connection', (socket) => {
         if(!target || target.hand.length !== 1 || target.saidUno) { socket.emit('notification', '🚫 No puedes hacer denuncias falsas.'); return; }
         const timeDiff = Date.now() - target.lastOneCardTime;
         if (timeDiff < 2000) { socket.emit('notification', '¡Espera! Tiene tiempo de gracia (2s).'); return; }
-        target.saidUno = true; drawCards(roomId, room.players.indexOf(target), 2);
+        target.saidUno = true; 
+     const targetIdx = room.players.indexOf(target);
+     room.pendingPenalty = 2;
+     room.currentTurn = targetIdx;
+     room.resumeTurnFrom = null;
         io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Recibe 2 cartas.`); 
         io.to(roomId).emit('playSound', 'attack'); updateAll(roomId);
     }));

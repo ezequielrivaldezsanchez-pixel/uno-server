@@ -921,7 +921,6 @@ let isLibreDiscard = false;
             cardIndex = player.hand.findIndex(c => c.id === cardId); card = (cardIndex !== -1) ? player.hand[cardIndex] : null;
             if (!card) { advanceTurn(roomId, 1); updateAll(roomId); return; }
         }
-        }
         const top = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { value: '0', color: 'rojo' };
         if (room.gameState === 'penalty_decision') {
             if (pIndex !== room.currentTurn) return;

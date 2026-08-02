@@ -468,6 +468,8 @@
         socket.on('connect', () => { document.getElementById('reconnect-overlay').style.display = 'none'; myId = socket.id; socket.emit('checkSession', myUUID); });
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });
         socket.on('requireLogin', () => { document.getElementById('reconnect-overlay').style.display = 'none'; changeScreen('login'); document.getElementById('global-leave-btn').style.display = 'none'; document.getElementById('lobby-users').innerHTML = ''; document.getElementById('players-zone').innerHTML = ''; document.getElementById('hand-zone').innerHTML = ''; document.getElementById('hand-zone').style.display = 'none'; });
+socket.on('error', (msg) => { alert(msg); window.location = window.location.origin; });
+
         socket.on('showAFKPrompt', () => { document.getElementById('afk-modal').style.display = 'flex'; const a = new Audio('https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3'); a.volume = 0.5; a.play().catch(()=>{}); });
 
         function imHere() { document.getElementById('afk-modal').style.display = 'none'; socket.emit('imHere'); }
@@ -963,6 +965,18 @@
         });
         
         socket.on('cardPlayedEffect', d => { if(d.color) document.body.className = 'bg-' + d.color; });
+
+socket.on('enemyDrewAnim', () => {
+    const el = document.createElement('div');
+    el.className = 'universal-flying-card';
+    el.style.backgroundColor = '#e74c3c';
+    el.style.color = 'white';
+    el.innerText = 'UNO';
+    el.style.top = '40%'; el.style.left = '50%'; el.style.transform = 'translate(-50%, -50%)';
+    document.body.appendChild(el);
+    setTimeout(() => { el.style.left = '120%'; el.style.opacity = '0'; }, 50);
+    setTimeout(() => el.remove(), 400);
+});
         
         socket.on('chatMessage', m => { const b = document.getElementById('chat-msgs'); b.innerHTML += '<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'; b.scrollTop = b.scrollHeight; if(!isChatOpen) { unreadCount++; const badge = document.getElementById('chat-badge'); badge.style.display = 'flex'; badge.innerText = unreadCount > 9 ? '9+' : unreadCount; } });
         socket.on('chatHistory',h=>{const b=document.getElementById('chat-msgs'); b.innerHTML=''; h.forEach(m=>b.innerHTML+='<div><b style="color:gold">' + m.name + ':</b> ' + m.text + '</div>'); b.scrollTop=b.scrollHeight;});
@@ -971,10 +985,10 @@
         socket.on('roundOver', async d => {
             forceCloseModals(); 
             document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
-            document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';
-            document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
-            const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = 0; wPtsEl.innerText = "0 pts"; 
-            const losersArea = document.getElementById('losers-area'); losersArea.innerHTML = '';
+            document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';           
+document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
+const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = d.winnerTotal - d.roundPoints; wPtsEl.innerText = acumuladoRonda + " pts"; 
+const losersArea = document.getElementById('losers-area'); losersArea.innerHTML = '';
 
             for (let loser of d.losersDetails) {
                 const lDiv = document.createElement('div');

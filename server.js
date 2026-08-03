@@ -1041,7 +1041,7 @@ let isLibreDiscard = false;
         setTimeout(() => { if (!rooms[roomId]) return; if (room.gameState === 'animating_penalty') room.gameState = 'playing'; applyCardEffect(roomId, player, card, chosenColor); }, delay);
     }));
 
-    socket.on('draw', safe(() => {
+socket.on('draw', safe(() => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'playing') return;
         const pIndex = room.players.findIndex(p => p.id === socket.id);
@@ -1049,6 +1049,7 @@ let isLibreDiscard = false;
         if (pIndex === room.currentTurn) {
             if (room.pendingPenalty > 0) {
                 drawCards(roomId, pIndex, 1); room.pendingPenalty--; io.to(roomId).emit('playSound', 'soft');
+                room.players.forEach(p => { if (p.isConnected && p.id !== socket.id && !p.hasLeft) io.to(p.id).emit('enemyDrewAnim'); });
                 if (room.pendingPenalty > 0) { updateAll(roomId); } 
                 else { 
                     if (room.pendingSkip > 0) { io.to(roomId).emit('notification', `⛔ ¡${room.players[pIndex].name} PIERDE ${room.pendingSkip} TURNOS!`); room.players[pIndex].missedTurns += room.pendingSkip; room.pendingSkip = 0; } 
@@ -1058,7 +1059,11 @@ let isLibreDiscard = false;
                     updateAll(roomId); 
                 }
             } else {
-                if (!room.players[pIndex].hasDrawn) { drawCards(roomId, pIndex, 1); room.players[pIndex].hasDrawn = true; room.players[pIndex].saidUno = false; io.to(roomId).emit('playSound', 'soft'); updateAll(roomId); } 
+                if (!room.players[pIndex].hasDrawn) { 
+                    drawCards(roomId, pIndex, 1); room.players[pIndex].hasDrawn = true; room.players[pIndex].saidUno = false; io.to(roomId).emit('playSound', 'soft'); 
+                    room.players.forEach(p => { if (p.isConnected && p.id !== socket.id && !p.hasLeft) io.to(p.id).emit('enemyDrewAnim'); });
+                    updateAll(roomId); 
+                } 
                 else { socket.emit('notification', 'Ya robaste. Debes jugar o pasar.'); }
             }
         }

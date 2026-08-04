@@ -502,7 +502,13 @@ socket.on('error', (msg) => { alert(msg); window.location = window.location.orig
                 b.onclick = () => { libreState.discardId = c.id; pendingLibreContext = { libreId: libreState.cardId, targetId: libreState.targetId, giftId: libreState.giftId }; document.getElementById('libre-modal').style.display = 'none'; libreState.active = false; handleCardClick(c); }; pool.appendChild(b);
             });
         }
-        function cancelLibre() { document.getElementById('libre-modal').style.display = 'none'; if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex'; libreState = { active: false }; pendingLibreContext = null; }
+        function cancelLibre() { 
+            socket.emit('cancelLibre'); 
+            document.getElementById('libre-modal').style.display = 'none'; 
+            if(document.body.classList.contains('playing-state')) document.getElementById('action-bar').style.display = 'flex'; 
+            libreState = { active: false }; 
+            pendingLibreContext = null; 
+        }
         function showLibreStep(n) { document.querySelectorAll('.libre-step').forEach(el => el.classList.remove('active')); document.getElementById('step-'+n).classList.add('active'); }
         function getCardText(c) { if(c.value==='RIP') return '🪦'; if(c.value==='GRACIA') return '❤️'; if(c.value==='LIBRE') return '🕊️'; if(c.value==='SALTEO SUPREMO') return 'SS'; return c.value; }
         function getBgColor(c) { const map = { 'rojo': '#ff5252', 'azul': '#448aff', 'verde': '#69f0ae', 'amarillo': '#ffd740', 'negro': '#212121' }; if(c.value==='RIP') return 'black'; if(c.value==='GRACIA') return 'white'; if(c.value==='+12') return '#000000'; if(c.value==='LIBRE') return '#000'; if(c.value==='SALTEO SUPREMO') return '#2c3e50'; return map[c.color] || '#444'; }

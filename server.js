@@ -1117,6 +1117,25 @@ socket.on('draw', safe(() => {
         updateAll(roomId);
     }));
     
+  socket.on('cancelLibre', safe(() => {
+        const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
+        const room = rooms[roomId]; 
+        if (room.gameState !== 'libre_choosing') return;
+        const pIndex = room.players.findIndex(p => p.id === socket.id);
+        if (pIndex === -1 || pIndex !== room.currentTurn) return;
+        const player = room.players[pIndex];
+        
+        if (room.discardPile.length > 0 && room.discardPile[room.discardPile.length - 1].value === 'LIBRE') {
+            const libreCard = room.discardPile.pop();
+            player.hand.push(libreCard);
+            const prevCard = room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : { color: 'rojo', value: '0' };
+            if (prevCard.color !== 'negro') room.activeColor = prevCard.color;
+        }
+        
+        room.gameState = 'playing';
+        updateAll(roomId);
+    }));
+
     socket.on('sayUno', safe(() => {
         const roomId = getRoomId(socket); if(!roomId) return; const room = rooms[roomId]; 
         if (room.gameState !== 'playing') return;

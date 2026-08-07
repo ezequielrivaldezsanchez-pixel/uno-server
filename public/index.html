@@ -827,13 +827,10 @@ socket.on('error', (msg) => { alert(msg); window.location = window.location.orig
         }
 
         // --- SOLUCIÓN: FUNCIÓN PARA LANZAR GRACIA DESDE EL ESTADO R.I.P / CASTIGO ---
+        // --- SOLUCIÓN: FUNCIÓN PARA LANZAR GRACIA DESDE EL ESTADO R.I.P / CASTIGO ---
         function playGraceFromRip() {
             if(throttle()) return;
-            const graciaCard = myHand.find(c => c.value === 'GRACIA');
-            if(graciaCard) {
-                socket.emit('playCard', graciaCard.id, null, null, pendingLibreContext);
-                pendingLibreContext = null;
-            }
+            socket.emit('ripDecision', 'divine_save');
         }
 
         function changeScreen(id) { 
@@ -1065,7 +1062,7 @@ const losersArea = document.getElementById('losers-area'); losersArea.innerHTML 
             } else if (d.reason === 'cancelled') {
                 rankHtml += '<p style="font-size:20px;">El anfitrión terminó la partida.</p>';
             } else {
-                let sortedPlayers = [...currentPlayers].sort((a,b) => b.score - a.score);
+                let sortedPlayers = d.leaderboard || [];
                 sortedPlayers.forEach((u, i) => {
                     rankHtml += '<div style="display:flex; justify-content:space-between; font-size:20px; padding:10px; border-bottom:1px solid #444; '+(i===0?'color:gold; font-weight:bold; font-size:24px; text-shadow: 0 0 10px gold;':'color:white;')+'"><span>'+(i+1)+'. '+u.name+'</span><span>'+parseFloat(u.score).toFixed(1)+' pts</span></div>';
                 });

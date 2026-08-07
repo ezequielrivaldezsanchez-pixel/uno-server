@@ -344,7 +344,7 @@ function calculateAndFinishRound(roomId, winner) {
 
         if (winnerTotal >= 800) {
             room.gameState = 'waiting';
-            io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal }); io.to(roomId).emit('playSound', 'win');
+            io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal, leaderboard: leaderboard }); io.to(roomId).emit('playSound', 'win');
             setTimeout(() => { delete rooms[roomId]; }, 10000);
         } else {
             room.gameState = 'round_over'; room.roundCount++;
@@ -415,15 +415,22 @@ function checkWinCondition(roomId) {
     if (presentPlayers.length <= 1) {
         const winner = presentPlayers || room.players.find(p => !p.hasLeft);
         if (winner) {
-            room.gameState = 'game_over';
-            setTimeout(() => {
-                if (!rooms[roomId]) return;
-                io.to(roomId).emit('gameOver', { 
-                    winner: winner.name, 
-                    totalScore: room.scores[winner.uuid] || 0,
-                    reason: 'desertion' 
-                });
-                io.to(roomId).emit('playSound', 'win');
+                room.gameState = 'game_over';
+                setTimeout(() => {
+                    if (!rooms[roomId]) return;
+                    
+                    const leaderboard = Object.keys(room.scores).map(uid => {
+                        const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); 
+                        if(pl) return { name: pl.name, score: room.scores[uid] }; return null;
+                    }).filter(x=>x).sort((a,b) => b.score - a.score);
+
+                    io.to(roomId).emit('gameOver', { 
+                        winner: winner.name, 
+                        totalScore: room.scores[winner.uuid] || 0,
+                        reason: 'desertion',
+                        leaderboard: leaderboard
+                    });
+                    io.to(roomId).emit('playSound', 'win');
                 if (room.actionTimer) clearTimeout(room.actionTimer);
                 if (room.turnTimer) clearTimeout(room.turnTimer);
                 if (room.afkTimer) clearTimeout(room.afkTimer);
@@ -882,7 +889,7 @@ io.on('connection', (socket) => {
         if(!card) return;
         const deadPlayers = room.players.filter(p => p.isDead && !p.hasLeft);
         if(data.confirmed && deadPlayers.length === 1) {
-             const target = deadPlayers; target.isDead = false; target.isSpectator = false;
+             const target = deadPlayers[0]; target.isDead = false; target.isSpectator = false;
              io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name }); 
              io.to(roomId).emit('playSound', 'divine');
              if (data.chosenColor) room.activeColor = data.chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
@@ -980,7 +987,7 @@ let isLibreDiscard = false;
                 advanceTurn(roomId, 1); updateAll(roomId); return;
             }
             if (deadPlayers.length > 0) {
-                if(deadPlayers.length === 1) { socket.emit('askReviveConfirmation', { name: deadPlayers.name, cardId: card.id }); return; } 
+                if(deadPlayers.length === 1) { socket.emit('askReviveConfirmation', { name: deadPlayers[0].name, cardId: card.id }); return; }
                 else {
                     if (!reviveTargetId) { const zombieList = deadPlayers.map(z => ({ id: z.id, name: z.name, count: z.hand.length })); socket.emit('askReviveTarget', zombieList); return; } 
                     else {
@@ -1098,10 +1105,29 @@ socket.on('draw', safe(() => {
         else if (d === 'divine_save') { 
             const graceIdx = player.hand.findIndex(c => c.value === 'GRACIA');
             if (graceIdx !== -1) {
-                const graceCard = player.hand.splice(graceIdx, 1); room.discardPile.push(graceCard);
+                const graceCard = player.hand.splice(graceIdx, 1)[0]; 
+                room.discardPile.push(graceCard);
                 io.to(roomId).emit('universalDiscardAnim', { card: graceCard, playerId: socket.id, isLibreDiscard: false });
-                io.to(roomId).emit('playSound', 'divine'); io.to(roomId).emit('showDivine', `${player.name} usó Gracia y anuló el RIP`);
-                room.gameState = 'playing'; room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId); advanceTurn(roomId, 1); updateAll(roomId);
+                io.to(roomId).emit('playSound', 'divine'); 
+                io.to(roomId).emit('showDivine', `${player.name} usó Gracia y se salvó del ataque`);
+                
+                room.pendingPenalty = 0;
+                room.pendingSkip = 0;
+                room.gameState = 'playing'; 
+                
+                checkUnoCheck(roomId, player);
+                if (player.hand.length === 0) { 
+                    room.gameState = 'animating_win'; 
+                    updateAll(roomId); 
+                    setTimeout(() => calculateAndFinishRound(roomId, player), 1000); 
+                    return; 
+                }
+                
+                if (room.duelState.type === 'rip') {
+                    room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId); 
+                }
+                advanceTurn(roomId, 1); 
+                updateAll(roomId);
             }
         }
         else { io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling'; if(room.duelState.type === 'penalty') { room.duelState.narrative = `⚔️ ¡${room.duelState.defenderName} desafió a duelo!`; } else { room.duelState.narrative = `¡${room.duelState.defenderName} aceptó el duelo!`; } room.duelState.turn = room.duelState.attackerId; updateAll(roomId); }

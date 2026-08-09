@@ -247,7 +247,11 @@ function advanceTurn(roomId, steps) {
         if (!cp.isDead && !cp.isSpectator && !cp.hasLeft) {
             if (cp.missedTurns > 0) {
                 cp.missedTurns--;
-                io.to(roomId).emit('notification', `⏭️ Turno de ${cp.name} salteado por castigo.`);
+                if (!cp.skippedCount) cp.skippedCount = 0;
+                cp.skippedCount++;
+                const ordinal = cp.skippedCount === 1 ? '1er' : (cp.skippedCount === 2 ? '2do' : (cp.skippedCount === 3 ? '3er' : cp.skippedCount + 'º'));
+                io.to(roomId).emit('notification', `⏭️ ${ordinal} turno de ${cp.name} salteado por SALTEO SUPREMO.`);
+                if (cp.missedTurns === 0) cp.skippedCount = 0; // Reinicia el contador cuando cumple su castigo
             } else {
                 steps--; 
             }
@@ -413,7 +417,7 @@ function checkWinCondition(roomId) {
     const alivePlayers = presentPlayers.filter(p => !p.isDead);
 
     if (presentPlayers.length <= 1) {
-        const winner = presentPlayers || room.players.find(p => !p.hasLeft);
+        const winner = presentPlayers[0] || room.players.find(p => !p.hasLeft);
         if (winner) {
                 room.gameState = 'game_over';
                 setTimeout(() => {
@@ -439,7 +443,7 @@ function checkWinCondition(roomId) {
         }
     } 
     else if (alivePlayers.length === 1 && presentPlayers.length > 1) {
-        const roundWinner = alivePlayers;
+        const roundWinner = alivePlayers[0];
         calculateAndFinishRound(roomId, roundWinner);
     }
 }
@@ -581,7 +585,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
         io.to(roomId).emit('playSound', 'soft');
         
         if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
-            setTimeout(() => finalizeDuel(roomId), 3000); 
+            setTimeout(() => finalizeDuel(roomId), 5500); 
         } else { 
             setTimeout(() => { 
                 try {
@@ -591,7 +595,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
                         updateAll(roomId); 
                     } 
                 } catch(e){}
-            }, 4000); 
+            }, 5000); 
         }
         updateAll(roomId); 
     } catch (e) { console.error("Error en resolveDuelRound:", e); }
@@ -624,6 +628,7 @@ function finalizeDuel(roomId) {
                 room.pendingPenalty = totalCastigo;
                 
                 if (totalSkips > 0) def.missedTurns += totalSkips;
+                room.pendingSkip = 0; // Solución: vacía la memoria para no aplicar el castigo dos veces
 
                 room.currentTurn = room.players.indexOf(def);
                 room.resumeTurnFrom = null;
@@ -664,7 +669,7 @@ function getNextPlayerIndex(roomId, step) {
     const room = rooms[roomId]; if(!room) return 0; let current = room.currentTurn;
     for(let i=0; i<room.players.length; i++) {
         current = (current + room.direction + room.players.length) % room.players.length;
-        if(!room.players[current].isDead && !room.players[current].isSpectator && !room.players[current].hasLeft) return current;
+        if(!room.players[current].isDead && !room.players[current].isSpectator && !room.players[current].hasLeft && room.players[current].missedTurns === 0) return current;
     }
     return current;
 }// --- SOCKETS ---
@@ -836,7 +841,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const firstColor = playCards.color;
+        const firstColor = playCards[0].color;
         if(firstColor === 'negro') { socket.emit('notification', '🚫 Escaleras solo con color.'); return; }
         if(!playCards.every(c => c.color === firstColor)) { socket.emit('notification', '🚫 Mismo color requerido para escalera.'); return; }
         const indices = playCards.map(c => ladderOrder.indexOf(c.value));

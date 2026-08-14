@@ -513,6 +513,40 @@ function applyCardEffect(roomId, player, card, chosenColor) {
                 setTimeout(() => calculateAndFinishRound(roomId, player), 1000);
                 return;
             }
+
+            // --- PROTECCIÓN ANTE AUTOCASTIGO (+12 / SALTEO SUPREMO) ---
+            if (victim.uuid === player.uuid) {
+                const hasGrace = player.hand.some(c => c.value === 'GRACIA');
+                if (hasGrace) {
+                    room.duelState = { 
+                        attackerId: player.uuid, defenderId: player.uuid, attackerName: player.name, defenderName: player.name, 
+                        round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
+                        turn: player.uuid, narrative: `💥 ${player.name} se auto-arrojó un ${card.value}.`, type: 'self_penalty', originalPenalty: room.pendingPenalty, originalSkip: room.pendingSkip, triggerCard: card.value 
+                    };
+                    room.gameState = 'animating_rip'; 
+                    setTimeout(() => {
+                        if (rooms[roomId]) {
+                            updateAll(roomId);
+                            setTimeout(() => { 
+                                if (rooms[roomId]) { 
+                                    rooms[roomId].gameState = 'rip_decision'; 
+                                    updateAll(roomId); 
+                                } 
+                            }, 1000);
+                        }
+                    }, 300);
+                    return;
+                } else {
+                    if (card.value === '+12') {
+                        io.to(roomId).emit('notification', `💀 ¡AUTOCASTIGO! ${player.name} se arrojó un +12 a sí mismo y debe recoger las cartas del mazo una a una.`);
+                        room.currentTurn = pIndex;
+                        room.gameState = 'playing';
+                        updateAll(roomId);
+                        return;
+                    }
+                }
+            }
+
             room.gameState = 'penalty_decision';
             room.duelState = { 
                 attackerId: player.uuid, defenderId: victim.uuid, attackerName: player.name, defenderName: victim.name, 
@@ -1026,6 +1060,18 @@ let isLibreDiscard = false;
             }
         }
         if (cardIndex === -1) return; 
+        if (card.value === 'SALTEO SUPREMO') {
+            const nextPIdx = getNextPlayerIndex(roomId, 1);
+            const victim = room.players[nextPIdx];
+            if (victim && victim.uuid === player.uuid) {
+                const hasGrace = player.hand.some(c => c.id !== card.id && c.value === 'GRACIA');
+                if (!hasGrace) {
+                    socket.emit('notification', '🚫 No puedes jugar SALTEO SUPREMO porque tu contrincante y tú quedarían con turnos bloqueados y no se podría continuar con la partida.');
+                    return;
+                }
+            }
+        }
+
         if (card.value === 'RIP') {
             if (room.pendingPenalty > 0) { socket.emit('notification', '🚫 RIP no evita castigos.'); return; }
             if (getAlivePlayersCount(roomId) < 2) { 
@@ -1186,9 +1232,9 @@ socket.on('draw', safe(() => {
         if (!player || player.uuid !== room.duelState.defenderId) return;
 
         if (d === 'surrender') { 
-            if (room.duelState.type === 'rip' || room.duelState.type === 'self_rip') { 
+            if (['rip', 'self_rip', 'self_penalty'].includes(room.duelState.type)) { 
                 eliminatePlayer(roomId, room.duelState.defenderId); 
-                io.to(roomId).emit('notification', `💀 ${player.name} aceptó su muerte y se suicidó.`);
+                io.to(roomId).emit('notification', `💀 ${player.name} se rindió y perdió la ronda.`);
                 checkWinCondition(roomId); 
                 if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') { 
                     room.gameState = 'playing'; 

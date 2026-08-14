@@ -79,7 +79,16 @@
         #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
         #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
         .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; color: white; white-space: nowrap; text-align: center; overflow: hidden; }
-        #deck-pile { background: #e74c3c; cursor: pointer; }
+        #deck-pile { 
+            background: repeating-linear-gradient(-45deg, #2c3e50, #2c3e50 10px, #1a252f 10px, #1a252f 20px); 
+            cursor: pointer; 
+            border: 3px solid #ecf0f1; 
+            box-shadow: 2px 2px 0 #bdc3c7, 4px 4px 0 #7f8c8d, 6px 6px 0 #2c3e50, 8px 8px 15px rgba(0,0,0,0.6); 
+            color: white; 
+            font-weight: bold; 
+            font-size: 16px; 
+            text-shadow: 0 0 5px black;
+        }
         #top-card { background: #333; }
         
         #action-bar { position: fixed; bottom: 180px; left: 0; width: 100%; display: none; justify-content: center; align-items: center; padding: 10px; pointer-events: none; z-index: 20000; }
@@ -191,7 +200,7 @@
     <div id="game-area">
         <div id="players-zone"></div>
         <div id="table-zone">
-            <div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">📦</div><div id="top-card" class="card-pile"></div></div>
+            <div id="decks-container"><div id="deck-pile" class="card-pile" onclick="draw()">MAZO</div><div id="top-card" class="card-pile"></div></div>
         </div>
     </div>
 
@@ -1030,7 +1039,25 @@ socket.on('error', (msg) => { alert(msg); window.location = window.location.orig
         });
 
         socket.on('countdownTick',n=>{ changeScreen('game-area'); forceCloseModals(); document.getElementById('countdown').style.display=n>0?'flex':'none'; document.getElementById('countdown').innerText=n; });
-        socket.on('playSound',k=>{const a=new Audio({soft:'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',attack:'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',rip:'https://cdn.freesound.org/previews/173/173930_2394245-lq.mp3',divine:'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',uno:'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',start:'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',win:'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',bell:'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',wild:'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',saff:'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'}[k]); a.volume=0.3; a.play().catch(()=>{});});
+        
+        socket.on('playSound', k => { 
+            const urls = {
+                soft: 'https://cdn.freesound.org/previews/240/240776_4107740-lq.mp3',
+                attack: 'https://cdn.freesound.org/previews/155/155235_2452367-lq.mp3',
+                rip: 'https://cdn.freesound.org/previews/174/174201_3232293-lq.mp3', // Campanada tétrica y profunda
+                divine: 'https://cdn.freesound.org/previews/242/242501_4414128-lq.mp3',
+                uno: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',
+                start: 'https://cdn.freesound.org/previews/320/320655_5260872-lq.mp3',
+                win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',
+                bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',
+                wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',
+                saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'
+            };
+            const a = new Audio(urls[k]); 
+            // Subimos el volumen al 80% solo para el RIP, el resto queda en 30%
+            a.volume = (k === 'rip') ? 0.8 : 0.3; 
+            a.play().catch(()=>{}); 
+        });
         
         socket.on('notification',m=>{ const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
         socket.on('showDivine',m=>{ const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});

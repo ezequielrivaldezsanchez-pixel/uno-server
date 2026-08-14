@@ -1034,9 +1034,8 @@ let isLibreDiscard = false;
             
             const victimIdx = getNextPlayerIndex(roomId, 1); 
             
-            // --- PROTECCIÓN ANTE SUICIDIO POR R.I.P (Ej: Tras Salteo Supremo) ---
+            // --- PROTECCIÓN Y PREGUNTA ANTE SUICIDIO POR R.I.P ---
             if (victimIdx === pIndex) {
-                // Verificar si el jugador posee Gracia Divina para salvarse de su propio error fatal
                 const hasGrace = player.hand.some(c => c.value === 'GRACIA');
                 
                 player.hand.splice(cardIndex, 1); 
@@ -1045,25 +1044,23 @@ let isLibreDiscard = false;
                 io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
 
                 if (hasGrace) {
-                    // Si tiene Gracia Divina, se la consume automáticamente para perdonarle la vida por esta vez
-                    const gIdx = player.hand.findIndex(c => c.value === 'GRACIA');
-                    if (gIdx !== -1) player.hand.splice(gIdx, 1);
-                    
-                    io.to(roomId).emit('notification', `✨ ¡MILAGRO DE ÚLTIMO MOMENTO! ${player.name} se auto-arrojó un R.I.P. pero su Gracia Divina en mano la consumió automáticamente para salvarle la vida.`);
-                    io.to(roomId).emit('playSound', 'divine');
-                    
-                    checkUnoCheck(roomId, player);
-                    if (player.hand.length === 0) { 
-                        room.gameState = 'animating_win'; 
-                        updateAll(roomId); 
-                        setTimeout(() => calculateAndFinishRound(roomId, player), 1000); 
-                        return; 
-                    }
-                    advanceTurn(roomId, 1);
+                    // Si tiene Gracia Divina, abrimos pantalla de decisión para preguntarle
+                    room.duelState = { 
+                        attackerId: player.uuid, defenderId: player.uuid, attackerName: player.name, defenderName: player.name, 
+                        round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
+                        turn: player.uuid, narrative: `💀 ${player.name} se auto-arrojó un R.I.P.`, type: 'self_rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
+                    };
+                    room.gameState = 'animating_rip'; 
                     updateAll(roomId);
+                    setTimeout(() => { 
+                        if (rooms[roomId]) { 
+                            rooms[roomId].gameState = 'self_rip_decision'; 
+                            updateAll(roomId); 
+                        } 
+                    }, 1000);
                     return;
                 } else {
-                    // Sin Gracia Divina: Muerte instantánea por auto-sentencia
+                    // Sin Gracia Divina: Muerte instantánea por auto-sentencia sin opciones
                     eliminatePlayer(roomId, player.uuid);
                     io.to(roomId).emit('notification', `💀 ¡SUICIDIO MORTAL! ${player.name} se sentenció a muerte inevitable al autoarrojarse la carta R.I.P. sin Gracia Divina.`);
                     
@@ -1158,22 +1155,25 @@ socket.on('draw', safe(() => {
 
     socket.on('ripDecision', safe((d) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
-        const room = rooms[roomId]; if (room.gameState !== 'rip_decision' && room.gameState !== 'penalty_decision') return;
+        const room = rooms[roomId]; if (room.gameState !== 'rip_decision' && room.gameState !== 'penalty_decision' && room.gameState !== 'self_rip_decision') return;
         const player = room.players.find(x => x.id === socket.id);
         if (!player || player.uuid !== room.duelState.defenderId) return;
 
         if (d === 'surrender') { 
-         if(room.duelState.type === 'rip') { 
-             eliminatePlayer(roomId, room.duelState.defenderId); 
-             checkWinCondition(roomId); 
-             if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') { 
-                 room.gameState = 'playing'; 
-                 room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId); 
-                 advanceTurn(roomId, 1); 
-                 updateAll(roomId); 
-             } 
-         }
-     }
+            if (room.duelState.type === 'rip' || room.duelState.type === 'self_rip') { 
+                eliminatePlayer(roomId, room.duelState.defenderId); 
+                io.to(roomId).emit('notification', `💀 ${player.name} aceptó su muerte y se suicidó.`);
+                checkWinCondition(roomId); 
+                if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') { 
+                    room.gameState = 'playing'; 
+                    if (room.duelState.type === 'rip') {
+                        room.currentTurn = room.players.findIndex(p => p.uuid === room.duelState.attackerId);
+                    }
+                    advanceTurn(roomId, 1); 
+                    updateAll(roomId); 
+                } 
+            }
+        }
         else if (d === 'accept_penalty') { io.to(roomId).emit('notification', `${player.name} aceptó el castigo.`); room.gameState = 'playing'; updateAll(roomId); }
         else if (d === 'divine_save') { 
             const graceIdx = player.hand.findIndex(c => c.value === 'GRACIA');
@@ -1182,7 +1182,7 @@ socket.on('draw', safe(() => {
                 room.discardPile.push(graceCard);
                 io.to(roomId).emit('universalDiscardAnim', { card: graceCard, playerId: socket.id, isLibreDiscard: false });
                 io.to(roomId).emit('playSound', 'divine'); 
-                io.to(roomId).emit('showDivine', `${player.name} usó Gracia y se salvó del ataque`);
+                io.to(roomId).emit('showDivine', `${player.name} usó Gracia y se salvó`);
                 
                 room.pendingPenalty = 0;
                 room.pendingSkip = 0;
@@ -1203,7 +1203,18 @@ socket.on('draw', safe(() => {
                 updateAll(roomId);
             }
         }
-        else { io.to(roomId).emit('playSound', 'bell'); room.gameState = 'dueling'; if(room.duelState.type === 'penalty') { room.duelState.narrative = `⚔️ ¡${room.duelState.defenderName} desafió a duelo!`; } else { room.duelState.narrative = `¡${room.duelState.defenderName} aceptó el duelo!`; } room.duelState.turn = room.duelState.attackerId; updateAll(roomId); }
+        else { 
+            if (room.gameState === 'self_rip_decision') return; // No se puede batir a duelo contra uno mismo
+            io.to(roomId).emit('playSound', 'bell'); 
+            room.gameState = 'dueling'; 
+            if(room.duelState.type === 'penalty') { 
+                room.duelState.narrative = `⚔️ ¡${room.duelState.defenderName} desafió a duelo!`; 
+            } else { 
+                room.duelState.narrative = `¡${room.duelState.defenderName} aceptó el duelo!`; 
+            } 
+            room.duelState.turn = room.duelState.attackerId; 
+            updateAll(roomId); 
+        }
     }));
 
     socket.on('duelPick', safe((c) => {

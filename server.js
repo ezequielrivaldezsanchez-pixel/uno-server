@@ -1031,7 +1031,53 @@ let isLibreDiscard = false;
             if (getAlivePlayersCount(roomId) < 2) { 
                 player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard }); advanceTurn(roomId, 1); updateAll(roomId); return; 
             }
-            const victimIdx = getNextPlayerIndex(roomId, 1); if (victimIdx === pIndex) { socket.emit('notification', '⛔ No puedes desafiarte a duelo a ti mismo.'); return; }
+            
+            const victimIdx = getNextPlayerIndex(roomId, 1); 
+            
+            // --- PROTECCIÓN ANTE SUICIDIO POR R.I.P (Ej: Tras Salteo Supremo) ---
+            if (victimIdx === pIndex) {
+                // Verificar si el jugador posee Gracia Divina para salvarse de su propio error fatal
+                const hasGrace = player.hand.some(c => c.value === 'GRACIA');
+                
+                player.hand.splice(cardIndex, 1); 
+                room.discardPile.push(card); 
+                io.to(roomId).emit('playSound', 'rip');
+                io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
+
+                if (hasGrace) {
+                    // Si tiene Gracia Divina, se la consume automáticamente para perdonarle la vida por esta vez
+                    const gIdx = player.hand.findIndex(c => c.value === 'GRACIA');
+                    if (gIdx !== -1) player.hand.splice(gIdx, 1);
+                    
+                    io.to(roomId).emit('notification', `✨ ¡MILAGRO DE ÚLTIMO MOMENTO! ${player.name} se auto-arrojó un R.I.P. pero su Gracia Divina en mano la consumió automáticamente para salvarle la vida.`);
+                    io.to(roomId).emit('playSound', 'divine');
+                    
+                    checkUnoCheck(roomId, player);
+                    if (player.hand.length === 0) { 
+                        room.gameState = 'animating_win'; 
+                        updateAll(roomId); 
+                        setTimeout(() => calculateAndFinishRound(roomId, player), 1000); 
+                        return; 
+                    }
+                    advanceTurn(roomId, 1);
+                    updateAll(roomId);
+                    return;
+                } else {
+                    // Sin Gracia Divina: Muerte instantánea por auto-sentencia
+                    eliminatePlayer(roomId, player.uuid);
+                    io.to(roomId).emit('notification', `💀 ¡SUICIDIO MORTAL! ${player.name} se sentenció a muerte inevitable al autoarrojarse la carta R.I.P. sin Gracia Divina.`);
+                    
+                    checkWinCondition(roomId);
+                    if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
+                        room.gameState = 'playing';
+                        advanceTurn(roomId, 1);
+                        updateAll(roomId);
+                    }
+                    return;
+                }
+            }
+            
+            // Flujo normal de R.I.P contra otro jugador
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
             io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
             checkUnoCheck(roomId, player);

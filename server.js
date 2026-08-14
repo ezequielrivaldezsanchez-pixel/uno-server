@@ -585,7 +585,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
         io.to(roomId).emit('playSound', 'soft');
         
         if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) { 
-            setTimeout(() => finalizeDuel(roomId), 5500); 
+            setTimeout(() => finalizeDuel(roomId), 2500); 
         } else { 
             setTimeout(() => { 
                 try {
@@ -595,7 +595,7 @@ function resolveDuelRound(roomId, isTimeout = false) {
                         updateAll(roomId); 
                     } 
                 } catch(e){}
-            }, 5000); 
+            }, 2000); 
         }
         updateAll(roomId); 
     } catch (e) { console.error("Error en resolveDuelRound:", e); }
@@ -1007,12 +1007,19 @@ let isLibreDiscard = false;
                     }
                 }
             } else { 
-                if (cardIndex !== -1) {
-                     io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
-                     player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'divine'); 
-                     io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
-                     if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
-                     checkUnoCheck(roomId, player);
+                        if (cardIndex !== -1) {
+                             io.to(roomId).emit('notification', `❤️ ${player.name} usó Gracia.`); 
+                             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'divine'); 
+                             io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
+                             
+                             if (chosenColor) {
+                                 room.activeColor = chosenColor;
+                                 io.to(roomId).emit('notification', `🎨 ${player.name} cambió el color a ${chosenColor.toUpperCase()}`);
+                             } else if (!room.activeColor) {
+                                 room.activeColor = 'rojo';
+                             }
+                             
+                             checkUnoCheck(roomId, player);
                      if (player.hand.length === 0) { room.gameState = 'animating_win'; updateAll(roomId); setTimeout(() => calculateAndFinishRound(roomId, player), 1000); return; }
                      advanceTurn(roomId, 1); updateAll(roomId); return;
                 }
@@ -1036,6 +1043,15 @@ let isLibreDiscard = false;
         }
         if (card.value === 'LIBRE') { 
             if (player.hand.length < 3) { socket.emit('notification', '🚫 Necesitas al menos 3 cartas para usar LIBRE ALBEDRÍO (la de uso, una para regalar y otra para descartar).'); return; }
+            
+            // Validar que exista al menos una carta numérica, 1 y 1/2 o Gracia Divina en el resto de la mano
+            const otherCards = player.hand.filter(c => c.id !== card.id);
+            const hasValidCloser = otherCards.some(c => /^[0-9]$/.test(c.value) || c.value === '1 y 1/2' || c.value === 'GRACIA');
+            if (!hasValidCloser) {
+                socket.emit('notification', '🚫 No puedes usar LIBRE ALBEDRÍO si no tienes al menos una carta numérica o Gracia Divina entre tus demás cartas para completar tu descarte.');
+                return;
+            }
+
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });
             io.to(roomId).emit('notification', `🕊️ ${player.name} arrojó LIBRE ALBEDRÍO y está eligiendo...`);
             room.gameState = 'libre_choosing'; updateAll(roomId);
@@ -1044,7 +1060,13 @@ let isLibreDiscard = false;
         }
         player.hand.splice(cardIndex, 1); room.discardPile.push(card);
         io.to(roomId).emit('cardPlayedEffect', { color: card.color });
-        if (card.color === 'negro' && chosenColor) room.activeColor = chosenColor; else if (card.color !== 'negro') room.activeColor = card.color;
+        
+        if (card.color === 'negro' && chosenColor) {
+            room.activeColor = chosenColor;
+            io.to(roomId).emit('notification', `🎨 ${player.name} cambió el color a ${chosenColor.toUpperCase()}`);
+        } else if (card.color !== 'negro') {
+            room.activeColor = card.color;
+        }
         io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
         checkUnoCheck(roomId, player); 
         let delay = (['+12', 'SALTEO SUPREMO'].includes(card.value)) ? 1000 : 400;

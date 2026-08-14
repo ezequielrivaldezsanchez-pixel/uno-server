@@ -539,7 +539,8 @@ function applyCardEffect(roomId, player, card, chosenColor) {
                 } else {
                     if (card.value === '+12') {
                         io.to(roomId).emit('notification', `💀 ¡AUTOCASTIGO! ${player.name} se arrojó un +12 a sí mismo y debe recoger las cartas del mazo una a una.`);
-                        room.currentTurn = pIndex;
+                        const playerIndex = room.players.findIndex(p => p.uuid === player.uuid);
+                        room.currentTurn = playerIndex;
                         room.gameState = 'playing';
                         updateAll(roomId);
                         return;

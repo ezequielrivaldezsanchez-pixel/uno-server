@@ -1044,23 +1044,27 @@ let isLibreDiscard = false;
                 io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
 
                 if (hasGrace) {
-                    // Si tiene Gracia Divina, abrimos pantalla de decisión para preguntarle
                     room.duelState = { 
                         attackerId: player.uuid, defenderId: player.uuid, attackerName: player.name, defenderName: player.name, 
                         round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
                         turn: player.uuid, narrative: `💀 ${player.name} se auto-arrojó un R.I.P.`, type: 'self_rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
                     };
                     room.gameState = 'animating_rip'; 
-                    updateAll(roomId);
-                    setTimeout(() => { 
-                        if (rooms[roomId]) { 
-                            rooms[roomId].gameState = 'self_rip_decision'; 
-                            updateAll(roomId); 
-                        } 
-                    }, 1000);
+                    
+                    // Retardo de 300ms para dejar sonar la campana antes de mutar la pantalla
+                    setTimeout(() => {
+                        if (rooms[roomId]) {
+                            updateAll(roomId);
+                            setTimeout(() => { 
+                                if (rooms[roomId]) { 
+                                    rooms[roomId].gameState = 'self_rip_decision'; 
+                                    updateAll(roomId); 
+                                } 
+                            }, 1000);
+                        }
+                    }, 300);
                     return;
                 } else {
-                    // Sin Gracia Divina: Muerte instantánea por auto-sentencia sin opciones
                     eliminatePlayer(roomId, player.uuid);
                     io.to(roomId).emit('notification', `💀 ¡SUICIDIO MORTAL! ${player.name} se sentenció a muerte inevitable al autoarrojarse la carta R.I.P. sin Gracia Divina.`);
                     
@@ -1074,14 +1078,36 @@ let isLibreDiscard = false;
                 }
             }
             
-            // Flujo normal de R.I.P contra otro jugador
-            player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('playSound', 'rip');
+            // --- FLUJO NORMAL DE R.I.P CONTRA OTRO JUGADOR ---
+            player.hand.splice(cardIndex, 1); 
+            room.discardPile.push(card); 
+            io.to(roomId).emit('playSound', 'rip');
             io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard });
             checkUnoCheck(roomId, player);
-            const attacker = player; const defender = room.players[victimIdx];
-            room.duelState = { attackerId: attacker.uuid, defenderId: defender.uuid, attackerName: attacker.name, defenderName: defender.name, round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' };
-            room.gameState = 'animating_rip'; updateAll(roomId);
-            setTimeout(() => { if (rooms[roomId]) { rooms[roomId].gameState = 'rip_decision'; updateAll(roomId); } }, 1000);
+            
+            const attacker = player; 
+            const defender = room.players[victimIdx];
+            room.duelState = { 
+                attackerId: attacker.uuid, defenderId: defender.uuid, attackerName: attacker.name, defenderName: defender.name, 
+                round: 1, scoreAttacker: 0, scoreDefender: 0, attackerChoice: null, defenderChoice: null, history: [], 
+                turn: attacker.uuid, narrative: `💀 ${attacker.name} retó a Duelo a ${defender.name} usando la carta RIP!`, 
+                type: 'rip', originalPenalty: 0, originalSkip: 0, triggerCard: 'RIP' 
+            };
+            
+            room.gameState = 'animating_rip'; 
+            
+            // Retardo de 300ms para que la campana suene limpia antes de abrir la pantalla de duelo
+            setTimeout(() => {
+                if (rooms[roomId]) {
+                    updateAll(roomId);
+                    setTimeout(() => { 
+                        if (rooms[roomId]) { 
+                            rooms[roomId].gameState = 'rip_decision'; 
+                            updateAll(roomId); 
+                        } 
+                    }, 1000);
+                }
+            }, 300);
             return;
         }
         if (card.value === 'LIBRE') { 

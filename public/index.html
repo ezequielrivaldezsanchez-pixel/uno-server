@@ -265,105 +265,137 @@
     
     <div id="score-modal" class="floating-window"><div class="modal-close" onclick="toggleScores()">X</div><h2 style="color:gold;">PUNTAJES</h2><div id="score-list" style="text-align:left; color:white; font-size:16px;"></div></div>
     
-    <!-- MANUAL COMPLETO ORIGINAL CON MINIATURAS ACTUALIZADAS AL NUEVO DISEÑO -->
+    <!-- MANUAL COMPLETO ORIGINAL CON ESPACIADO Y MINIATURAS CORREGIDAS -->
     <div id="manual-modal" class="floating-window" style="width: 95%; max-width: 900px; max-height: 90vh; text-align: left;">
         <div class="modal-close" onclick="toggleManual()">X</div>
         <h1 style="color:gold; font-size:32px; border-bottom: 2px solid gold; padding-bottom: 10px; text-align:center;">📖 MANUAL COMPLETO DEL JUEGO</h1>
         <div style="padding:0 10px; line-height:1.6; font-size: 15px; overflow-y: auto;">
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">1. OBJETIVO DEL JUEGO</h3>
-            <p>El juego se desarrolla por rondas[cite: 12]. Cada jugador comienza con <b>7 cartas</b>[cite: 12]. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano[cite: 12].</p>
-            <p>Al tener una sola carta, el jugador debe anunciar <b>"UNO y 1/2"</b> (usando el botón correspondiente)[cite: 12]. Si no lo hace, puede ser denunciado y castigado con 2 cartas[cite: 12]. Cuando un jugador descarta su última carta, la ronda termina y <b>recolecta la suma de los puntos de las cartas que les quedaron a los demás jugadores</b>[cite: 12]. El primer jugador en acumular <b>800 puntos</b> en el conteo general, es el ganador supremo de la partida[cite: 12].</p>
+            <p style="margin-bottom: 15px;">El juego se desarrolla por rondas. Cada jugador comienza con <b>7 cartas</b>. El objetivo principal de cada ronda es ser el primero en quedarse sin cartas en la mano.</p>
+            <p style="margin-bottom: 15px;">Al tener una sola carta, el jugador debe anunciar <b>"UNO y 1/2"</b> (usando el botón correspondiente). Si no lo hace, puede ser denunciado y castigado con 2 cartas. Cuando un jugador descarta su última carta, la ronda termina y <b>recolecta la suma de los puntos de las cartas que les quedaron a los demás jugadores</b>. El primer jugador en acumular <b>800 puntos</b> en el conteo general, es el ganador supremo de la partida.</p>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">2. CANTIDAD DE JUGADORES</h3>
-            <p>La cantidad óptima y recomendada para disfrutar de toda la intensidad y dinámica del juego es de <b>6 jugadores</b>[cite: 12]. Si bien el sistema permite un mínimo de 2 jugadores y soporta más, la experiencia ideal de caos y estrategia se da con media docena de participantes[cite: 12].</p>
+            <p style="margin-bottom: 15px;">La cantidad óptima y recomendada para disfrutar de toda la intensidad y dinámica del juego es de <b>6 jugadores</b>. Si bien el sistema permite un mínimo de 2 jugadores y soporta más, la experiencia ideal de caos y estrategia se da con media docena de participantes.</p>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">3. ¿CÓMO DESCARTAR CARTAS?</h3>
-            <p>El juego es por turnos[cite: 12]. En tu turno, debes arrojar una carta de tu mano que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta visible en the tope de la mesa[cite: 12]. Si no tienes ninguna carta válida, estás obligado a tocar el mazo central para <b>robar 1 carta</b>[cite: 12]. Si esa carta robada te sirve, puedes jugarla; si no, debes presionar "PASAR" para ceder el turno[cite: 12].</p>
+            <p style="margin-bottom: 15px;">El juego es por turnos. En tu turno, debes arrojar una carta de tu mano que coincida en <b>COLOR</b> o en <b>NÚMERO/SÍMBOLO</b> con la carta visible en el tope de la mesa. Si no tienes ninguna carta válida, estás obligado a tocar el mazo central para <b>robar 1 carta</b>. Si esa carta robada te sirve, puedes jugarla; si no, debes presionar "PASAR" para ceder el turno.</p>
             <p><b>JUGADAS ESPECIALES DE DESCARTE:</b></p>
-            <ul>
-                <li><b>🪜 Escalera:</b> Puedes seleccionar en tu mano y arrojar juntas <b>3 o más cartas consecutivas numéricamente y del mismo color</b> (ej: 2, 3 y 4 azul)[cite: 12]. Solo la primera carta debe coincidir con la mesa[cite: 12]. ¡Ideal para limpiar tu mano rápido![cite: 12]</li>
-                <li><b>✨ Combo Matemático "1 y 1/2":</b> La carta "1 y 1/2" es especial[cite: 12]. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> de estas cartas para sumar su valor[cite: 12]. Dos cartas forman un "3" (debes tirarlas sobre un 3)[cite: 12]. Cuatro cartas forman un "6"[cite: 12]. Seis cartas forman un "9"[cite: 12]. El color de la mesa quedará determinado por la última carta que selecciones[cite: 12].</li>
-                <li><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL en número y color</b> (ej. alguien tira un 5 rojo y vos tenés otro 5 rojo), puedes arrojarla inmediatamente (incluso si no es tu turno) para hacer S.A.F.F[cite: 12]. ¡Robarás el turno y el juego continuará a partir de ti! No se puede ganar la partida haciendo S.A.F.F[cite: 12].</li>
+            <ul style="list-style-type: disc; padding-left: 20px;">
+                <li style="margin-bottom: 15px;"><b>🪜 Escalera:</b> Puedes seleccionar en tu mano y arrojar juntas <b>3 o más cartas consecutivas numéricamente y del mismo color</b> (ej: 2, 3 y 4 azul). Solo la primera carta debe coincidir con la mesa. ¡Ideal para limpiar tu mano rápido!</li>
+                <li style="margin-bottom: 15px;"><b>✨ Combo Matemático "1 y 1/2":</b> La carta "1 y 1/2" es especial. Puedes seleccionar y tirar juntas <b>2, 4 o 6</b> de estas cartas para sumar su valor. Dos cartas forman un "3" (debes tirarlas sobre un 3). Cuatro cartas forman un "6". Seis cartas forman un "9". El color de la mesa quedará determinado por la última carta que selecciones.</li>
+                <li style="margin-bottom: 15px;"><b>⚡ S.A.F.F. (Robo de Turno):</b> Si un jugador tira una carta y tú tienes en tu mano una carta numérica <b>EXACTAMENTE IGUAL en número y color</b> (ej. alguien tira un 5 rojo y vos tenés otro 5 rojo), puedes arrojarla inmediatamente (incluso si no es tu turno) para hacer S.A.F.F. ¡Robarás el turno y el juego continuará a partir de ti! No se puede ganar la partida haciendo S.A.F.F.</li>
             </ul>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">4. CARTAS ESPECIALES</h3>
-            <p>Estas cartas tienen el fondo de los colores básicos (rojo, azul, verde, amarillo) y aplican efectos al siguiente jugador[cite: 12]:</p>
-            <ul>
-                <li>
-                    <div class="inline-card card-azul"><div class="card-corner">+2</div><div class="card-center"><span>+2</span></div><div class="card-corner bottom">+2</div></div> 
-                    <b>Más 2:</b> El siguiente jugador debe robar 2 cartas y pierde su turno (salvo que se defienda tirando otro +2 o superior, acumulando el castigo)[cite: 12].
+            <p style="margin-bottom: 15px;">Estas cartas tienen el fondo de los colores básicos (rojo, azul, verde, amarillo) y aplican efectos al siguiente jugador:</p>
+            <ul style="list-style-type: none; padding-left: 0;">
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-azul" style="flex-shrink:0;"><div class="card-corner">+2</div><div class="card-center"><span>+2</span></div><div class="card-corner bottom">+2</div></div> 
+                    <span><b>Más 2:</b> El siguiente jugador debe robar 2 cartas y pierde su turno (salvo que se defienda tirando otro +2 o superior, acumulando el castigo).</span>
                 </li>
-                <li>
-                    <div class="inline-card card-rojo"><div class="card-corner">R</div><div class="card-center"><span>🔄</span></div><div class="card-corner bottom">R</div></div> 
-                    <b>Reversa:</b> Cambia el sentido de la ronda (de horario a antihorario y viceversa)[cite: 12].
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-rojo" style="flex-shrink:0;"><div class="card-corner">R</div><div class="card-center"><span>🔄</span></div><div class="card-corner bottom">R</div></div> 
+                    <span><b>Reversa:</b> Cambia el sentido de la ronda (de horario a antihorario y viceversa).</span>
                 </li>
-                <li>
-                    <div class="inline-card card-verde"><div class="card-corner">X</div><div class="card-center"><span>⛔</span></div><div class="card-corner bottom">X</div></div> 
-                    <b>Salteo:</b> Saltea el turno del siguiente jugador[cite: 12].
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-verde" style="flex-shrink:0;"><div class="card-corner">X</div><div class="card-center"><span>⛔</span></div><div class="card-corner bottom">X</div></div> 
+                    <span><b>Salteo:</b> Saltea el turno del siguiente jugador.</span>
                 </li>
             </ul>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">5. CARTAS ESPECIALES PLUS</h3>
-            <p>Cartas con fondo negro[cite: 12]. Se pueden jugar sobre cualquier carta[cite: 12].</p>
-            <ul>
-                <li>
-                    <div class="inline-card card-negro"><div class="card-corner">C</div><div class="card-center"><span>🎨</span></div><div class="card-corner bottom">C</div></div> 
-                    <b>Cambio de Color:</b> Te permite elegir con qué color continuará el juego[cite: 12].
+            <p style="margin-bottom: 15px;">Cartas con fondo negro. Se pueden jugar sobre cualquier carta.</p>
+            <ul style="list-style-type: none; padding-left: 0;">
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-negro" style="flex-shrink:0;"><div class="card-corner">C</div><div class="card-center"><span>🎨</span></div><div class="card-corner bottom">C</div></div> 
+                    <span><b>Cambio de Color:</b> Te permite elegir con qué color continuará el juego.</span>
                 </li>
-                <li>
-                    <div class="inline-card card-negro"><div class="card-corner">+4</div><div class="card-center"><span>+4</span></div><div class="card-corner bottom">+4</div></div> 
-                    <b>Más 4:</b> Obliga al siguiente jugador a robar 4 cartas (acumulable) y te permite cambiar el color de la mesa[cite: 12].
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-negro" style="flex-shrink:0;"><div class="card-corner">+4</div><div class="card-center"><span>+4</span></div><div class="card-corner bottom">+4</div></div> 
+                    <span><b>Más 4:</b> Obliga al siguiente jugador a robar 4 cartas (acumulable) y te permite cambiar el color de la mesa.</span>
                 </li>
             </ul>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">6. CARTAS SUPREMAS</h3>
-            <p>Las cartas más destructivas y estratégicas del juego[cite: 12]. Tienen reglas únicas[cite: 12]:</p>
-            <ul>
-                <li>
-                    <div class="inline-card card-supreme"><div class="card-corner">+12</div><div class="card-center"><span style="font-size:0.85em;">+12</span></div><div class="card-corner bottom">+12</div></div> 
-                    <b>Más 12:</b> Un castigo letal[cite: 12]. El siguiente jugador roba 12 cartas[cite: 12]. <i>Defensa:</i> El jugador atacado puede aceptar el castigo o usar el botón "BATIRSE A DUELO" para intentar salvarse (ver sección Duelos)[cite: 12].
+            <p style="margin-bottom: 15px;">Las cartas más destructivas y estratégicas del juego. Tienen reglas únicas:</p>
+            <ul style="list-style-type: none; padding-left: 0;">
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-supreme" style="flex-shrink:0;"><div class="card-corner">+12</div><div class="card-center"><span style="font-size:0.85em;">+12</span></div><div class="card-corner bottom">+12</div></div> 
+                    <span><b>Más 12:</b> Un castigo letal. El siguiente jugador roba 12 cartas. <i>Defensa:</i> El jugador atacado puede aceptar el castigo o usar el botón "BATIRSE A DUELO" para intentar salvarse (ver sección Duelos).</span>
                 </li>
-                <li>
-                    <div class="inline-card card-supreme"><div class="card-corner" style="font-size:0.85em;">SS</div><div class="card-center"><div style="display:flex; flex-direction:column; align-items:center; line-height:1.1; gap:1px;"><span style="font-size:0.7em;">⏳</span><span style="font-size:0.45em; font-weight:bold; letter-spacing:0.5px;">SS</span></div></div><div class="card-corner bottom" style="font-size:0.85em;">SS</div></div> 
-                    <b>Salteo Supremo:</b> Funciona como un +4, pero además <b>saltea los turnos de todos los demás jugadores</b> en la mesa, volviendo a ser tu turno de inmediato[cite: 12].
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-supreme" style="flex-shrink:0;"><div class="card-corner" style="font-size:0.85em;">SS</div><div class="card-center"><div style="display:flex; flex-direction:column; align-items:center; line-height:1.1; gap:1px;"><span style="font-size:0.7em;">⏳</span><span style="font-size:0.45em; font-weight:bold; letter-spacing:0.5px;">SS</span></div></div><div class="card-corner bottom" style="font-size:0.85em;">SS</div></div> 
+                    <span><b>Salteo Supremo:</b> Funciona como un +4, pero además <b>saltea los turnos de todos los demás jugadores</b> en la mesa, volviendo a ser tu turno de inmediato.</span>
                 </li>
-                <li>
-                    <div class="inline-card card-supreme"><div class="card-corner">🕊️</div><div class="card-center"><span>🕊️</span></div><div class="card-corner bottom">🕊️</div></div> 
-                    <b>Libre Albedrío:</b> Al jugarla, el juego se pausa[cite: 12]. Eliges a un jugador para <b>regalarle</b> una de tus cartas, y luego eliges otra de tus cartas para <b>descartarla</b> en la mesa (ésta última define el color/número que sigue)[cite: 12]. <i>Requiere tener al menos 3 cartas en mano para usarse[cite: 12].</i>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-supreme" style="flex-shrink:0;"><div class="card-corner">🕊️</div><div class="card-center"><span>🕊️</span></div><div class="card-corner bottom">🕊️</div></div> 
+                    <span><b>Libre Albedrío:</b> Al jugarla, el juego se pausa. Eliges a un jugador para <b>regalarle</b> una de tus cartas, y luego eliges otra de tus cartas para <b>descartarla</b> en la mesa (ésta última define el color/número que sigue). <i>Requiere tener al menos 3 cartas en mano para usarse.</i></span>
                 </li>
-                <li>
-                    <div class="inline-card card-supreme"><div class="card-corner" style="color:red;">RIP</div><div class="card-center"><span>🪦</span></div><div class="card-corner bottom" style="color:red;">RIP</div></div> 
-                    <b>R.I.P.:</b> Retas a un <b>Duelo a Muerte</b> al siguiente jugador[cite: 12]. El perdedor del duelo queda "muerto" (eliminado de la ronda) pero sus cartas quedan en su mano para sumar puntos al ganador al final de la ronda[cite: 12].
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-supreme" style="flex-shrink:0;"><div class="card-corner" style="color:red;">RIP</div><div class="card-center"><span>🪦</span></div><div class="card-corner bottom" style="color:red;">RIP</div></div> 
+                    <span><b>R.I.P.:</b> Retas a un <b>Duelo a Muerte</b> al siguiente jugador. El perdedor del duelo queda "muerto" (eliminado de la ronda) pero sus cartas quedan en su mano para sumar puntos al ganador al final de la ronda.</span>
                 </li>
-                <li>
-                    <div class="inline-card card-gracia"><div class="card-corner">❤️</div><div class="card-center"><span>❤️</span></div><div class="card-corner bottom">❤️</div></div> 
-                    <b>Gracia Divina:</b> La carta definitiva (color blanco)[cite: 12]. Tiene 3 usos: <b>1)</b> Anula instantáneamente cualquier castigo (+2, +4, +12) dirigido a ti[cite: 12]. <b>2)</b> Si hay jugadores muertos, al tirarla puedes resucitar a uno[cite: 12]. <b>3)</b> Si la usas de forma normal, actúa como un Cambio de Color[cite: 12]. <i>Si es la última carta que juegas para ganar la ronda, te otorga un bono extra de 50 puntos[cite: 12].</i>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-gracia" style="flex-shrink:0;"><div class="card-corner">❤️</div><div class="card-center"><span>❤️</span></div><div class="card-corner bottom">❤️</div></div> 
+                    <span><b>Gracia Divina:</b> La carta definitiva (color blanco). Tiene 3 usos: <b>1)</b> Anula instantáneamente cualquier castigo (+2, +4, +12) dirigido a ti. <b>2)</b> Si hay jugadores muertos, al tirarla puedes resucitar a uno. <b>3)</b> Si la usas de forma normal, actúa como un Cambio de Color. <i>Si es la última carta que juegas para ganar la ronda, te otorga un bono extra de 50 puntos.</i></span>
                 </li>
             </ul>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">7. LOS DUELOS (⚔️)</h3>
-            <p>Existen dos tipos de duelo: por la carta <b>R.I.P.</b> y para defenderse de un <b>Castigo (+12 o Salteo Supremo)</b>[cite: 12].</p>
-            <p>Se resuelven con un sistema de piedra-papel-tijera elemental[cite: 12]:</p>
-            <ul>
-                <li>🔥 <b>FUEGO</b> derrite al Hielo ❄️[cite: 12].</li>
-                <li>❄️ <b>HIELO</b> congela el Agua 💧[cite: 12].</li>
-                <li>💧 <b>AGUA</b> apaga el Fuego 🔥[cite: 12].</li>
+            <p style="margin-bottom: 15px;">Existen dos tipos de duelo: por la carta <b>R.I.P.</b> y para defenderse de un <b>Castigo (+12 o Salteo Supremo)</b>.</p>
+            <p style="margin-bottom: 15px;">Se resuelven con un sistema de piedra-papel-tijera elemental:</p>
+            <ul style="list-style-type: disc; padding-left: 20px;">
+                <li style="margin-bottom: 10px;">🔥 <b>FUEGO</b> derrite al Hielo ❄️.</li>
+                <li style="margin-bottom: 10px;">❄️ <b>HIELO</b> congela el Agua 💧.</li>
+                <li style="margin-bottom: 15px;">💧 <b>AGUA</b> apaga el Fuego 🔥.</li>
             </ul>
-            <p>El duelo se juega al mejor de 3 (el primero en ganar 2 rondas)[cite: 12].<br>
-            - <b>Si el duelo es por RIP:</b> El perdedor muere y queda fuera de la ronda[cite: 12].<br>
-            - <b>Si el duelo es por Castigo:</b> Si gana el atacante, ¡el castigo aumenta en 4 cartas! Si gana el defensor, el ataque se refleja y el atacante debe robar las 4 cartas de la penalidad[cite: 12].</p>
+            <p style="margin-bottom: 15px;">El duelo se juega al mejor de 3 (el primero en ganar 2 rondas).</p>
+            <p style="margin-bottom: 10px;">- <b>Si el duelo es por RIP:</b> El perdedor muere y queda fuera de la ronda.</p>
+            <p style="margin-bottom: 15px;">- <b>Si el duelo es por Castigo:</b> Si gana el atacante, ¡el castigo aumenta en 4 cartas! Si gana el defensor, el ataque se refleja y el atacante debe robar las 4 cartas de la penalidad.</p>
 
             <h3 style="color:#2ecc71; border-bottom: 1px solid #2ecc71;">8. RECUENTO DE PUNTOS</h3>
-            <p>Al finalizar la ronda, el ganador suma los puntos de las cartas en las manos de todos los rivales (vivos o muertos)[cite: 12]:</p>
-            <ul>
-                <li><b>Cartas Numéricas (0-9):</b> Su valor facial (ej. un 5 vale 5 puntos)[cite: 12].</li>
-                <li><b>Carta "1 y 1/2":</b> 1.5 puntos[cite: 12].</li>
-                <li><b>Especiales (+2, R, X):</b> 20 puntos[cite: 12].</li>
-                <li><b>Especiales Plus (Color, +4):</b> 40 puntos[cite: 12].</li>
-                <li><b>Supremas (+12, Salteo Supremo, Libre Albedrío):</b> 80 puntos[cite: 12].</li>
-                <li><b>R.I.P.:</b> 100 puntos[cite: 12].</li>
-                <li><b>Gracia Divina:</b> Quien gana jugando esta carta recibe +50 puntos de bono[cite: 12].</li>
+            <p style="margin-bottom: 15px;">Al finalizar la ronda, el ganador suma los puntos de las cartas en las manos de todos los rivales (vivos o muertos):</p>
+            <ul style="list-style-type: none; padding-left: 0;">
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-rojo" style="flex-shrink:0;"><div class="card-corner">5</div><div class="card-center"><span>5</span></div><div class="card-corner bottom">5</div></div>
+                    <span><b>Cartas Numéricas (0-9):</b> Su valor facial (ej. un 5 vale 5 puntos).</span>
+                </li>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-amarillo" style="flex-shrink:0;"><div class="card-corner">1½</div><div class="card-center"><span style="font-size:0.55em; font-weight:bold;">1 y ½</span></div><div class="card-corner bottom">1½</div></div>
+                    <span><b>Carta "1 y 1/2":</b> 1.5 puntos.</span>
+                </li>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <div class="inline-card card-azul" style="margin:0;"><div class="card-corner">+2</div><div class="card-center"><span>+2</span></div><div class="card-corner bottom">+2</div></div>
+                        <div class="inline-card card-rojo" style="margin:0;"><div class="card-corner">R</div><div class="card-center"><span>🔄</span></div><div class="card-corner bottom">R</div></div>
+                        <div class="inline-card card-verde" style="margin:0;"><div class="card-corner">X</div><div class="card-center"><span>⛔</span></div><div class="card-corner bottom">X</div></div>
+                    </div>
+                    <span><b>Especiales:</b> 20 puntos.</span>
+                </li>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <div class="inline-card card-negro" style="margin:0;"><div class="card-corner">C</div><div class="card-center"><span>🎨</span></div><div class="card-corner bottom">C</div></div>
+                        <div class="inline-card card-negro" style="margin:0;"><div class="card-corner">+4</div><div class="card-center"><span>+4</span></div><div class="card-corner bottom">+4</div></div>
+                    </div>
+                    <span><b>Especiales Plus:</b> 40 puntos.</span>
+                </li>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <div class="inline-card card-supreme" style="margin:0;"><div class="card-corner">+12</div><div class="card-center"><span style="font-size:0.85em;">+12</span></div><div class="card-corner bottom">+12</div></div>
+                        <div class="inline-card card-supreme" style="margin:0;"><div class="card-corner" style="font-size:0.85em;">SS</div><div class="card-center"><div style="display:flex; flex-direction:column; align-items:center; line-height:1.1; gap:1px;"><span style="font-size:0.7em;">⏳</span><span style="font-size:0.45em; font-weight:bold; letter-spacing:0.5px;">SS</span></div></div><div class="card-corner bottom" style="font-size:0.85em;">SS</div></div>
+                        <div class="inline-card card-supreme" style="margin:0;"><div class="card-corner">🕊️</div><div class="card-center"><span>🕊️</span></div><div class="card-corner bottom">🕊️</div></div>
+                    </div>
+                    <span><b>Supremas:</b> 80 puntos.</span>
+                </li>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-supreme" style="flex-shrink:0;"><div class="card-corner" style="color:red;">RIP</div><div class="card-center"><span>🪦</span></div><div class="card-corner bottom" style="color:red;">RIP</div></div>
+                    <span><b>R.I.P.:</b> 100 puntos.</span>
+                </li>
+                <li style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <div class="inline-card card-gracia" style="flex-shrink:0;"><div class="card-corner">❤️</div><div class="card-center"><span>❤️</span></div><div class="card-corner bottom">❤️</div></div>
+                    <span><b>Gracia Divina:</b> Quien gana jugando esta carta recibe +50 puntos de bono.</span>
+                </li>
             </ul>
         </div>
     </div>

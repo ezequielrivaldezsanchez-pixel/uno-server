@@ -43,7 +43,11 @@
         .rank-row.visible { opacity: 1; transform: translateY(0); }
         .rank-gold { border: 2px solid gold; background: rgba(255, 215, 0, 0.2); }
 
-        .floating-window { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-width: 95%; max-height: 85vh; background: #2c3e50; border: 3px solid #ecf0f1; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.9); z-index: 100000; display: none; flex-direction: column; padding: 20px; color: white; overflow-y: auto; text-align: center; }
+        @keyframes modalAppear {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+    100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.floating-window { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-width: 95%; max-height: 85vh; background: #2c3e50; border: 3px solid #ecf0f1; border-radius: 15px; box-shadow: 0 15px 50px rgba(0,0,0,0.95); z-index: 100000; display: none; flex-direction: column; padding: 20px; color: white; overflow-y: auto; text-align: center; animation: modalAppear 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         .modal-close { position: absolute; top: 10px; right: 15px; font-size: 28px; cursor: pointer; color: #aaa; font-weight: bold; }
         
         #reconnect-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:90000; display:none; justify-content:center; align-items:center; color:white; font-size:20px; flex-direction:column; }
@@ -63,9 +67,13 @@
         #global-leave-btn { background: #c0392b; font-size: 20px; }
 
         #players-zone { flex: 0 0 auto; padding: 30px 10px 10px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; position: relative; }
-        .player-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; border: 1px solid #555; transition: all 0.3s; }
-        .is-turn { background: #2ecc71; color: black; font-weight: bold; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px #2ecc71; }
-        .is-dead { text-decoration: line-through; opacity: 0.6; }
+        .player-badge { background: rgba(30, 30, 30, 0.85); color: #ddd; padding: 6px 14px; border-radius: 20px; font-size: 13px; border: 1px solid rgba(255,255,255,0.15); transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+.is-turn { background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%); color: black; font-weight: bold; border: 2px solid white; transform: scale(1.12); box-shadow: 0 0 20px #2ecc71, 0 6px 15px rgba(0,0,0,0.5); animation: badgePulse 1.5s infinite alternate; }
+@keyframes badgePulse {
+    from { transform: scale(1.08); box-shadow: 0 0 10px #2ecc71; }
+    to { transform: scale(1.15); box-shadow: 0 0 25px #2ecc71, 0 0 35px rgba(46, 204, 113, 0.7); }
+}
+.is-dead { background: rgba(50, 0, 0, 0.75); border-color: #c0392b; text-decoration: line-through; opacity: 0.6; filter: grayscale(0.4); }
         
         #alert-zone { position: fixed; left: 0; width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60000; pointer-events: none; transition: top 0.3s ease-out; }
         .alert-box { background: rgba(0,0,0,0.95); border: 2px solid gold; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; box-shadow: 0 5px 20px rgba(0,0,0,0.8); animation: pop 0.3s ease-out; max-width: 90%; display: none; margin-bottom: 10px; pointer-events: auto; }
@@ -113,8 +121,9 @@
         .hand-card:active { transform: scale(0.95); }
         .hand-card.selected-ladder { border: 4px solid cyan !important; transform: translateY(-20px); box-shadow: 0 0 15px cyan !important; z-index:10; }
 
-        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; flex-direction: column; justify-content: space-between; padding: 5px; font-weight: 900; box-shadow: 0 5px 10px rgba(0,0,0,0.5); position: relative; overflow: hidden; }
-        #deck-pile { justify-content: center; align-items: center; background: repeating-linear-gradient(-45deg, #2c3e50, #2c3e50 10px, #1a252f 10px, #1a252f 20px); cursor: pointer; color: white; font-weight: bold; font-size: 16px; text-shadow: 0 0 5px black; }
+        .card-pile { width: 70px; height: 100px; border-radius: 8px; border: 3px solid white; display: flex; flex-direction: column; justify-content: space-between; padding: 5px; font-weight: 900; box-shadow: 0 10px 25px rgba(0,0,0,0.65), inset 0 2px 5px rgba(255,255,255,0.35); position: relative; overflow: hidden; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.card-pile:hover { transform: translateY(-4px); box-shadow: 0 15px 30px rgba(0,0,0,0.75), inset 0 2px 6px rgba(255,255,255,0.45); }
+#deck-pile { justify-content: center; align-items: center; background: repeating-linear-gradient(-45deg, #2c3e50, #2c3e50 10px, #1a252f 10px, #1a252f 20px); cursor: pointer; color: white; font-weight: bold; font-size: 16px; text-shadow: 0 0 5px black; }
 
         /* --- ANIMACIÓN DE CARTAS CAYENDO DE FONDO --- */
         .falling-bg-card { position: absolute; top: -120px; z-index: 1; width: 70px; height: 100px; border-radius: 8px; border: 2px solid white; display: flex; flex-direction: column; justify-content: space-between; padding: 5px; font-weight: 900; animation: fallAndRotate 10s linear infinite; box-shadow: 0 4px 8px rgba(0,0,0,0.6); overflow: hidden; }

@@ -301,12 +301,11 @@
         <div class="color-blob blob-yellow"></div>
         <div id="particles-layer"></div>
 
-        <!-- Contenido inicial (Botones) -->
+        <!-- Contenido inicial (Botón e Indicación) -->
         <div id="start-menu-content" style="z-index: 2; display: flex; flex-direction: column; align-items: center; transition: opacity 0.4s ease-in-out;">
-            <h1 class="logo-title" style="margin-bottom: 30px;">UNO y 1/2</h1>
+            <div class="welcome-badge" style="font-size: clamp(20px, 4vw, 28px); font-weight: 700; color: #ffffff; background: rgba(255, 255, 255, 0.08); padding: 12px 30px; border-radius: 50px; backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.15); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); letter-spacing: 1px; margin-bottom: 30px;">Te doy la bienvenida</div>
             <div style="display: flex; flex-direction: column; gap: 15px; align-items: center; z-index: 10;">
-                <button class="btn-main" onclick="initGameAndCinematic()" style="background: #2ecc71; font-size: 22px; padding: 15px 40px; box-shadow: 0 0 20px rgba(46,204,113,0.6);">INICIAR</button>
-                <button class="btn-main" onclick="exitGame()" style="background: #c0392b; font-size: 18px; padding: 10px 30px; margin: 0;">SALIR</button>
+                <button class="btn-main" onclick="initGameAndCinematic()" style="background: linear-gradient(135deg, #2ecc71, #27ae60); font-size: 22px; padding: 15px 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); text-transform: uppercase; letter-spacing: 1px;">INICIAR JUEGO</button>
             </div>
         </div>
 

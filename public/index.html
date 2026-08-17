@@ -1166,10 +1166,11 @@
                 win: 'https://cdn.freesound.org/previews/270/270402_5123851-lq.mp3',
                 bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',
                 wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',
-                saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3'
+                saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3',
+                especial: '/descartes especiales.mp3'
             };
             const a = new Audio(urls[k]); 
-            a.volume = (['rip', 'uno', 'denounce', 'tick'].includes(k)) ? 0.8 : 0.3; 
+            a.volume = (['rip', 'uno', 'denounce', 'tick', 'especial'].includes(k)) ? 0.8 : 0.3; 
             a.play().catch(()=>{}); 
         });
         

@@ -260,24 +260,28 @@
         }
 
         .cinematic-content {
-            position: relative;
-            z-index: 2;
+            position: fixed;
+            top: 45vh;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.2);
+            z-index: 400001;
             text-align: center;
-            transform: scale(0.2);
             opacity: 0;
             filter: blur(15px);
-            transition: transform 1.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.8s ease, filter 0.8s ease;
+            pointer-events: none;
+            width: 100%;
+            transition: top 1.2s cubic-bezier(0.4, 0, 0.2, 1), transform 1.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.8s ease, filter 0.8s ease;
         }
 
         .cinematic-content.in {
-            transform: scale(1);
+            transform: translate(-50%, -50%) scale(1);
             opacity: 1;
             filter: blur(0);
         }
 
         .cinematic-content.docked {
-            transform: translateY(-140px) scale(0.8);
-            transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+            top: 30px;
+            transform: translateX(-50%) scale(0.65);
         }
 
         .cinematic-title {
@@ -337,11 +341,13 @@
             </div>
         </div>
 
-        <!-- Contenido de la cinemática -->
-        <div id="cinematic-content-inner" class="cinematic-content" style="position: absolute; opacity: 0; pointer-events: none; transition: opacity 0.8s ease-in-out; z-index: 2;">
-            <h1 class="cinematic-title">UNO y 1/2</h1>
-            <div class="cinematic-subtitle">EDICIÓN SUPREMA</div>
-        </div>
+        </div> <!-- (Cierre del div id="start-overlay") -->
+
+    <!-- TÍTULO DE LA CINEMÁTICA (Independiente para permanecer fijo tras la transición) -->
+    <div id="cinematic-content-inner" class="cinematic-content">
+        <h1 class="cinematic-title">UNO y 1/2</h1>
+        <div class="cinematic-subtitle">EDICIÓN SUPREMA</div>
+    </div>
     </div>
         
     <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>

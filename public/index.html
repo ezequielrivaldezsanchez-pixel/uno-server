@@ -263,11 +263,21 @@
             position: relative;
             z-index: 2;
             text-align: center;
-            transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: scale(0.2);
+            opacity: 0;
+            filter: blur(15px);
+            transition: transform 1.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.8s ease, filter 0.8s ease;
+        }
+
+        .cinematic-content.in {
+            transform: scale(1);
+            opacity: 1;
+            filter: blur(0);
         }
 
         .cinematic-content.docked {
-            transform: translateY(-130px) scale(0.65);
+            transform: translateY(-140px) scale(0.8);
+            transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .cinematic-title {
@@ -276,27 +286,6 @@
             margin: 0;
             color: #ffffff;
             text-shadow: 0 0 25px rgba(255, 255, 255, 0.6), 0 0 60px rgba(241, 196, 15, 0.5);
-            animation: cinematicZoomIn 1.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-            opacity: 0;
-            transform: scale(0.15);
-            transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        @keyframes cinematicZoomIn {
-            0% { 
-                transform: scale(0.15); 
-                opacity: 0; 
-                filter: blur(15px); 
-            }
-            60% { 
-                opacity: 1; 
-                filter: blur(0); 
-            }
-            100% { 
-                transform: scale(1.05); 
-                opacity: 1; 
-                filter: blur(0); 
-            }
         }
 
         .cinematic-subtitle {
@@ -305,19 +294,21 @@
             letter-spacing: 8px;
             margin-top: 15px;
             text-shadow: 0 0 20px rgba(255, 215, 0, 0.7);
-            animation: fadeInSubtitle 1s ease-out 0.8s forwards;
             opacity: 0;
             transform: translateY(20px);
             transition: opacity 0.5s ease-out, transform 0.5s ease-out;
         }
 
+        .cinematic-content.in .cinematic-subtitle {
+            opacity: 1;
+            transform: translateY(0);
+            transition-delay: 0.5s;
+        }
+
         .cinematic-content.docked .cinematic-subtitle {
             opacity: 0;
             transform: translateY(10px);
-        }
-
-        @keyframes fadeInSubtitle {
-            to { opacity: 1; transform: translateY(0); }
+            transition: opacity 0.4s ease-out, transform 0.4s ease-out;
         }
 
         #login {
@@ -753,6 +744,9 @@
             const cinematicInner = document.getElementById('cinematic-content-inner');
             if (cinematicInner) {
                 cinematicInner.style.opacity = '1';
+                setTimeout(() => {
+                    cinematicInner.classList.add('in');
+                }, 50);
             }
 
             const introAudio = new Audio('/intro-cinematica.mp3');

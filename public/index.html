@@ -1328,6 +1328,10 @@
         }
 
         socket.on('ladderAnimate', (data) => {
+            const specialAudio = new Audio('/descartes-especiales.mp3');
+            specialAudio.volume = 0.8;
+            specialAudio.play().catch(()=>{});
+
             const container = document.createElement('div');
             container.style.position = 'fixed'; container.style.top = '40%'; container.style.left = '50%';
             container.style.transform = 'translate(-50%, -50%)'; container.style.display = 'flex';
@@ -1415,7 +1419,7 @@
                 bell: 'https://cdn.freesound.org/previews/336/336899_4939433-lq.mp3',
                 wild: 'https://cdn.freesound.org/previews/320/320653_5260872-lq.mp3',
                 saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3',
-                especial: '/descartes especiales.mp3'
+                especial: '/descartes-especiales.mp3'
             };
             const a = new Audio(urls[k]); 
             a.volume = (['rip', 'uno', 'denounce', 'tick', 'especial'].includes(k)) ? 0.8 : 0.3; 

@@ -206,22 +206,6 @@
             align-items: center;
             z-index: 400000;
             transition: opacity 0.5s ease-in-out;
-        }
-
-        #cinematic-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #111518;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 300000;
-            opacity: 0; /* NUEVO: Comienza transparente para hacer el fade in */
-            transition: opacity 0.8s ease-in-out;
             overflow: hidden;
         }
 
@@ -309,24 +293,25 @@
     </style>
 </head>
 <body>
-    <!-- PANTALLA DE INICIO (Desbloquea el audio en celulares) -->
+    <!-- PANTALLA DE INICIO Y CINEMÁTICA UNIFICADAS -->
     <div id="start-overlay">
-        <h1 class="logo-title" style="margin-bottom: 30px;">UNO y 1/2</h1>
-        <div style="display: flex; flex-direction: column; gap: 15px; align-items: center; z-index: 10;">
-            <button class="btn-main" onclick="initGameAndCinematic()" style="background: #2ecc71; font-size: 22px; padding: 15px 40px; box-shadow: 0 0 20px rgba(46,204,113,0.6);">INICIAR</button>
-            <button class="btn-main" onclick="exitGame()" style="background: #c0392b; font-size: 18px; padding: 10px 30px; margin: 0;">SALIR</button>
-        </div>
-    </div>
-
-    <!-- CINEMÁTICA DE INICIO -->
-    <div id="cinematic-container">
         <div class="color-blob blob-red"></div>
         <div class="color-blob blob-blue"></div>
         <div class="color-blob blob-green"></div>
         <div class="color-blob blob-yellow"></div>
-
         <div id="particles-layer"></div>
-        <div class="cinematic-content">
+
+        <!-- Contenido inicial (Botones) -->
+        <div id="start-menu-content" style="z-index: 2; display: flex; flex-direction: column; align-items: center; transition: opacity 0.4s ease-in-out;">
+            <h1 class="logo-title" style="margin-bottom: 30px;">UNO y 1/2</h1>
+            <div style="display: flex; flex-direction: column; gap: 15px; align-items: center; z-index: 10;">
+                <button class="btn-main" onclick="initGameAndCinematic()" style="background: #2ecc71; font-size: 22px; padding: 15px 40px; box-shadow: 0 0 20px rgba(46,204,113,0.6);">INICIAR</button>
+                <button class="btn-main" onclick="exitGame()" style="background: #c0392b; font-size: 18px; padding: 10px 30px; margin: 0;">SALIR</button>
+            </div>
+        </div>
+
+        <!-- Contenido de la cinemática -->
+        <div id="cinematic-content-inner" class="cinematic-content" style="position: absolute; opacity: 0; pointer-events: none; transition: opacity 0.8s ease-in-out; z-index: 2;">
             <h1 class="cinematic-title">UNO y 1/2</h1>
             <div class="cinematic-subtitle">EDICIÓN SUPREMA</div>
         </div>
@@ -675,7 +660,7 @@
                 const loginScreen = document.getElementById('login');
                 const joinMenu = document.getElementById('join-menu');
                 const lobby = document.getElementById('lobby');
-                const cinematic = document.getElementById('cinematic-container');
+                const cinematic = document.getElementById('start-overlay');
 
                 if ((cinematic && cinematic.style.display !== 'none') || (loginScreen && loginScreen.style.display === 'flex') || (joinMenu && joinMenu.style.display === 'flex') || (lobby && lobby.style.display === 'flex')) {
                     const card = allCards[Math.floor(Math.random() * allCards.length)];
@@ -722,44 +707,39 @@
         }
 
         function initGameAndCinematic() {
-            // 1. Ocultar la pantalla de inicio con transición
-            const startOverlay = document.getElementById('start-overlay');
-            if (startOverlay) {
-                startOverlay.style.opacity = '0';
+            const menuContent = document.getElementById('start-menu-content');
+            if (menuContent) {
+                menuContent.style.opacity = '0';
                 setTimeout(() => {
-                    startOverlay.style.display = 'none';
-                }, 500);
+                    menuContent.style.display = 'none';
+                }, 400);
             }
 
-            // 2. Hacer aparecer la cinemática con un fundido (Fade In)
-            const container = document.getElementById('cinematic-container');
-            if (container) {
-                container.style.opacity = '1';
+            const cinematicInner = document.getElementById('cinematic-content-inner');
+            if (cinematicInner) {
+                cinematicInner.style.opacity = '1';
             }
 
-            // 3. Reproducir el audio (al haber un toque de usuario previo, el celular lo permite)
             const introAudio = new Audio('/intro-cinematica.mp3');
             introAudio.volume = 0.9;
             introAudio.play().catch(e => {
                 console.log("Error al reproducir audio:", e);
             });
 
-            // 4. Activar partículas y cinemática
             spawnParticles();
 
-            // 5. Ocultar la cinemática tras 4.2 segundos (Fade Out) y pasar al login
             setTimeout(() => {
-                if (container) {
-                    container.style.opacity = '0';
+                const startOverlay = document.getElementById('start-overlay');
+                if (startOverlay) {
+                    startOverlay.style.opacity = '0';
                     setTimeout(() => {
-                        container.style.display = 'none';
+                        startOverlay.style.display = 'none';
                     }, 800);
                 }
             }, 4200);
         }
 
         function exitGame() {
-            // Intenta volver a la página anterior; si no hay historial, intenta cerrar la ventana
             if (window.history.length > 1) {
                 window.history.back();
             } else {

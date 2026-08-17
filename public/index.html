@@ -192,7 +192,22 @@
         
         #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
 
-        /* --- ESTILOS DE LA CINEMÁTICA --- */
+        /* --- ESTILOS DE LA PANTALLA DE INICIO Y CINEMÁTICA --- */
+        #start-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #111518;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 400000;
+            transition: opacity 0.5s ease-in-out;
+        }
+
         #cinematic-container {
             position: fixed;
             top: 0;
@@ -293,6 +308,15 @@
     </style>
 </head>
 <body>
+    <!-- PANTALLA DE INICIO (Desbloquea el audio en celulares) -->
+    <div id="start-overlay">
+        <h1 class="logo-title" style="margin-bottom: 30px;">UNO y 1/2</h1>
+        <div style="display: flex; flex-direction: column; gap: 15px; align-items: center; z-index: 10;">
+            <button class="btn-main" onclick="initGameAndCinematic()" style="background: #2ecc71; font-size: 22px; padding: 15px 40px; box-shadow: 0 0 20px rgba(46,204,113,0.6);">INICIAR</button>
+            <button class="btn-main" onclick="window.location.reload()" style="background: #c0392b; font-size: 18px; padding: 10px 30px; margin: 0;">SALIR</button>
+        </div>
+    </div>
+
     <!-- CINEMÁTICA DE INICIO -->
     <div id="cinematic-container">
         <div class="color-blob blob-red"></div>
@@ -306,7 +330,7 @@
             <div class="cinematic-subtitle">EDICIÓN SUPREMA</div>
         </div>
     </div>
-
+        
     <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
@@ -696,18 +720,27 @@
             }
         }
 
-        window.addEventListener('DOMContentLoaded', () => {
-            spawnParticles();
+        function initGameAndCinematic() {
+            // 1. Ocultar la pantalla de inicio con transición
+            const startOverlay = document.getElementById('start-overlay');
+            if (startOverlay) {
+                startOverlay.style.opacity = '0';
+                setTimeout(() => {
+                    startOverlay.style.display = 'none';
+                }, 500);
+            }
 
-            // Reproducir tu archivo de audio personalizado alojado en la carpeta public
-            // (Asegúrate de que el nombre coincida exactamente con el archivo que subiste)
+            // 2. Reproducir el audio (al haber un toque de usuario previo, el celular lo permite)
             const introAudio = new Audio('/intro-cinematica.mp3');
             introAudio.volume = 0.9;
             introAudio.play().catch(e => {
-                console.log("Reproducción automática bloqueada por el navegador hasta interacción:", e);
+                console.log("Error al reproducir audio:", e);
             });
 
-            // Duración de la cinemática antes de fundirse y abrir el login
+            // 3. Activar partículas y cinemática
+            spawnParticles();
+
+            // 4. Ocultar la cinemática tras 3.2 segundos y pasar al login
             setTimeout(() => {
                 const container = document.getElementById('cinematic-container');
                 if (container) {
@@ -717,7 +750,7 @@
                     }, 800);
                 }
             }, 3200);
-        });
+        }
 
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];

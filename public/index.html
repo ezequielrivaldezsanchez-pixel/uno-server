@@ -266,9 +266,26 @@
             margin: 0;
             color: #ffffff;
             text-shadow: 0 0 25px rgba(255, 255, 255, 0.6), 0 0 60px rgba(241, 196, 15, 0.5);
-            animation: cinematicZoomIn 1.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            animation: cinematicZoomIn 1.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
             opacity: 0;
-            transform: scale(0.4);
+            transform: scale(0.15);
+        }
+
+        @keyframes cinematicZoomIn {
+            0% { 
+                transform: scale(0.15); 
+                opacity: 0; 
+                filter: blur(15px); 
+            }
+            60% { 
+                opacity: 1; 
+                filter: blur(0); 
+            }
+            100% { 
+                transform: scale(1.05); 
+                opacity: 1; 
+                filter: blur(0); 
+            }
         }
 
         .cinematic-subtitle {

@@ -191,9 +191,122 @@
         #lobby-link-container { margin-bottom: 25px; z-index: 10; }
         
         #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
+
+        /* --- ESTILOS DE LA CINEMÁTICA --- */
+        #cinematic-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #111518;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 300000;
+            transition: opacity 0.8s ease-in-out;
+            overflow: hidden;
+        }
+
+        .color-blob {
+            position: absolute;
+            width: 45vw;
+            height: 45vw;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.35;
+            animation: moveBlobs 8s infinite alternate ease-in-out;
+            z-index: 0;
+        }
+
+        .blob-red { background: #ff5252; top: -10%; left: -10%; animation-delay: 0s; }
+        .blob-blue { background: #448aff; bottom: -10%; right: -10%; animation-delay: 2s; }
+        .blob-green { background: #69f0ae; top: 30%; right: -15%; animation-delay: 4s; }
+        .blob-yellow { background: #ffd740; bottom: 20%; left: -15%; animation-delay: 6s; }
+
+        @keyframes moveBlobs {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(40px, 40px) scale(1.2); }
+        }
+
+        #particles-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .particle {
+            position: absolute;
+            background: radial-gradient(circle, #fff 0%, gold 60%, transparent 100%);
+            border-radius: 50%;
+            animation: floatParticle 2.5s ease-out forwards;
+            opacity: 0;
+        }
+
+        @keyframes floatParticle {
+            0% { transform: scale(0) translate(0, 0); opacity: 1; }
+            50% { opacity: 0.8; }
+            100% { transform: scale(1.5) translate(var(--tx), var(--ty)); opacity: 0; }
+        }
+
+        .cinematic-content {
+            position: relative;
+            z-index: 2;
+            text-align: center;
+        }
+
+        .cinematic-title {
+            font-size: clamp(45px, 9vw, 90px);
+            font-weight: 900;
+            margin: 0;
+            color: #ffffff;
+            text-shadow: 0 0 25px rgba(255, 255, 255, 0.6), 0 0 60px rgba(241, 196, 15, 0.5);
+            animation: cinematicZoomIn 1.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            opacity: 0;
+            transform: scale(0.4);
+        }
+
+        .cinematic-subtitle {
+            font-size: clamp(16px, 3vw, 22px);
+            color: gold;
+            letter-spacing: 8px;
+            margin-top: 15px;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.7);
+            animation: fadeInSubtitle 1s ease-out 0.8s forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        @keyframes cinematicZoomIn {
+            0% { transform: scale(0.4); opacity: 0; filter: blur(10px); }
+            100% { transform: scale(1); opacity: 1; filter: blur(0); }
+        }
+
+        @keyframes fadeInSubtitle {
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
+    <!-- CINEMÁTICA DE INICIO -->
+    <div id="cinematic-container">
+        <div class="color-blob blob-red"></div>
+        <div class="color-blob blob-blue"></div>
+        <div class="color-blob blob-green"></div>
+        <div class="color-blob blob-yellow"></div>
+
+        <div id="particles-layer"></div>
+        <div class="cinematic-content">
+            <h1 class="cinematic-title">UNO y 1/2</h1>
+            <div class="cinematic-subtitle">EDICIÓN SUPREMA</div>
+        </div>
+    </div>
+
     <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
@@ -534,7 +647,12 @@
             const allCards = [...specialValues, ...colorValues];
 
             fallingInterval = setInterval(() => {
-                if (document.getElementById('login').style.display === 'flex' || document.getElementById('join-menu').style.display === 'flex' || document.getElementById('lobby').style.display === 'flex') {
+                const loginScreen = document.getElementById('login');
+                const joinMenu = document.getElementById('join-menu');
+                const lobby = document.getElementById('lobby');
+                const cinematic = document.getElementById('cinematic-container');
+
+                if ((cinematic && cinematic.style.display !== 'none') || (loginScreen && loginScreen.style.display === 'flex') || (joinMenu && joinMenu.style.display === 'flex') || (lobby && lobby.style.display === 'flex')) {
                     const card = allCards[Math.floor(Math.random() * allCards.length)];
                     const el = document.createElement('div');
                     el.className = 'falling-bg-card ' + getCardClass(card);
@@ -548,6 +666,58 @@
             }, 1200);
         }
         window.onload = createFallingCards;
+
+        // --- LÓGICA DE LA CINEMÁTICA DE INICIO ---
+        function spawnParticles() {
+            const layer = document.getElementById('particles-layer');
+            if (!layer) return;
+            layer.innerHTML = '';
+            
+            for (let i = 0; i < 40; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle';
+                
+                const size = Math.random() * 7 + 4;
+                p.style.width = size + 'px';
+                p.style.height = size + 'px';
+                p.style.left = '50%';
+                p.style.top = '50%';
+                
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * 280 + 60;
+                const tx = Math.cos(angle) * distance;
+                const ty = Math.sin(angle) * distance;
+                
+                p.style.setProperty('--tx', tx + 'px');
+                p.style.setProperty('--ty', ty + 'px');
+                p.style.animationDelay = (Math.random() * 0.35) + 's';
+                
+                layer.appendChild(p);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            spawnParticles();
+
+            // Reproducir tu archivo de audio personalizado alojado en la carpeta public
+            // (Asegúrate de que el nombre coincida exactamente con el archivo que subiste)
+            const introAudio = new Audio('/intro-cinematica.mp3');
+            introAudio.volume = 0.9;
+            introAudio.play().catch(e => {
+                console.log("Reproducción automática bloqueada por el navegador hasta interacción:", e);
+            });
+
+            // Duración de la cinemática antes de fundirse y abrir el login
+            setTimeout(() => {
+                const container = document.getElementById('cinematic-container');
+                if (container) {
+                    container.style.opacity = '0';
+                    setTimeout(() => {
+                        container.style.display = 'none';
+                    }, 800);
+                }
+            }, 3200);
+        });
 
         const socket = io();
         let myId = ''; let pendingCard = null; let pendingGrace = false; let isMyTurn = false; let myHand = []; let currentPlayers = [];

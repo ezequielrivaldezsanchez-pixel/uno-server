@@ -1242,6 +1242,12 @@
             document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none'); 
             document.getElementById(id).style.display='flex'; 
             
+            // Ocultar o mostrar el título cinemático según la pantalla
+            const cinematicInner = document.getElementById('cinematic-content-inner');
+            if (cinematicInner) {
+                cinematicInner.style.display = (id === 'game-area') ? 'none' : 'block';
+            }
+            
             if (id === 'game-area') {
                 document.getElementById('animated-bg').style.display = 'none';
                 const cb = document.getElementById('chat-btn');

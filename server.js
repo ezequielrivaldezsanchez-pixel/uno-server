@@ -289,16 +289,19 @@ function startCountdown(roomId) {
         if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } 
     });
     
-    io.to(roomId).emit('countdownTick', 3); io.to(roomId).emit('playSound', 'tick');
-    let count = 2;
+    let count = 3;
+    io.to(roomId).emit('countdownTick', count); 
+    io.to(roomId).emit('playSound', 'tick');
+    
     room.countdownInterval = setInterval(() => {
         if (!rooms[roomId]) return clearInterval(room.countdownInterval);
-        io.to(roomId).emit('countdownTick', count); 
+        count--;
         if (count > 0) {
+            io.to(roomId).emit('countdownTick', count); 
             io.to(roomId).emit('playSound', 'tick'); 
-        }
-        if (count <= 0) { 
+        } else { 
             clearInterval(room.countdownInterval); 
+            io.to(roomId).emit('countdownTick', 0);
             room.gameState = 'playing'; 
             io.to(roomId).emit('playSound', 'start'); 
             updateAll(roomId); 
@@ -306,7 +309,6 @@ function startCountdown(roomId) {
             const starterName = room.players[room.currentTurn] ? room.players[room.currentTurn].name : "???";
             io.to(roomId).emit('roundStarted', { round: room.roundCount, starterName: starterName });
         } 
-        count--;
     }, 1000);
 }
 

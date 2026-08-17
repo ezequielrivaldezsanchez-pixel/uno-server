@@ -510,6 +510,12 @@ function applyCardEffect(roomId, player, card, chosenColor) {
 
         room.pendingPenalty += val; room.pendingSkip += skips;
         io.to(roomId).emit('notification', `💥 ¡${card.value}! Total: ${room.pendingPenalty}`); io.to(roomId).emit('playSound', 'attack');
+        
+        // Reproducir sonido especial si es +12 o SALTEO SUPREMO
+        if (card.value === '+12' || card.value === 'SALTEO SUPREMO') {
+            io.to(roomId).emit('playSound', 'plus12ss');
+        }
+
         if (val > 4) io.to(roomId).emit('shakeScreen');
 
         if (['+12', 'SALTEO SUPREMO'].includes(card.value)) {
@@ -653,6 +659,10 @@ function finalizeDuel(roomId) {
             io.to(roomId).emit('notification', `💀 ${att.name} GANA el duelo.`);
             if (!isPenaltyDuel) {
                 eliminatePlayer(roomId, def.uuid);
+                
+                // Reproducir sonido de muerte por duelo de RIP
+                io.to(roomId).emit('playSound', 'duelomuerte');
+                
                 checkWinCondition(roomId);
                 if (rooms[roomId] && rooms[roomId].gameState !== 'game_over' && rooms[roomId].gameState !== 'round_over') {
                     room.gameState = 'playing';

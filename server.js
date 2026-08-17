@@ -289,10 +289,14 @@ function startCountdown(roomId) {
         if (!p.isSpectator) { for (let i = 0; i < 7; i++) drawCards(roomId, room.players.indexOf(p), 1); } 
     });
     
-    io.to(roomId).emit('countdownTick', 3); let count = 3;
+    io.to(roomId).emit('countdownTick', 3); io.to(roomId).emit('playSound', 'tick');
+    let count = 2;
     room.countdownInterval = setInterval(() => {
         if (!rooms[roomId]) return clearInterval(room.countdownInterval);
-        io.to(roomId).emit('countdownTick', count); io.to(roomId).emit('playSound', 'soft');
+        io.to(roomId).emit('countdownTick', count); 
+        if (count > 0) {
+            io.to(roomId).emit('playSound', 'tick'); 
+        }
         if (count <= 0) { 
             clearInterval(room.countdownInterval); 
             room.gameState = 'playing'; 
@@ -1339,7 +1343,7 @@ socket.on('draw', safe(() => {
      room.currentTurn = targetIdx;
      room.resumeTurnFrom = null;
         io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Recibe 2 cartas.`); 
-        io.to(roomId).emit('playSound', 'attack'); updateAll(roomId);
+        io.to(roomId).emit('playSound', 'denounce'); updateAll(roomId);
     }));
 
     socket.on('sendChat', safe((text) => { 

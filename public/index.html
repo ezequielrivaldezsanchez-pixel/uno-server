@@ -1245,7 +1245,8 @@
             // Ocultar o mostrar el título cinemático según la pantalla
             const cinematicInner = document.getElementById('cinematic-content-inner');
             if (cinematicInner) {
-                cinematicInner.style.display = (id === 'game-area') ? 'none' : 'block';
+                // Ahora el título SOLO se mostrará en el login, y se ocultará en el resto de pantallas
+                cinematicInner.style.display = (id === 'login') ? 'block' : 'none';
             }
             
             if (id === 'game-area') {

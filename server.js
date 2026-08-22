@@ -947,7 +947,7 @@ io.on('connection', (socket) => {
         if(data.confirmed && deadPlayers.length === 1) {
              const target = deadPlayers[0]; target.isDead = false; target.isSpectator = false;
              io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name }); 
-             io.to(roomId).emit('playSound', 'divine');
+             io.to(roomId).emit('playSound', 'resurreccion');
              if (data.chosenColor) room.activeColor = data.chosenColor; else if (!room.activeColor) room.activeColor = 'rojo';
              if (cardIndex !== -1) { player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false }); }
              if (player.hand.length === 0) { room.gameState = 'animating_win'; updateAll(roomId); setTimeout(() => calculateAndFinishRound(roomId, player), 1000); return; }
@@ -1051,7 +1051,7 @@ let isLibreDiscard = false;
                         if (target) { 
                             target.isDead = false; target.isSpectator = false; io.to(roomId).emit('playerRevived', { savior: player.name, revived: target.name });
                             if(cardIndex !== -1) { player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: isLibreDiscard }); if (chosenColor) room.activeColor = chosenColor; else if (!room.activeColor) room.activeColor = 'rojo'; }
-                            io.to(roomId).emit('playSound', 'divine'); checkUnoCheck(roomId, player);
+                            io.to(roomId).emit('playSound', 'resurreccion'); checkUnoCheck(roomId, player);
                             if (player.hand.length === 0) { room.gameState = 'animating_win'; updateAll(roomId); setTimeout(() => calculateAndFinishRound(roomId, player), 1000); return; }
                             advanceTurn(roomId, 1); updateAll(roomId); return;
                         }
@@ -1185,6 +1185,7 @@ let isLibreDiscard = false;
             }
 
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });
+            io.to(roomId).emit('playSound', 'librealbedrio');
             io.to(roomId).emit('notification', `🕊️ ${player.name} arrojó LIBRE ALBEDRÍO y está eligiendo...`);
             room.gameState = 'libre_choosing'; updateAll(roomId);
             setTimeout(() => { socket.emit('startLibreLogic', card.id); }, 1000);

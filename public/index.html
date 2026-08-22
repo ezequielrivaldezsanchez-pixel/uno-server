@@ -1422,10 +1422,13 @@
                 saff: 'https://cdn.freesound.org/previews/614/614742_11430489-lq.mp3',
                 especial: '/descartes-especiales.mp3',
                 plus12ss: '/+12-SS.mp3',
-                duelomuerte: '/duelo-muerte.mp3'
+                duelomuerte: '/duelo-muerte.mp3',
+                librealbedrio: '/libre-albedrio.mp3',    // NUEVO
+                resurreccion: '/gracia-resurreccion.mp3' // NUEVO
             };
             const a = new Audio(urls[k]); 
-            a.volume = (['rip', 'uno', 'denounce', 'tick', 'especial'].includes(k)) ? 0.8 : 0.3; 
+            // Agregamos librealbedrio y resurreccion al volumen fuerte (0.8)
+            a.volume = (['rip', 'uno', 'denounce', 'tick', 'especial', 'librealbedrio', 'resurreccion'].includes(k)) ? 0.8 : 0.3; 
             a.play().catch(()=>{}); 
         });
         

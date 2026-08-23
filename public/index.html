@@ -1477,6 +1477,22 @@
             forceCloseModals(); 
             document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
             document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';           
+            
+            // Detectamos si la ronda terminó con una jugada maestra / Libre Albedrío especial
+            // (Si el mensaje de alerta previo o los datos del ganador indican una jugada maestra)
+            const alertBoxText = document.getElementById('main-alert').innerText || "";
+            const esJugadaMaestra = alertBoxText.toLowerCase().includes("maestra") || (d.specialWin && d.specialWin === 'libre');
+
+            if (esJugadaMaestra) {
+                // Reproducimos el audio épico de descartes especiales
+                const specialAudio = new Audio('/descartes-especiales.mp3');
+                specialAudio.volume = 0.8;
+                specialAudio.play().catch(()=>{});
+
+                // Damos más tiempo exclusivo para leer la jugada maestra
+                await new Promise(r => setTimeout(r, 3000));
+            }
+
             document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
             const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = d.winnerTotal - d.roundPoints; wPtsEl.innerText = acumuladoRonda + " pts"; 
             const losersArea = document.getElementById('losers-area'); losersArea.innerHTML = '';

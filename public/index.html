@@ -62,7 +62,7 @@
         
         #score-btn { background: gold; color: black; }
         #rules-btn { background: #9b59b6; color: white; }
-        #uno-main-btn { background: #e67e22; font-size: 10px; font-weight: bold; text-align: center; line-height: 1.1; padding: 0; }
+        #uno-main-btn { background: #e67e22; font-size: 10px; font-weight: bold; text-align: center; line-height: 1.1; padding: 0; z-index: 999999 !important; }
         #chat-btn { background: #3498db; }
         #global-leave-btn { background: #c0392b; font-size: 20px; }
 
@@ -82,7 +82,7 @@
         @keyframes pulseRed { from { box-shadow: 0 0 10px red; } to { box-shadow: 0 0 25px red; } }
         
         #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
-        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
+        #decks-container { display: flex; gap: 30px; transform: scale(1.1); margin-top: 45px; }
         
         #action-bar { position: fixed; bottom: 180px; left: 0; width: 100%; display: none; justify-content: center; align-items: center; padding: 10px; pointer-events: none; z-index: 20000; }
         #uno-btn-area { pointer-events: auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; background: none; padding: 0; border-radius: 0; }
@@ -190,7 +190,7 @@
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 25px; z-index: 10; }
         
-        #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
+        #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 999999 !important; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
 
         /* --- ESTILOS DE LA PANTALLA DE INICIO Y CINEMÁTICA --- */
         #start-overlay {
@@ -831,9 +831,22 @@
             buttons.forEach((btn, idx) => { if (btn) { btn.style.top = baseTop + 'px'; btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px'; btn.style.right = 'auto'; } });
 
             const lowerElements = ['uno-menu', 'chat-win']; lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) { el.style.top = (baseTop + 60) + 'px'; } });
-            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
+            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 125) + 'px';
         }
         window.addEventListener('resize', repositionHUD);
+
+        // Ocultar alerta al tocar cualquier parte de la pantalla (excepto botones y menú UNO)
+        document.addEventListener('click', function(e) {
+            const mainAlert = document.getElementById('main-alert');
+            if (mainAlert && mainAlert.style.display === 'block') {
+                // Validación de seguridad: verificamos que el elemento tocado soporte la función closest()
+                if (e.target && typeof e.target.closest === 'function') {
+                    if (!e.target.closest('.hud-btn') && !e.target.closest('#uno-menu')) {
+                        mainAlert.style.display = 'none';
+                    }
+                }
+            }
+        });
 
         socket.on('connect', () => { document.getElementById('reconnect-overlay').style.display = 'none'; myId = socket.id; socket.emit('checkSession', myUUID); });
         socket.on('disconnect', () => { document.getElementById('reconnect-overlay').style.display = 'flex'; });

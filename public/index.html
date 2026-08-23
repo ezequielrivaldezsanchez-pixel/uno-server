@@ -1446,8 +1446,64 @@
             a.play().catch(()=>{}); 
         });
         
-        socket.on('notification',m=>{ const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; setTimeout(()=>b.style.display='none',4000);});
-        socket.on('showDivine',m=>{ const b=document.getElementById('main-alert'); b.innerText=m; b.style.display='block'; b.style.background='white'; b.style.color='gold'; setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);});
+        let lastNotification = "";
+        socket.on('notification',m=>{ 
+            lastNotification = m; 
+            const b=document.getElementById('main-alert'); 
+            b.innerText=m; 
+            b.style.display='block'; 
+            setTimeout(()=>b.style.display='none',4000);
+        });
+        
+        socket.on('showDivine',m=>{ 
+            lastNotification = m;
+            const b=document.getElementById('main-alert'); 
+            b.innerText=m; 
+            b.style.display='block'; 
+            b.style.background='white'; 
+            b.style.color='gold'; 
+            setTimeout(()=>{b.style.display='none'; b.style.background='rgba(0,0,0,0.95)'; b.style.color='white';},4000);
+        });
+
+        socket.on('roundOver', async d => {
+            forceCloseModals(); 
+            document.getElementById('action-bar').style.display='none'; document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'none');
+            document.getElementById('stage-collection').style.display = 'none'; document.getElementById('stage-ranking').style.display = 'none'; document.getElementById('round-overlay').style.display = 'flex';           
+            
+            // Verificamos si la última notificación corresponde a una jugada maestra
+            const esJugadaMaestra = lastNotification && lastNotification.toLowerCase().includes("maestra");
+
+            // Creamos o recuperamos un banner exclusivo dentro del resumen de ronda
+            let masterBanner = document.getElementById('round-master-banner');
+            if (!masterBanner) {
+                masterBanner = document.createElement('div');
+                masterBanner.id = 'round-master-banner';
+                masterBanner.style.cssText = "color: gold; font-size: 20px; font-weight: bold; margin-bottom: 15px; text-shadow: 0 0 15px gold; padding: 12px 20px; border: 2px solid gold; border-radius: 10px; background: rgba(0,0,0,0.85); display: none; text-align: center; max-width: 90%;";
+                const stageColl = document.getElementById('stage-collection');
+                stageColl.insertBefore(masterBanner, stageColl.firstChild);
+            }
+
+            if (esJugadaMaestra) {
+                masterBanner.innerText = lastNotification;
+                masterBanner.style.display = 'block';
+
+                // Reproducimos el audio épico de descartes especiales
+                const specialAudio = new Audio('/descartes-especiales.mp3');
+                specialAudio.volume = 0.8;
+                specialAudio.play().catch(()=>{});
+
+                // Damos 3 segundos de pausa exclusiva con el cartel visible y el audio sonando
+                await new Promise(r => setTimeout(r, 3000));
+            } else {
+                masterBanner.style.display = 'none';
+            }
+
+            // Reseteamos la notificación para rondas normales
+            lastNotification = "";
+
+            document.getElementById('stage-collection').style.display = 'flex'; document.getElementById('r-winner-name').innerText = d.winner;
+            const wPtsEl = document.getElementById('r-winner-pts'); let acumuladoRonda = d.winnerTotal - d.roundPoints; wPtsEl.innerText = acumuladoRonda + " pts"; 
+            const losersArea = document.getElementById('losers-area'); losersArea.innerHTML = '';
         
         socket.on('playerRevived', data => {
             const b = document.getElementById('main-alert');

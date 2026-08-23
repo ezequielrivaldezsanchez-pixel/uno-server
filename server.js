@@ -1176,12 +1176,14 @@ let isLibreDiscard = false;
         if (card.value === 'LIBRE') { 
             if (player.hand.length < 3) { socket.emit('notification', '🚫 Necesitas al menos 3 cartas para usar LIBRE ALBEDRÍO (la de uso, una para regalar y otra para descartar).'); return; }
             
-            // Validar que exista al menos una carta numérica, 1 y 1/2 o Gracia Divina en el resto de la mano
-            const otherCards = player.hand.filter(c => c.id !== card.id);
-            const hasValidCloser = otherCards.some(c => /^[0-9]$/.test(c.value) || c.value === '1 y 1/2' || c.value === 'GRACIA');
-            if (!hasValidCloser) {
-                socket.emit('notification', '🚫 No puedes usar LIBRE ALBEDRÍO si no tienes al menos una carta numérica o Gracia Divina entre tus demás cartas para completar tu descarte.');
-                return;
+            // Validar que exista carta de cierre SÓLO si el jugador se quedará sin cartas tras usarla (exactamente 3 cartas en mano)
+            if (player.hand.length === 3) {
+                const otherCards = player.hand.filter(c => c.id !== card.id);
+                const hasValidCloser = otherCards.some(c => /^[0-9]$/.test(c.value) || c.value === '1 y 1/2' || c.value === 'GRACIA');
+                if (!hasValidCloser) {
+                    socket.emit('notification', '🚫 No puedes usar LIBRE ALBEDRÍO para ganar la ronda si no tienes al menos una carta numérica o Gracia Divina para completar tu descarte final.');
+                    return;
+                }
             }
 
             player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });

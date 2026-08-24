@@ -1338,11 +1338,23 @@
             const container = document.createElement('div');
             container.style.position = 'fixed'; container.style.top = '40%'; container.style.left = '50%';
             container.style.transform = 'translate(-50%, -50%)'; container.style.display = 'flex';
-            container.style.gap = '15px'; container.style.zIndex = '999999'; container.style.padding = '35px 25px 20px 25px';
+            
+            // --- CÁLCULO DINÁMICO DE ESPACIO SEGÚN CANTIDAD DE CARTAS ---
+            let cardScale = 1;
+            let gapSize = 15;
+            const count = data.cards.length;
+            
+            if (count > 4) {
+                // Reducimos progresivamente la escala y la separación para que quepan en pantalla
+                cardScale = Math.max(0.6, 1 - ((count - 4) * 0.1)); 
+                gapSize = Math.max(5, 15 - ((count - 4) * 3));
+            }
+            
+            container.style.gap = gapSize + 'px'; container.style.zIndex = '999999'; container.style.padding = '35px 25px 20px 25px';
             container.style.background = 'rgba(0,0,0,0.95)'; container.style.borderRadius = '15px';
             container.style.boxShadow = '0 10px 40px rgba(0,0,0,0.8), 0 0 25px cyan'; 
             container.style.border = '2px solid cyan';
-            container.style.flexWrap = 'wrap'; container.style.justifyContent = 'center'; container.style.maxWidth = '90vw';
+            container.style.flexWrap = 'wrap'; container.style.justifyContent = 'center'; container.style.maxWidth = '95vw'; // Usar casi todo el ancho disponible
             
             const title = document.createElement('div');
             title.innerHTML = '✨ <span style="color:cyan;">JUGADA ESPECIAL</span> ✨<br><small style="color:white; font-size:14px;">de ' + data.playerName + '</small>'; 
@@ -1360,7 +1372,27 @@
                     el.className = 'hand-card ' + getCardClass(c); 
                     el.innerHTML = getCardInnerHTML(c);
                     el.style.position = 'relative'; 
-                    el.style.animation = 'pop 0.3s ease-out forwards';
+                    // Aplicamos la escala dinámica, manteniendo la animación original
+                    el.style.transform = 'scale(' + cardScale + ')'; 
+                    el.style.transformOrigin = 'center center'; // Para que escale desde su propio centro
+                    // Tenemos que inyectar la animación como keyframes para que no pise el scale
+                    el.animate([
+                        { transform: 'scale(0.8)', opacity: 0 },
+                        { transform: 'scale(' + cardScale + ')', opacity: 1 }
+                    ], {
+                        duration: 300,
+                        easing: 'ease-out',
+                        fill: 'forwards'
+                    });
+                    
+                    // Como el transform scale encoge el contenido pero el div sigue ocupando sus 85px reales,
+                    // achicamos los márgenes laterales proporcionalmente para que se acerquen.
+                    if(cardScale < 1) {
+                         const reduction = 85 * (1 - cardScale);
+                         el.style.marginLeft = -(reduction/2) + 'px';
+                         el.style.marginRight = -(reduction/2) + 'px';
+                    }
+                    
                     container.appendChild(el);
                 }, i * 200);
             });

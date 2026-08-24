@@ -82,7 +82,7 @@
         @keyframes pulseRed { from { box-shadow: 0 0 10px red; } to { box-shadow: 0 0 25px red; } }
         
         #table-zone { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; z-index: 15; position: relative; }
-        #decks-container { display: flex; gap: 30px; transform: scale(1.1); }
+        #decks-container { display: flex; gap: 30px; transform: scale(1.1); margin-top: 35px; }
         
         #action-bar { position: fixed; bottom: 180px; left: 0; width: 100%; display: none; justify-content: center; align-items: center; padding: 10px; pointer-events: none; z-index: 20000; }
         #uno-btn-area { pointer-events: auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; background: none; padding: 0; border-radius: 0; }
@@ -190,7 +190,7 @@
         .kick-btn { background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; padding: 2px 8px; border-radius: 5px; margin-left: 20px; }
         #lobby-link-container { margin-bottom: 25px; z-index: 10; }
         
-        #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 40000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
+        #uno-menu { display: none; position: fixed; right: 10px; background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px; z-index: 65000; flex-direction: column; width: 180px; border: 1px solid #e67e22; transition: top 0.3s ease-out; }
 
         /* --- ESTILOS DE LA PANTALLA DE INICIO Y CINEMÁTICA --- */
         #start-overlay {
@@ -391,7 +391,7 @@
 
     <div id="alert-zone">
         <div id="penalty-display">⚠️ DEBES RECOGER <span id="pen-num">0</span> CARTAS<br><small style="color:white; font-size:14px; font-weight:normal;">(Toca el mazo para robar)</small></div>
-        <div id="main-alert" class="alert-box"></div>
+        <div id="main-alert" class="alert-box" onclick="this.style.display='none'"></div>
     </div>
 
     <div id="action-bar">
@@ -831,7 +831,7 @@
             buttons.forEach((btn, idx) => { if (btn) { btn.style.top = baseTop + 'px'; btn.style.left = (startLeft + (btnSize + gap) * idx) + 'px'; btn.style.right = 'auto'; } });
 
             const lowerElements = ['uno-menu', 'chat-win']; lowerElements.forEach(function(id) { const el = document.getElementById(id); if(el) { el.style.top = (baseTop + 60) + 'px'; } });
-            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 75) + 'px';
+            const alertZone = document.getElementById('alert-zone'); if(alertZone) alertZone.style.top = (baseTop + 115) + 'px';
         }
         window.addEventListener('resize', repositionHUD);
 
@@ -1186,6 +1186,7 @@
         function handleCardClick(c) {
             if(document.getElementById('color-picker').style.display === 'flex') return;
             document.getElementById('uno-menu').style.display='none'; 
+            document.getElementById('main-alert').style.display='none'; 
 
             const hasPenalty = (document.getElementById('penalty-display').style.display === 'block');
             if (hasPenalty && !pendingLibreContext) {
@@ -1266,7 +1267,7 @@
         }
         
         function start(){ socket.emit('requestStart'); } 
-        function draw(){ if(throttle()) return; socket.emit('draw'); document.getElementById('uno-menu').style.display='none'; } 
+        function draw(){ if(throttle()) return; socket.emit('draw'); document.getElementById('uno-menu').style.display='none'; document.getElementById('main-alert').style.display='none'; } 
         function pass(){ if(throttle()) return; socket.emit('passTurn'); document.getElementById('uno-menu').style.display='none'; }
         function trySayUno() { if(myHand.length > 2) { const b=document.getElementById('main-alert'); b.innerText="🚫 ¡No puedes anunciar si no es verdad!"; b.style.display='block'; setTimeout(()=>b.style.display='none',4000); toggleUnoMenu(); return; } sayUno(); }
         function sayUno(){ socket.emit('sayUno'); toggleUnoMenu(); }

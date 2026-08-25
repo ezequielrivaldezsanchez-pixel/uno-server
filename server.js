@@ -952,7 +952,31 @@ io.on('connection', (socket) => {
              if (cardIndex !== -1) { player.hand.splice(cardIndex, 1); room.discardPile.push(card); io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false }); }
              if (player.hand.length === 0) { room.gameState = 'animating_win'; updateAll(roomId); setTimeout(() => calculateAndFinishRound(roomId, player), 1000); return; }
              checkUnoCheck(roomId, player); advanceTurn(roomId, 1); updateAll(roomId);
-        } else { if (cardIndex === -1) { advanceTurn(roomId, 1); updateAll(roomId); } }
+        } else { 
+             // --- NUEVO: SI ELIGE NO REVIVIR, IGUAL SE DESCARTA GRACIA Y CAMBIA COLOR ---
+             if (cardIndex !== -1) {
+                 io.to(roomId).emit('notification', `🎨 ${player.name} usó Gracia para cambiar el color (rechazó la resurrección).`); 
+                 player.hand.splice(cardIndex, 1); 
+                 room.discardPile.push(card); 
+                 io.to(roomId).emit('playSound', 'divine'); 
+                 io.to(roomId).emit('universalDiscardAnim', { card: card, playerId: socket.id, isLibreDiscard: false });
+                 
+                 if (data.chosenColor) {
+                     room.activeColor = data.chosenColor;
+                     io.to(roomId).emit('notification', `🎨 ${player.name} cambió el color a ${data.chosenColor.toUpperCase()}`);
+                 } else if (!room.activeColor) {
+                     room.activeColor = 'rojo';
+                 }
+                 
+                 checkUnoCheck(roomId, player);
+                 if (player.hand.length === 0) { room.gameState = 'animating_win'; updateAll(roomId); setTimeout(() => calculateAndFinishRound(roomId, player), 1000); return; }
+                 advanceTurn(roomId, 1); 
+                 updateAll(roomId); 
+             } else {
+                 advanceTurn(roomId, 1); 
+                 updateAll(roomId); 
+             }
+        }
     }));
 
     socket.on('playCard', safe((cardId, chosenColor, reviveTargetId, libreContext) => {

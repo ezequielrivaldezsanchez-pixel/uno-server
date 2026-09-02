@@ -322,6 +322,20 @@
         #login.active {
             opacity: 1;
         }
+
+        /* --- EFECTO DE TENSIÓN (PARTÍCULAS) --- */
+        #tension-layer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10005; overflow: hidden; }
+        .ember {
+            position: absolute; bottom: -20px; border-radius: 50%; opacity: 0;
+            background: radial-gradient(circle, #ffcf54 0%, #ff4757 50%, transparent 100%);
+            animation: floatUp linear forwards; filter: blur(1px);
+        }
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            20% { opacity: 0.8; }
+            80% { opacity: 0.5; }
+            100% { transform: translateY(-100vh) scale(1.5); opacity: 0; }
+        }
     </style>
 </head>
 <body>
@@ -350,6 +364,7 @@
     </div>
         
     <div id="animated-bg" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;" class="mutating-bg"></div>
+    <div id="tension-layer"></div>
     <div id="reconnect-overlay"><div class="loader"></div><div>Reconectando...</div></div>
 
     <div id="login" class="screen" style="display:flex; padding-top: 60px;">
@@ -979,9 +994,34 @@
             }, 800);
         });
 
-        socket.on('updateState', s => {
-            document.getElementById('afk-modal').style.display = 'none'; 
-            currentPlayers = s.players;
+        // --- CONTROL DE PARTÍCULAS DE TENSIÓN ---
+let tensionInterval = null;
+function startTension() {
+    if (tensionInterval) return; 
+    const layer = document.getElementById('tension-layer');
+    if(!layer) return;
+    tensionInterval = setInterval(() => {
+        const ember = document.createElement('div');
+        ember.className = 'ember';
+        const size = Math.random() * 8 + 4;
+        ember.style.width = size + 'px'; ember.style.height = size + 'px';
+        ember.style.left = Math.random() * 100 + 'vw';
+        const duration = Math.random() * 2.5 + 2.5;
+        ember.style.animationDuration = duration + 's';
+        ember.style.marginLeft = (Math.random() * 50 - 25) + 'px';
+        layer.appendChild(ember);
+        setTimeout(() => { if (ember.parentNode) ember.remove(); }, duration * 1000);
+    }, 80);
+}
+function stopTension() {
+    if (tensionInterval) { clearInterval(tensionInterval); tensionInterval = null; }
+    const layer = document.getElementById('tension-layer');
+    if(layer) layer.innerHTML = '';
+}
+
+socket.on('updateState', s => {
+    document.getElementById('afk-modal').style.display = 'none'; 
+    currentPlayers = s.players;
             
             if(s.state === 'waiting' || s.state === 'playing') {
                 document.getElementById('global-leave-btn').style.display = 'flex';
@@ -1024,6 +1064,13 @@
             }
             
             document.body.className = ''; 
+            
+            if (['rip_decision', 'penalty_decision', 'self_rip_decision', 'dueling'].includes(s.state)) {
+                startTension();
+            } else {
+                stopTension();
+            }
+
             if(s.state === 'playing') {
                  changeScreen('game-area'); 
                  

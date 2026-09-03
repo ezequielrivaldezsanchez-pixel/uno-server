@@ -147,9 +147,14 @@
         .inline-card .card-center { font-size: 14px; }
 
         #duel-narrative { 
+            position: absolute;
+            bottom: 130px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999999;
             font-size: 18px; 
             text-align: center; 
-            padding: 10px 15px; 
+            padding: 12px 20px; 
             border: 2px solid #69f0ae; 
             background: rgba(0,0,0,0.95); 
             color: #69f0ae; 
@@ -158,8 +163,6 @@
             border-radius: 12px; 
             box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); 
             text-shadow: 1px 1px 2px black; 
-            margin: 10px 0;
-            z-index: 10;
         }
         #duel-opts { display:flex; justify-content:center; gap:20px; margin-top:20px; width:100%; }
         .duel-btn { font-size:50px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; padding:10px; }

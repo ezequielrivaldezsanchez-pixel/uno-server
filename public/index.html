@@ -18,16 +18,7 @@
         @keyframes floatLogo { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); text-shadow: 0 10px 30px rgba(255,255,255,0.6); } 100% { transform: translateY(0px); } }
         
         #game-area { display: none; flex-direction: column; height: 100%; width: 100%; position: relative; z-index: 5; padding-bottom: calc(240px + var(--safe-bottom)); }
-        #rip-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
-        #duel-screen { 
-            background: rgba(50,0,0,0.98); 
-            z-index: 10000; 
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            align-items: center;
-            padding: 25px 15px calc(20px + var(--safe-bottom));
-        }
+        #rip-screen, #duel-screen { background: rgba(50,0,0,0.98); z-index: 10000; }
         
         #game-over-screen { background: radial-gradient(circle, #3a2e0d 0%, #000000 100%); z-index: 200000; text-align: center; border: 5px solid gold; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; }
         .epic-title { font-size: clamp(40px, 8vw, 70px); color: gold; text-shadow: 0 0 30px #ffaa00, 0 0 60px #ff0000; animation: pulseEpic 1.5s infinite alternate, dropIn 1s ease-out; margin-bottom: 0; z-index: 10; }
@@ -155,24 +146,7 @@
         .inline-card .card-corner { font-size: 6px; }
         .inline-card .card-center { font-size: 14px; }
 
-        #duel-narrative { 
-            position: absolute;
-            bottom: 130px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 9999999;
-            font-size: 18px; 
-            text-align: center; 
-            padding: 12px 20px; 
-            border: 2px solid #69f0ae; 
-            background: rgba(0,0,0,0.95); 
-            color: #69f0ae; 
-            width: 90%; 
-            max-width: 450px; 
-            border-radius: 12px; 
-            box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); 
-            text-shadow: 1px 1px 2px black; 
-        }
+        #duel-narrative { position: relative; z-index: 9999999; font-size: 26px; text-align:center; padding:20px; border:2px solid #69f0ae; background:rgba(0,0,0,0.9); color: #69f0ae; width:90%; border-radius:15px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(105, 240, 174, 0.5); text-shadow: 1px 1px 2px black; }
         #duel-opts { display:flex; justify-content:center; gap:20px; margin-top:20px; width:100%; }
         .duel-btn { font-size:50px; background:none; border:none; cursor:pointer; opacity: 0.5; transition: 0.3s; padding:10px; }
         .duel-btn:hover { opacity: 0.8; }

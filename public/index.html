@@ -1048,15 +1048,20 @@
 
         // --- CONTROL DE PARTÍCULAS DE TENSIÓN ---
 let tensionInterval = null;
+let currentTensionType = null;
 let lastDuelRoundBats = 0;
 
 function startTension(isRip = false) {
-    if (tensionInterval) return; 
+    // Si ya está activa la misma atmósfera, no la reiniciamos para evitar cortes visuales
+    if (tensionInterval && currentTensionType === isRip) return; 
+    
+    stopTension();
+    currentTensionType = isRip;
+
     const layer = document.getElementById('tension-layer');
     if(!layer) return;
     tensionInterval = setInterval(() => {
         const ember = document.createElement('div');
-        // Si es RIP caen cenizas grises desde el techo, si no suben brasas rojas desde el piso
         ember.className = isRip ? 'ember ash' : 'ember';
         const size = Math.random() * 8 + 4;
         ember.style.width = size + 'px'; ember.style.height = size + 'px';
@@ -1071,10 +1076,10 @@ function startTension(isRip = false) {
 
 function stopTension() {
     if (tensionInterval) { clearInterval(tensionInterval); tensionInterval = null; }
+    currentTensionType = null;
     const layer = document.getElementById('tension-layer');
     if(layer) layer.innerHTML = '';
 }
-
 function spawnBats() {
     const batCount = Math.floor(Math.random() * 4) + 6; // Entre 6 y 9 murciélagos
     for (let i = 0; i < batCount; i++) {

@@ -363,9 +363,15 @@
             100% { transform: translateY(100vh) scale(1.5); opacity: 0; }
         }
 
-        /* --- ATMÓSFERA TÉTRICA (DUELO RIP) --- */
-        #duel-screen.rip-mode { background: radial-gradient(circle, rgba(20,0,0,0.95) 10%, rgba(0,0,0,1) 95%) !important; box-shadow: inset 0 0 100px black; }
-        #duel-screen.rip-mode #duel-timer { animation: heartbeat 0.8s infinite; color: #ff3333; }
+        /* --- ATMÓSFERA TÉTRICA (DUELO RIP - MENOS OSCURO Y INSTANTÁNEO) --- */
+        #duel-screen.rip-mode, #rip-screen.rip-mode { 
+            background: radial-gradient(circle, rgba(55, 12, 12, 0.95) 0%, rgba(20, 5, 5, 0.98) 100%) !important; 
+            box-shadow: inset 0 0 80px rgba(0,0,0,0.8); 
+        }
+        #duel-screen.rip-mode #duel-timer, #rip-screen.rip-mode #decision-timer { 
+            animation: heartbeat 0.8s infinite; 
+            color: #ff4444; 
+        }
         @keyframes heartbeat { 0% { transform: scale(1); } 15% { transform: scale(1.4); } 30% { transform: scale(1); } 45% { transform: scale(1.4); } 60% { transform: scale(1); } }
         
         .bat { position: fixed; font-size: clamp(25px, 5vw, 45px); z-index: 9999998; pointer-events: none; animation: flyBat linear forwards; filter: brightness(0) drop-shadow(0 0 5px black); }
@@ -1133,12 +1139,28 @@ socket.on('updateState', s => {
             
             const isRipDuel = s.duelInfo && (s.duelInfo.type === 'rip' || s.duelInfo.type === 'self_rip');
             
+            if (isRipDuel && s.duelInfo.round !== lastDuelRoundBats) {
+                spawnBats();
+                lastDuelRoundBats = s.duelInfo.round;
+            }
+
+            const duelScreen = document.getElementById('duel-screen');
+            const ripScreen = document.getElementById('rip-screen');
+            
+            if (isRipDuel) {
+                duelScreen.classList.add('rip-mode');
+                ripScreen.classList.add('rip-mode');
+            } else {
+                duelScreen.classList.remove('rip-mode');
+                ripScreen.classList.remove('rip-mode');
+            }
+
             if (['rip_decision', 'penalty_decision', 'self_rip_decision', 'dueling'].includes(s.state)) {
-                stopTension(); // Detenemos por si cambió el tipo de tensión
+                stopTension(); 
                 startTension(isRipDuel);
             } else {
                 stopTension();
-                lastDuelRoundBats = 0; // Reiniciamos contador al salir del duelo
+                lastDuelRoundBats = 0; 
             }
 
             if(s.state === 'playing') {
@@ -1194,17 +1216,6 @@ socket.on('updateState', s => {
                 const duelScreen = document.getElementById('duel-screen');
                 document.getElementById('rip-screen').style.display = 'none'; 
                 duelScreen.style.display = 'flex';
-                
-                // --- INYECCIÓN ATMÓSFERA RIP ---
-                if (isRipDuel) {
-                    duelScreen.classList.add('rip-mode');
-                    if (s.duelInfo.round !== lastDuelRoundBats) {
-                        spawnBats();
-                        lastDuelRoundBats = s.duelInfo.round;
-                    }
-                } else {
-                    duelScreen.classList.remove('rip-mode');
-                }
 
                 document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
                 

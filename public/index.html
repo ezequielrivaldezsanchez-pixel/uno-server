@@ -338,18 +338,42 @@
             opacity: 1;
         }
 
-        /* --- EFECTO DE TENSIÓN (PARTÍCULAS) --- */
+        /* --- EFECTO DE TENSIÓN (PARTÍCULAS Y CENIZAS) --- */
         #tension-layer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10005; overflow: hidden; }
         .ember {
             position: absolute; bottom: -20px; border-radius: 50%; opacity: 0;
             background: radial-gradient(circle, #ffcf54 0%, #ff4757 50%, transparent 100%);
             animation: floatUp linear forwards; filter: blur(1px);
         }
+        .ember.ash {
+            top: -20px; bottom: auto;
+            background: radial-gradient(circle, #777 0%, #222 50%, transparent 100%);
+            animation: floatDown linear forwards;
+        }
         @keyframes floatUp {
             0% { transform: translateY(0) scale(0.5); opacity: 0; }
             20% { opacity: 0.8; }
             80% { opacity: 0.5; }
             100% { transform: translateY(-100vh) scale(1.5); opacity: 0; }
+        }
+        @keyframes floatDown {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            20% { opacity: 0.8; }
+            80% { opacity: 0.5; }
+            100% { transform: translateY(100vh) scale(1.5); opacity: 0; }
+        }
+
+        /* --- ATMÓSFERA TÉTRICA (DUELO RIP) --- */
+        #duel-screen.rip-mode { background: radial-gradient(circle, rgba(20,0,0,0.95) 10%, rgba(0,0,0,1) 95%) !important; box-shadow: inset 0 0 100px black; }
+        #duel-screen.rip-mode #duel-timer { animation: heartbeat 0.8s infinite; color: #ff3333; }
+        @keyframes heartbeat { 0% { transform: scale(1); } 15% { transform: scale(1.4); } 30% { transform: scale(1); } 45% { transform: scale(1.4); } 60% { transform: scale(1); } }
+        
+        .bat { position: fixed; font-size: clamp(25px, 5vw, 45px); z-index: 9999998; pointer-events: none; animation: flyBat linear forwards; filter: brightness(0) drop-shadow(0 0 5px black); }
+        @keyframes flyBat {
+            0% { transform: translate(-10vw, 110vh) scale(0.5) rotate(15deg); opacity: 0; }
+            10% { opacity: 0.9; }
+            90% { opacity: 0.9; }
+            100% { transform: translate(110vw, -10vh) scale(1.5) rotate(-15deg); opacity: 0; }
         }
     </style>
 </head>
@@ -1018,13 +1042,16 @@
 
         // --- CONTROL DE PARTÍCULAS DE TENSIÓN ---
 let tensionInterval = null;
-function startTension() {
+let lastDuelRoundBats = 0;
+
+function startTension(isRip = false) {
     if (tensionInterval) return; 
     const layer = document.getElementById('tension-layer');
     if(!layer) return;
     tensionInterval = setInterval(() => {
         const ember = document.createElement('div');
-        ember.className = 'ember';
+        // Si es RIP caen cenizas grises desde el techo, si no suben brasas rojas desde el piso
+        ember.className = isRip ? 'ember ash' : 'ember';
         const size = Math.random() * 8 + 4;
         ember.style.width = size + 'px'; ember.style.height = size + 'px';
         ember.style.left = Math.random() * 100 + 'vw';
@@ -1035,10 +1062,27 @@ function startTension() {
         setTimeout(() => { if (ember.parentNode) ember.remove(); }, duration * 1000);
     }, 80);
 }
+
 function stopTension() {
     if (tensionInterval) { clearInterval(tensionInterval); tensionInterval = null; }
     const layer = document.getElementById('tension-layer');
     if(layer) layer.innerHTML = '';
+}
+
+function spawnBats() {
+    const batCount = Math.floor(Math.random() * 4) + 6; // Entre 6 y 9 murciélagos
+    for (let i = 0; i < batCount; i++) {
+        setTimeout(() => {
+            const bat = document.createElement('div');
+            bat.className = 'bat';
+            bat.innerText = '🦇';
+            bat.style.left = (Math.random() * 40 - 20) + 'vw';
+            const duration = Math.random() * 1.5 + 1.5;
+            bat.style.animationDuration = duration + 's';
+            document.body.appendChild(bat);
+            setTimeout(() => { if (bat.parentNode) bat.remove(); }, duration * 1000);
+        }, Math.random() * 800); // Aparecen de golpe en los primeros 0.8s
+    }
 }
 
 socket.on('updateState', s => {
@@ -1087,10 +1131,14 @@ socket.on('updateState', s => {
             
             document.body.className = ''; 
             
+            const isRipDuel = s.duelInfo && (s.duelInfo.type === 'rip' || s.duelInfo.type === 'self_rip');
+            
             if (['rip_decision', 'penalty_decision', 'self_rip_decision', 'dueling'].includes(s.state)) {
-                startTension();
+                stopTension(); // Detenemos por si cambió el tipo de tensión
+                startTension(isRipDuel);
             } else {
                 stopTension();
+                lastDuelRoundBats = 0; // Reiniciamos contador al salir del duelo
             }
 
             if(s.state === 'playing') {
@@ -1142,7 +1190,22 @@ socket.on('updateState', s => {
                 changeScreen('game-area'); 
                 forceCloseModals(); 
                 document.body.classList.add('state-dueling');
-                document.getElementById('rip-screen').style.display = 'none'; document.getElementById('duel-screen').style.display = 'flex';
+                
+                const duelScreen = document.getElementById('duel-screen');
+                document.getElementById('rip-screen').style.display = 'none'; 
+                duelScreen.style.display = 'flex';
+                
+                // --- INYECCIÓN ATMÓSFERA RIP ---
+                if (isRipDuel) {
+                    duelScreen.classList.add('rip-mode');
+                    if (s.duelInfo.round !== lastDuelRoundBats) {
+                        spawnBats();
+                        lastDuelRoundBats = s.duelInfo.round;
+                    }
+                } else {
+                    duelScreen.classList.remove('rip-mode');
+                }
+
                 document.getElementById('duel-narrative').innerText = s.duelInfo.narrative || "..."; document.getElementById('duel-names').innerText = s.duelInfo.attackerName + ' vs ' + s.duelInfo.defenderName; document.getElementById('duel-sc').innerText = s.duelInfo.scoreAttacker + ' - ' + s.duelInfo.scoreDefender;
                 
                 const amFighter = (myUUID === s.duelInfo.attackerId || myUUID === s.duelInfo.defenderId); 

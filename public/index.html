@@ -1161,7 +1161,7 @@ socket.on('updateState', s => {
             }
 
             if (['rip_decision', 'penalty_decision', 'self_rip_decision', 'dueling'].includes(s.state)) {
-                stopTension(); 
+                // Quitamos el stopTension forzado para que startTension gestione fluidamente la persistencia
                 startTension(isRipDuel);
             } else {
                 stopTension();
@@ -1186,10 +1186,19 @@ socket.on('updateState', s => {
             else if (s.state === 'rip_decision' || s.state === 'penalty_decision') {
                 changeScreen('game-area'); 
                 forceCloseModals(); 
-                document.body.classList.add('state-rip');
                 
-                if(s.duelInfo.defenderId === myUUID) { 
-                    document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none'; 
+                // Asignamos la clase visual estrictamente según si eres el defensor o un observador/atacante
+                const isDefender = (s.duelInfo.defenderId === myUUID);
+                if (isDefender) {
+                    document.body.classList.add('state-rip');
+                    document.body.classList.remove('state-dueling');
+                } else {
+                    document.body.classList.remove('state-rip');
+                    document.body.classList.add('state-dueling');
+                }
+                
+                if(isDefender) { 
+                    document.getElementById('rip-screen').style.display = 'flex'; document.getElementById('duel-screen').style.display = 'none';
                     const msgDiv = document.getElementById('rip-msg-custom'); const duelWarn = document.getElementById('duel-warning'); const btnAccept = document.getElementById('btn-accept-penalty'); const btnSurrender = document.getElementById('btn-surrender'); const btnDuel = document.getElementById('btn-duel-start');
                     
                     if (s.state === 'rip_decision') { 

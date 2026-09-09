@@ -1178,7 +1178,11 @@ socket.on('updateState', s => {
                  if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
-                 document.getElementById('players-zone').innerHTML = s.players.map(p => '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div>').join('');
+                 document.getElementById('players-zone').innerHTML = s.players.map(p => {
+                     let indicator = '';
+                     if (p.isNext) indicator = (s.direction === 1 ? ' ➡️' : ' ⬅️');
+                     return '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isNext?'is-next':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + indicator + '</div>';
+                 }).join('');
                  
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  requestAnimationFrame(repositionHUD);

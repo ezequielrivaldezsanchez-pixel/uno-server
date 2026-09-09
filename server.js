@@ -671,8 +671,8 @@ function finalizeDuel(roomId) {
                 }
             }
             else {
-                const totalCastigo = room.pendingPenalty + 4;
-                const totalSkips = room.pendingSkip; 
+                const totalCastigo = room.duelState.originalPenalty + 4;
+                const totalSkips = room.duelState.originalSkip; 
                 
                 io.to(roomId).emit('notification', `🩸 ¡Castigo AUMENTADO! ${def.name} debe recoger ${totalCastigo} cartas y pierde sus turnos.`);
                 room.pendingPenalty = totalCastigo;
@@ -1343,6 +1343,7 @@ socket.on('draw', safe(() => {
     socket.on('duelPick', safe((c) => {
         const roomId = getRoomId(socket); if(!roomId || !rooms[roomId]) return; touchRoom(roomId);
         const room = rooms[roomId]; if (room.gameState !== 'dueling') return;
+        if (room.duelState.scoreAttacker >= 2 || room.duelState.scoreDefender >= 2) return; // Candado: bloquea clics fantasma
         const myUUID = room.players.find(x => x.id === socket.id)?.uuid;
         if (myUUID !== room.duelState.turn) return;
         if (myUUID === room.duelState.attackerId) { room.duelState.attackerChoice = c; room.duelState.turn = room.duelState.defenderId; room.duelState.narrative = `⚔️ ${room.duelState.attackerName} eligió. Turno de ${room.duelState.defenderName}...`; } 

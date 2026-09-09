@@ -66,9 +66,18 @@
         #chat-btn { background: #3498db; }
         #global-leave-btn { background: #c0392b; font-size: 20px; }
 
-        #players-zone { flex: 0 0 auto; padding: 30px 10px 10px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; z-index: 20; position: relative; }
-        .player-badge { background: rgba(30, 30, 30, 0.85); color: #ddd; padding: 6px 14px; border-radius: 20px; font-size: 13px; border: 1px solid rgba(255,255,255,0.15); transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #players-zone { flex: 0 0 auto; padding: 35px 10px 15px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; z-index: 20; position: relative; align-items: center; }
+        .player-wrapper { position: relative; display: inline-flex; flex-direction: column; align-items: center; }
+        .player-badge { background: rgba(30, 30, 30, 0.85); color: #ddd; padding: 6px 14px; border-radius: 20px; font-size: 13px; border: 1px solid rgba(255,255,255,0.15); transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.3); white-space: nowrap; }
         .is-turn { background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%); color: black; font-weight: bold; border: 2px solid white; transform: scale(1.12); box-shadow: 0 0 20px #2ecc71, 0 6px 15px rgba(0,0,0,0.5); animation: badgePulse 1.5s infinite alternate; }
+        
+        /* --- ESTILOS DE LA FLECHA LATERAL MODERNA --- */
+        .side-indicator { position: absolute; top: 50%; transform: translateY(-50%); display: flex; justify-content: center; align-items: center; filter: drop-shadow(0 0 6px #00e5ff); z-index: 5; pointer-events: none; }
+        .side-right { right: -28px; animation: pulseRight 1s infinite alternate ease-in-out; }
+        .side-left { left: -28px; animation: pulseLeft 1s infinite alternate ease-in-out; }
+        @keyframes pulseRight { 0% { transform: translateY(-50%) translateX(0); } 100% { transform: translateY(-50%) translateX(5px); } }
+        @keyframes pulseLeft { 0% { transform: translateY(-50%) translateX(0) scaleX(-1); } 100% { transform: translateY(-50%) translateX(-5px) scaleX(-1); } }
+        .modern-arrow { width: 20px; height: 20px; fill: none; stroke: #00e5ff; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
         @keyframes badgePulse {
             from { transform: scale(1.08); box-shadow: 0 0 10px #2ecc71; }
             to { transform: scale(1.15); box-shadow: 0 0 25px #2ecc71, 0 0 35px rgba(46, 204, 113, 0.7); }
@@ -1179,9 +1188,12 @@ socket.on('updateState', s => {
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
                  document.getElementById('players-zone').innerHTML = s.players.map(p => {
-                     let indicator = '';
-                     if (p.isNext) indicator = (s.direction === 1 ? ' ➡️' : ' ⬅️');
-                     return '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isNext?'is-next':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + indicator + '</div>';
+                     let sideArrowHtml = '';
+                     if (p.isTurn && s.state === 'playing') {
+                         const arrowClass = (s.direction === 1) ? 'side-indicator side-right' : 'side-indicator side-left';
+                         sideArrowHtml = `<div class="${arrowClass}"><svg class="modern-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg></div>`;
+                     }
+                     return '<div class="player-wrapper">' + sideArrowHtml + '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div></div>';
                  }).join('');
                  
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');

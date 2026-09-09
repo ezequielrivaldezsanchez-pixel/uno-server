@@ -48,7 +48,7 @@ function initRoom(roomId) {
         gameState: 'waiting', 
         players: [], deck: [], discardPile: [],
         currentTurn: 0, roundStarterIndex: 0, direction: 1,
-        activeColor: '', pendingPenalty: 0, pendingSkip: 0,
+        activeColor: '', pendingPenalty: 0, pendingSkip: 0, interruptedPenalty: 0,
         scores: {}, roundCount: 1,
         duelState: { 
             attackerId: null, defenderId: null, attackerName: '', defenderName: '', 
@@ -352,17 +352,17 @@ function calculateAndFinishRound(roomId, winner) {
         room.scores[winner.uuid] += pointsAccumulated;
         const winnerTotal = room.scores[winner.uuid];
 
+        const leaderboard = Object.keys(room.scores).map(uid => {
+            const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); 
+            if(pl) return { name: pl.name, score: room.scores[uid] }; return null;
+        }).filter(x=>x).sort((a,b) => b.score - a.score);
+
         if (winnerTotal >= 800) {
             room.gameState = 'waiting';
             io.to(roomId).emit('gameOver', { winner: winner.name, totalScore: winnerTotal, leaderboard: leaderboard }); io.to(roomId).emit('playSound', 'win');
             setTimeout(() => { delete rooms[roomId]; }, 10000);
         } else {
             room.gameState = 'round_over'; room.roundCount++;
-            
-            const leaderboard = Object.keys(room.scores).map(uid => {
-                const pl = room.players.find(x => x.uuid === uid && !x.hasLeft); 
-                if(pl) return { name: pl.name, score: room.scores[uid] }; return null;
-            }).filter(x=>x).sort((a,b) => b.score - a.score);
 
             if(graceSavedPlayers.length > 0) {
                 io.to(roomId).emit('notification', `✨ Gracia Divina protegió a: ${graceSavedPlayers.join(", ")}. ¡No dan puntos!`);
@@ -376,7 +376,6 @@ function calculateAndFinishRound(roomId, winner) {
         }
     } catch(e) { console.error("Error en calc round:", e); try { if(rooms[roomId]) resetRound(roomId); } catch(err){} }
 }
-
 function resetRound(roomId) {
     try {
         const room = rooms[roomId]; if(!room) return;
@@ -467,12 +466,12 @@ function updateAll(roomId) {
         }).filter(x=>x).sort((a,b) => b.score - a.score);
 
         const activePlayers = room.players.filter(p => !p.hasLeft);
+        const nextTurnIdx = getNextPlayerIndex(roomId, 1);
 
-        const pack = { state: room.gameState, roomId: roomId, players: activePlayers.map((p) => {
+        const pack = { state: room.gameState, roomId: roomId, direction: room.direction, players: activePlayers.map((p) => {
             const pIndex = room.players.findIndex(x => x.uuid === p.uuid);
-            return { name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && pIndex === room.currentTurn), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected };
-        }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard, timerEndsAt: room.timerEndsAt };
-        
+            return { name: p.name + (p.isAdmin ? " 👑" : "") + (p.isSpectator ? " 👁️" : ""), uuid: p.uuid, cardCount: p.hand.length, id: p.id, isTurn: (room.gameState === 'playing' && pIndex === room.currentTurn), isNext: (room.gameState === 'playing' && pIndex === nextTurnIdx), hasDrawn: p.hasDrawn, isDead: p.isDead, isSpectator: p.isSpectator, isAdmin: p.isAdmin, isConnected: p.isConnected };
+        }), topCard: room.discardPile.length > 0 ? room.discardPile[room.discardPile.length - 1] : null, activeColor: room.activeColor, currentTurn: room.currentTurn, duelInfo, pendingPenalty: room.pendingPenalty, chatHistory: room.chatHistory, reportTargets: reportablePlayers, leaderboard: leaderboard, timerEndsAt: room.timerEndsAt };        
         activePlayers.forEach(p => {
             if(p.isConnected) {
                 const mp = JSON.parse(JSON.stringify(pack)); mp.iamAdmin = p.isAdmin;
@@ -1248,7 +1247,15 @@ socket.on('draw', safe(() => {
                     if (room.pendingSkip > 0) { io.to(roomId).emit('notification', `⛔ ¡${room.players[pIndex].name} PIERDE ${room.pendingSkip} TURNOS!`); room.players[pIndex].missedTurns += room.pendingSkip; room.pendingSkip = 0; } 
                     else { io.to(roomId).emit('notification', `✅ Fin del castigo.`); }
                     let resumed = false; if (room.resumeTurnFrom !== undefined && room.resumeTurnFrom !== null) { room.currentTurn = room.resumeTurnFrom; room.resumeTurnFrom = null; resumed = true; }
-                    if (resumed && room.interruptedTurn) { room.interruptedTurn = false; } else { advanceTurn(roomId, 1); }
+                    
+                    if (room.interruptedPenalty) {
+                        room.pendingPenalty = room.interruptedPenalty;
+                        room.interruptedPenalty = 0;
+                    } else if (resumed && room.interruptedTurn) { 
+                        room.interruptedTurn = false; 
+                    } else { 
+                        advanceTurn(roomId, 1); 
+                    }
                     updateAll(roomId); 
                 }
             } else {
@@ -1377,10 +1384,15 @@ socket.on('draw', safe(() => {
         const timeDiff = Date.now() - target.lastOneCardTime;
         if (timeDiff < 2000) { socket.emit('notification', '¡Espera! Tiene tiempo de gracia (2s).'); return; }
         target.saidUno = true; 
-     const targetIdx = room.players.indexOf(target);
-     room.pendingPenalty = 2;
-     room.currentTurn = targetIdx;
-     room.resumeTurnFrom = null;
+        const targetIdx = room.players.indexOf(target);
+        
+        if (room.pendingPenalty > 0 && room.currentTurn !== targetIdx) {
+            room.resumeTurnFrom = room.currentTurn;
+            room.interruptedPenalty = room.pendingPenalty;
+        }
+        room.pendingPenalty = 2;
+        room.currentTurn = targetIdx;
+        
         io.to(roomId).emit('notification', `🚨 ¡${accuser.name} denunció a ${target.name}! Recibe 2 cartas.`); 
         io.to(roomId).emit('playSound', 'denounce'); updateAll(roomId);
     }));

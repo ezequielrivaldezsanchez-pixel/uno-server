@@ -1236,11 +1236,7 @@ socket.on('updateState', s => {
                  document.getElementById('players-zone').innerHTML = '<div class="players-track">' + trackHtml + '</div>';
 
                  setTimeout(() => {
-                     const activeTurnIdx = s.players.findIndex(p => p.isTurn);
-                     if (activeTurnIdx !== -1) {
-                         const activeEl = document.getElementById('player-idx-' + activeTurnIdx);
-                         if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-                     }
+                     scrollToActivePlayer('smooth');
                  }, 150);
                  
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
@@ -1803,6 +1799,20 @@ socket.on('updateState', s => {
         });        
 socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id, pendingLibreContext); pendingLibreContext = null;}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='flex';});
 
+        // --- UTILIDAD DE CENTRADO MATEMÁTICO EXACTO ---
+        function scrollToActivePlayer(behavior = 'smooth') {
+            const pZone = document.getElementById('players-zone');
+            if (!pZone || !currentPlayers) return;
+            const activeTurnIdx = currentPlayers.findIndex(p => p.isTurn);
+            if (activeTurnIdx === -1) return;
+            const activeEl = document.getElementById('player-idx-' + activeTurnIdx);
+            if (!activeEl) return;
+            
+            // Cálculo exacto del centro considerando el ancho real y la escala del elemento
+            const targetLeft = activeEl.offsetLeft - (pZone.clientWidth / 2) + (activeEl.offsetWidth / 2);
+            pZone.scrollTo({ left: targetLeft, behavior: behavior });
+        }
+
         // --- LÓGICA DE ARRASTRE Y EFECTO BANDA ELÁSTICA (SNAP BACK) ---
         const pZone = document.getElementById('players-zone');
         let isDraggingZone = false;
@@ -1813,13 +1823,7 @@ socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); 
         function triggerSnapBack() {
             clearTimeout(snapTimer);
             snapTimer = setTimeout(() => {
-                if (currentPlayers) {
-                    const activeTurnIdx = currentPlayers.findIndex(p => p.isTurn);
-                    if (activeTurnIdx !== -1) {
-                        const activeEl = document.getElementById('player-idx-' + activeTurnIdx);
-                        if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-                    }
-                }
+                scrollToActivePlayer('smooth');
             }, 2000);
         }
 

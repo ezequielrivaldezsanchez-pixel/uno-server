@@ -66,8 +66,43 @@
         #chat-btn { background: #3498db; }
         #global-leave-btn { background: #c0392b; font-size: 20px; }
 
-        #players-zone { flex: 0 0 auto; padding: 35px 10px 15px 10px; background: rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; z-index: 20; position: relative; align-items: center; }
-        .player-wrapper { position: relative; display: inline-flex; flex-direction: column; align-items: center; }
+        #players-zone { 
+    flex: 0 0 auto; 
+    padding: 35px 0 15px 0; 
+    background: rgba(0,0,0,0.5); 
+    z-index: 20; 
+    position: relative; 
+    overflow-x: auto; 
+    scroll-behavior: smooth; 
+    -webkit-overflow-scrolling: touch; 
+    scrollbar-width: none; 
+    cursor: grab; 
+}
+#players-zone:active { cursor: grabbing; }
+#players-zone::-webkit-scrollbar { display: none; } 
+
+.players-track {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    width: max-content;
+    padding: 0 calc(50vw - 60px);
+}
+
+.player-wrapper { 
+    position: relative; 
+    display: inline-flex; 
+    flex-direction: column; 
+    align-items: center; 
+    transition: transform 0.4s ease, opacity 0.4s ease;
+    transform: scale(0.85); 
+    opacity: 0.7;
+}
+.player-wrapper.active-turn {
+    transform: scale(1.15); 
+    opacity: 1;
+    z-index: 10;
+}
         .player-badge { background: rgba(30, 30, 30, 0.85); color: #ddd; padding: 6px 14px; border-radius: 20px; font-size: 13px; border: 1px solid rgba(255,255,255,0.15); transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.3); white-space: nowrap; }
         .is-turn { background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%); color: black; font-weight: bold; border: 2px solid white; transform: scale(1.12); box-shadow: 0 0 20px #2ecc71, 0 6px 15px rgba(0,0,0,0.5); animation: badgePulse 1.5s infinite alternate; }
         
@@ -1187,14 +1222,26 @@ socket.on('updateState', s => {
                  if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
-                 document.getElementById('players-zone').innerHTML = s.players.map(p => {
+                 const trackHtml = s.players.map((p, i) => {
                      let sideArrowHtml = '';
+                     let activeClass = '';
                      if (p.isTurn && s.state === 'playing') {
                          const arrowClass = (s.direction === 1) ? 'side-indicator side-right' : 'side-indicator side-left';
                          sideArrowHtml = `<div class="${arrowClass}"><svg class="modern-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg></div>`;
+                         activeClass = ' active-turn';
                      }
-                     return '<div class="player-wrapper">' + sideArrowHtml + '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div></div>';
+                     return '<div class="player-wrapper' + activeClass + '" id="player-idx-' + i + '">' + sideArrowHtml + '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div></div>';
                  }).join('');
+
+                 document.getElementById('players-zone').innerHTML = '<div class="players-track">' + trackHtml + '</div>';
+
+                 setTimeout(() => {
+                     const activeTurnIdx = s.players.findIndex(p => p.isTurn);
+                     if (activeTurnIdx !== -1) {
+                         const activeEl = document.getElementById('player-idx-' + activeTurnIdx);
+                         if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                     }
+                 }, 150);
                  
                  document.querySelectorAll('.hud-btn').forEach(b => b.style.display = 'flex');
                  requestAnimationFrame(repositionHUD);
@@ -1753,9 +1800,54 @@ socket.on('updateState', s => {
             goScreen.appendChild(rankCont);
             
             setTimeout(()=>{localStorage.removeItem('uno_uuid'); window.location=window.location.origin;}, 25000);
-        });
-        
-        socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id, pendingLibreContext); pendingLibreContext = null;}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='flex';});
+        });        
+socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id, pendingLibreContext); pendingLibreContext = null;}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='flex';});
+
+        // --- LÓGICA DE ARRASTRE Y EFECTO BANDA ELÁSTICA (SNAP BACK) ---
+        const pZone = document.getElementById('players-zone');
+        let isDraggingZone = false;
+        let startX;
+        let scrollLeft;
+        let snapTimer;
+
+        function triggerSnapBack() {
+            clearTimeout(snapTimer);
+            snapTimer = setTimeout(() => {
+                if (currentPlayers) {
+                    const activeTurnIdx = currentPlayers.findIndex(p => p.isTurn);
+                    if (activeTurnIdx !== -1) {
+                        const activeEl = document.getElementById('player-idx-' + activeTurnIdx);
+                        if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                    }
+                }
+            }, 2000);
+        }
+
+        if (pZone) {
+            pZone.addEventListener('mousedown', (e) => {
+                isDraggingZone = true;
+                startX = e.pageX - pZone.offsetLeft;
+                scrollLeft = pZone.scrollLeft;
+                clearTimeout(snapTimer);
+            });
+            pZone.addEventListener('mouseleave', () => {
+                if (isDraggingZone) { isDraggingZone = false; triggerSnapBack(); }
+            });
+            pZone.addEventListener('mouseup', () => {
+                isDraggingZone = false;
+                triggerSnapBack();
+            });
+            pZone.addEventListener('mousemove', (e) => {
+                if (!isDraggingZone) return;
+                e.preventDefault();
+                const x = e.pageX - pZone.offsetLeft;
+                const walk = (x - startX) * 1.5;
+                pZone.scrollLeft = scrollLeft - walk;
+            });
+
+            pZone.addEventListener('touchstart', () => clearTimeout(snapTimer), { passive: true });
+            pZone.addEventListener('touchend', triggerSnapBack);
+        }
     </script>
 </body>
 </html>

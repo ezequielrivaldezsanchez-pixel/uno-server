@@ -68,7 +68,7 @@
 
         #players-zone { 
     flex: 0 0 auto; 
-    padding: 35px 0 15px 0; 
+    padding: 22px 0; 
     background: rgba(0,0,0,0.5); 
     z-index: 20; 
     position: relative; 
@@ -1222,17 +1222,21 @@ socket.on('updateState', s => {
                  if(document.getElementById('libre-modal').style.display !== 'flex') { document.getElementById('action-bar').style.display = 'flex'; }
                  document.getElementById('duel-screen').style.display = 'none'; document.getElementById('rip-screen').style.display = 'none';
                  
-                 const trackHtml = s.players.map((p, i) => {
-                     let sideArrowHtml = '';
-                     let activeClass = '';
-                     if (p.isTurn && s.state === 'playing') {
-                         const arrowClass = (s.direction === 1) ? 'side-indicator side-right' : 'side-indicator side-left';
-                         sideArrowHtml = `<div class="${arrowClass}"><svg class="modern-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg></div>`;
-                         activeClass = ' active-turn';
-                     }
-                     return '<div class="player-wrapper' + activeClass + '" id="player-idx-' + i + '">' + sideArrowHtml + '<div class="player-badge ' + (p.isTurn?'is-turn':'') + ' ' + (p.isDead?'is-dead':'') + '">' + (p.isConnected?'':'🔴') + ' ' + p.name + ' (' + p.cardCount + ') ' + (p.isDead?'💀':'') + '</div></div>';
-                 }).join('');
-
+                 const N = s.players.length;
+                 let trackHtml = '';
+                 // Triplicamos la lista de jugadores para habilitar el bucle infinito visual (Set 0, Set 1, Set 2)
+                 for (let rep = 0; rep < 3; rep++) {
+                     s.players.forEach((p, i) => {
+                         let sideArrowHtml = '';
+                         let activeClass = '';
+                         if (p.isTurn && s.state === 'playing') {
+                             const arrowClass = (s.direction === 1) ? 'side-indicator side-right' : 'side-indicator side-left';
+                             sideArrowHtml = `<div class="${arrowClass}"><svg class="modern-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg></div>`;
+                             activeClass = ' active-turn';
+                         }
+                         trackHtml += `<div class="player-wrapper${activeClass}" id="player-rep-${rep}-idx-${i}">${sideArrowHtml}<div class="player-badge ${p.isTurn?'is-turn':''} ${p.isDead?'is-dead':''}">${p.isConnected?'':'🔴'} ${p.name} (${p.cardCount}) ${p.isDead?'💀':''}</div></div>`;
+                     });
+                 }
                  document.getElementById('players-zone').innerHTML = '<div class="players-track">' + trackHtml + '</div>';
 
                  setTimeout(() => {
@@ -1799,21 +1803,46 @@ socket.on('updateState', s => {
         });        
 socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); l.innerHTML=''; z.forEach(x=>{const b=document.createElement('button'); b.className='zombie-btn'; b.innerHTML=x.name + '<br><small>(' + x.count + ')</small>'; b.onclick=()=>{document.getElementById('revive-screen').style.display='none'; socket.emit('playCard',pendingCard,pendingColorForRevive,x.id, pendingLibreContext); pendingLibreContext = null;}; l.appendChild(b);}); document.getElementById('revive-screen').style.display='flex';});
 
-        // --- UTILIDAD DE CENTRADO GEOMÉTRICO PURO ---
+        // --- UTILIDAD DE CENTRADO GEOMÉTRICO CON BUCLE INFINITO ---
+        let lastActivePlayerIdx = -1;
+
         function scrollToActivePlayer(behavior = 'smooth') {
             const pZone = document.getElementById('players-zone');
             if (!pZone || !currentPlayers) return;
             const activeTurnIdx = currentPlayers.findIndex(p => p.isTurn);
             if (activeTurnIdx === -1) return;
-            const activeEl = document.getElementById('player-idx-' + activeTurnIdx);
+
+            const N = currentPlayers.length;
+            let targetRep = 1; // Set central por defecto
+
+            // Si el turno avanza del último al primero, forzamos el set derecho (2) para mantener el flujo hacia adelante
+            if (lastActivePlayerIdx === N - 1 && activeTurnIdx === 0) {
+                targetRep = 2;
+            } else if (lastActivePlayerIdx === 0 && activeTurnIdx === N - 1) {
+                targetRep = 0; // Si retrocede del primero al último
+            }
+
+            lastActivePlayerIdx = activeTurnIdx;
+
+            const activeEl = document.getElementById(`player-rep-${targetRep}-idx-${activeTurnIdx}`);
             if (!activeEl) return;
             
-            // Cálculo matemático puro del centro del marco del jugador
             const targetLeft = activeEl.offsetLeft - (pZone.clientWidth / 2) + (activeEl.offsetWidth / 2);
             pZone.scrollTo({ left: targetLeft, behavior: behavior });
+
+            // Si se usó un set lateral clonado, una vez terminada la animación se reubica instantáneamente al set central
+            if (behavior === 'smooth' && targetRep !== 1) {
+                setTimeout(() => {
+                    const centerEl = document.getElementById(`player-rep-1-idx-${activeTurnIdx}`);
+                    if (centerEl && pZone) {
+                        const centerLeft = centerEl.offsetLeft - (pZone.clientWidth / 2) + (centerEl.offsetWidth / 2);
+                        pZone.scrollTo({ left: centerLeft, behavior: 'auto' });
+                    }
+                }, 450);
+            }
         }
 
-        // --- LÓGICA DE ARRASTRE Y EFECTO BANDA ELÁSTICA (SNAP BACK) ---
+        // --- LÓGICA DE ARRASTRE Y BUCLE INFINITO MANUAL ---
         const pZone = document.getElementById('players-zone');
         let isDraggingZone = false;
         let startX;
@@ -1828,6 +1857,17 @@ socket.on('askReviveTarget',z=>{const l=document.getElementById('zombie-list'); 
         }
 
         if (pZone) {
+            // Manejador para mantener el bucle infinito cuando el usuario hace scroll manual o drag
+            pZone.addEventListener('scroll', () => {
+                const totalWidth = pZone.scrollWidth;
+                const singleSetWidth = totalWidth / 3;
+                if (pZone.scrollLeft < singleSetWidth * 0.4) {
+                    pZone.scrollLeft += singleSetWidth;
+                } else if (pZone.scrollLeft > singleSetWidth * 2.2) {
+                    pZone.scrollLeft -= singleSetWidth;
+                }
+            });
+
             pZone.addEventListener('mousedown', (e) => {
                 isDraggingZone = true;
                 startX = e.pageX - pZone.offsetLeft;
